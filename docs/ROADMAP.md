@@ -1,204 +1,139 @@
-# Development roadmap
+# Roadmap
 
-This roadmap is milestone-driven rather than date-driven. DeepSeek Harness is still in developer preview, so progress is gated by verified contracts and exit criteria, not calendar promises.
+This document defines milestone intent. **GitHub Issues are the live execution tracker.** DeepSeek Harness is developer preview, so milestones are contract-gated rather than date-gated.
 
-GitHub Issues are the live execution tracker. This document defines milestone intent and acceptance criteria.
+## M0 — Development readiness — complete
 
-## M0 — Contract and architecture lock
+Product boundary, two-process architecture, protocol constraints, security posture, plugin direction and M1 execution backlog are locked well enough to implement. Historical preparation detail is intentionally kept in closed GitHub Issues rather than separate checklist documents.
 
-**Goal:** remove ambiguity before runtime code begins.
+## M1 — Runtime vertical slice — #10
 
-Deliverables:
-
-- README and project boundaries;
-- architecture document;
-- protocol notes;
-- upstream compatibility policy;
-- development guide;
-- GitHub issue-based work tracking;
-- initial choice of package/binary naming strategy.
-
-Exit criteria:
-
-- public/private upstream boundaries are clearly separated;
-- no document assumes prompt-level cancellation or strict prompt/result causality;
-- runtime process model is agreed;
-- first vertical-slice scope is fixed.
-
-Status: **in progress**.
-
-## M1 — Runtime vertical slice
-
-**Goal:** prove the upstream boundary before building a TUI.
-
-Deliverables:
-
-- TypeScript project scaffold;
-- package scripts and CI;
-- pinned tested DeepSeek Harness SDK/runtime version;
-- `src/upstream/` adapter;
-- runtime launcher and Cordis configuration strategy;
-- `initialize` handshake;
-- one prompt submission;
-- streamed session notifications;
-- final committed assistant text projection;
-- clean shutdown;
-- basic diagnostics.
-
-Required platforms:
-
-- Windows;
-- Ubuntu;
-- macOS where CI/runtime support allows.
-
-Exit criteria:
+Prove one complete supported path before building a TUI:
 
 ```text
-clone -> install -> run smoke command
-      -> runtime starts
-      -> initialize succeeds
-      -> prompt is queued
-      -> events stream
-      -> assistant output is rendered
-      -> agent reaches idle
-      -> child process exits cleanly
+scaffold
+ -> launch official Harness runtime
+ -> initialize
+ -> enqueue one prompt
+ -> consume ordered session notifications
+ -> normalize/project events
+ -> plain safe terminal rendering
+ -> idle
+ -> clean shutdown
+ -> cross-platform CI
 ```
 
-No full-screen TUI is required for M1.
+Executable tasks: #2-#9.
 
-## M2 — Interactive terminal loop
+No full-screen TUI and no general plugin framework in M1.
 
-**Goal:** turn the vertical slice into a usable multi-turn CLI.
+## M2 — Interactive terminal loop — #11
 
-Deliverables:
+Turn the vertical slice into a persistent multi-turn terminal application:
 
-- persistent prompt loop;
-- session id ownership;
-- streamed assistant output;
-- tool call/result rendering;
-- root vs descendant event distinction;
-- local slash-command framework;
+- prompt loop and session ownership;
+- streamed transcript and tool/subagent visibility;
+- local command framework;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/exit`;
-- robust EOF and Ctrl+C behavior;
-- readable runtime failures.
+- explicit Ctrl+C/EOF semantics under current no-cancel limitations;
+- non-interactive mode retained.
 
-Exit criteria:
+M2 should reveal the real stable seams that M3 can make pluggable.
 
-- user can hold a multi-turn coding conversation without reopening the process;
-- transcript remains correct under streaming/tool activity;
-- no duplicated committed assistant output;
-- Ctrl+C semantics are explicit and tested;
-- non-interactive invocation remains possible.
+## M3 — Terminal product + first-party plugin plane — #12
 
-## M3 — TUI product layer
+Build the polished terminal experience and formalize the terminal plugin host.
 
-**Goal:** deliver the Codex/Claude-Code-class terminal experience.
+Core goals:
 
-Deliverables:
+- structured transcript/input/status UI;
+- terminal resize/output folding and Windows Terminal support;
+- first-party registries for commands, tool/event renderers, views and status segments where real behavior justifies them;
+- capability-driven UI activation;
+- Capability Explorer/plugin-aware help when public metadata permits;
+- agent/subagent activity view;
+- generic safe fallback for unknown tools/events;
+- choose the full-screen TUI framework only at M3 entry.
 
-- structured transcript renderer;
-- input editor;
-- persistent status line;
-- tool blocks;
-- subagent tree/activity view;
-- terminal resize support;
-- bounded output folding/expansion;
-- model/session/workspace indicators;
-- terminal escape-sequence sanitization;
-- first-class Windows Terminal support.
+Key Issues: #32 first-party plugin host, #33 Capability Explorer, #34 renderer registry, #35 trace/debugger.
 
-Candidate commands:
+Third-party arbitrary package loading is **not** an M3 requirement.
 
-- `/agents`;
-- `/model` where supported safely;
-- `/resume` where runtime persistence guarantees are verified;
-- `/compact` only if backed by an explicit upstream capability;
-- `/debug` for protocol/runtime diagnostics.
+## M4 — Reliability, security and compatibility — #13
 
-Exit criteria:
+Make daily use dependable:
 
-- stable rendering in common terminal widths;
-- no protocol data written directly as UI noise;
-- large tool output does not destroy responsiveness;
-- hostile terminal control sequences are neutralized;
-- Windows/POSIX behavior is intentionally tested.
+- compatibility/startup guards;
+- fake-runtime + official-runtime regression suite;
+- process cleanup and long-session/backpressure hardening;
+- structured secret-safe diagnostics;
+- terminal-injection/security review;
+- Session Debugger/trace hardening;
+- plugin boundary/security review;
+- Windows/POSIX lifecycle coverage.
 
-## M4 — Safety, reliability and compatibility
+Security gate: #18. Third-party plugin isolation research: #37.
 
-**Goal:** make the tool dependable enough for daily repository work.
+## M5 — Public alpha — #14
 
-Deliverables:
+Ship the first installable community preview:
 
-- protocol fixture suite;
-- real-runtime smoke suite;
-- compatibility matrix;
-- startup compatibility checks;
-- structured debug logging with secret redaction;
-- process-tree cleanup tests;
-- memory/backpressure limits for long sessions;
-- crash-recovery UX;
-- approval-state rendering when upstream supports the required client-facing flow;
-- security review of terminal rendering and subprocess surfaces.
-
-Exit criteria:
-
-- CI covers supported OS matrix;
-- known protocol drift fails clearly;
-- secrets are not logged by default;
-- runtime crashes produce actionable errors;
-- no known terminal escape injection issue remains.
-
-## M5 — Public alpha
-
-**Goal:** publish an installable community preview.
-
-Deliverables:
-
-- finalized package name and `dshc` binary;
-- installation documentation;
-- release workflow;
+- finalize package/binary naming;
+- release/npm automation;
+- installation/update/uninstall docs;
+- compatibility statement;
+- demo/screenshots;
 - changelog/release notes;
-- compatibility table for the pinned upstream release;
-- example screenshots/recording;
-- contribution templates;
-- issue templates;
-- alpha tag/release.
+- public alpha tag.
 
-Exit criteria:
+Release requires the gates in `DEVELOPMENT.md` to pass.
 
-- fresh install works from documented instructions;
-- M1–M4 release blockers are closed;
-- repository clearly states unofficial/community status;
-- users can diagnose unsupported Harness versions;
-- uninstall/update path is documented.
+## M6 — Post-alpha capability growth — #16
 
-## M6 — Post-alpha capabilities
+Candidate work, promoted only when backed by a real user problem and supported upstream contract:
 
-These are intentionally deferred until the core is reliable:
-
-- richer session browser/resume flow;
-- configurable themes;
-- pluggable renderers;
-- remote/external runtime connection if an upstream-supported transport exists;
-- terminal-native approval prompts if the SDK gains server-to-client request semantics;
-- graceful prompt cancellation when upstream exposes a cancel contract;
-- richer subagent orchestration views;
+- public third-party terminal plugin SDK after isolation design is credible;
+- terminal profiles: minimal / coding / research / observer;
+- richer agent topology and future Agent Teams views;
+- background jobs monitor;
+- session browser/resume/time navigation using Harness persistence/query capabilities;
+- change review/diff view;
+- exporter/support-bundle plugins;
+- notification plugins;
+- shell completion/additional distribution channels;
+- remote runtime console only if upstream exposes a supported secure transport;
+- graceful per-prompt cancel only if upstream adds a real cancel contract;
 - performance work for very long sessions;
-- shell completion and package-manager distribution beyond npm.
+- plugin replay/development harness and optional hot reload.
 
-## Explicit non-goals before alpha
+Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` must remain usable without it.
 
-Do not block the first alpha on:
+## Feature priorities
 
-- reproducing every Web UI feature;
-- building a custom agent loop;
-- custom model-provider implementations;
-- plugin marketplace UX;
-- graphical terminal dashboards;
-- speculative features not represented by a stable upstream contract.
+The strongest differentiators are not decorative TUI features. Priority is:
 
-## Priority rule
+1. **Capability Explorer** — show what Harness is actually composed of.
+2. **Plugin-aware tool/event rendering** — custom capabilities become readable without core switch-statement growth.
+3. **Session Debugger / Trace** — execution observability from user-visible runtime/session metadata.
+4. **Agent topology** — root/descendant activity made legible.
+5. **Adaptive status/help/commands** — UI changes with active capabilities.
+6. **`dshc doctor`** — make developer-preview compatibility diagnosable.
+7. **Safe extension ecosystem** — only after plugin isolation/permissions are real.
 
-When visual polish conflicts with protocol correctness, lifecycle correctness, security or cross-platform behavior, the latter wins.
+## Admission test for new features
 
-The shortest path to a good product is not “build the TUI quickly”; it is “prove the runtime boundary once, then keep the UI thin.”
+Before creating an implementation Issue, ask:
+
+1. Does it expose or improve a real DSH capability?
+2. Does it improve observability, control or terminal workflow?
+3. Is it protocol-truthful?
+4. Does it belong to the terminal plane rather than the agent-runtime plane?
+5. Does it degrade safely when the capability is absent?
+6. Does it preserve Windows/cross-platform behavior?
+7. Is the security boundary understandable?
+
+If most answers are no, it probably does not belong in `dshc`.
+
+## Stop condition
+
+If upstream ships and maintains an official terminal frontend that fully covers the same terminal-control/observability needs, reassess whether `dshc` still adds meaningful independent value rather than continuing by inertia.
