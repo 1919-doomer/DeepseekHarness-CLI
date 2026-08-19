@@ -9,6 +9,8 @@ This directory contains the design contract for DeepSeek Harness CLI (`dshc`). U
 | [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | Product scope, users, principles, alpha success criteria and non-goals |
 | [DIFFERENTIATION.md](DIFFERENTIATION.md) | Why `dshc` exists and how it differs from DSH Web/headless and other coding-agent CLIs |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Process boundaries, modules, event flow, terminal host responsibilities and safety boundaries |
+| [PLUGIN-ARCHITECTURE.md](PLUGIN-ARCHITECTURE.md) | Terminal plugin plane, capability-driven UI and future plugin SDK direction |
+| [FEATURE-LAB.md](FEATURE-LAB.md) | Brainstorm reservoir and feature-admission criteria |
 | [PROTOCOL.md](PROTOCOL.md) | Upstream stdio JSON-RPC surface and how it maps into terminal state |
 | [UX-CONTRACT.md](UX-CONTRACT.md) | Terminal behavior, event/transcript semantics, tools, subagents and interruption behavior |
 | [UPSTREAM-COMPATIBILITY.md](UPSTREAM-COMPATIBILITY.md) | Version pinning and policy for upstream developer-preview changes |
@@ -62,6 +64,7 @@ The upstream project is in developer preview. A stale assumption must be correct
 
 - [DeepSeek Harness repository](https://github.com/deepseek-ai/deepseek-harness)
 - [Architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
+- [Capability seams](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/capability-seams.md)
 - [SDK protocol](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)
 - [TypeScript SDK client](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/client/README.md)
 - [JSON-RPC server](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/server/README.md)
@@ -73,4 +76,4 @@ The upstream project is in developer preview. A stale assumption must be correct
 
 Technical claims about DeepSeek Harness should link to an upstream primary source whenever practical. Community tutorials may be useful for debugging, but they are not normative for this project.
 
-Any change that modifies supported upstream versions, protocol/event handling, lifecycle semantics, tool/approval UX, supported platforms, install/release procedure or milestone exit criteria must update the relevant document in the same PR.
+Any change that modifies supported upstream versions, protocol/event handling, lifecycle semantics, plugin boundaries, tool/approval UX, supported platforms, install/release procedure or milestone exit criteria must update the relevant document in the same PR.
