@@ -1,24 +1,37 @@
 # DeepSeek Harness CLI
 
-> 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生交互前端，交互目标参考 Codex CLI 与 Claude Code。
+> 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生交互前端。借鉴现代 coding-agent CLI 的交互经验，但不复制它们的 Agent 架构。
 
-**当前状态：pre-alpha / 架构启动阶段，暂不建议安装使用。**
+**当前状态：pre-alpha。M0 开发前准备已经完成，M1 runtime 实现可以开始；暂不可安装使用。**
 
-[English](README.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [路线图](docs/ROADMAP.md) · [开发说明](docs/DEVELOPMENT.md)
+[English](README.md) · [产品规格](docs/PRODUCT-SPEC.md) · [项目差异化](docs/DIFFERENTIATION.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [路线图](docs/ROADMAP.md) · [当前状态](docs/STATUS.md)
 
 ## 为什么做这个项目
 
-DeepSeek Harness（`dsh`）是 DeepSeek AI 开源的插件化 Agent Harness。当前上游正式提供的交互入口以 Web UI 为主，同时还提供 ACP、stdio JSON-RPC SDK 与一次性 headless CLI。上游曾经实现过 TUI，但已经主动删除，不再把交互式终端作为受维护的产品界面。
+DeepSeek Harness（`dsh`）是 DeepSeek AI 开源的插件化 Agent Harness。当前受维护的交互入口主要是 Web UI，同时还提供 ACP、stdio JSON-RPC SDK runtime 和一次性 headless CLI。上游曾实现 TUI，但已经删除，目前没有一个受维护的持续交互式终端前端。
 
-这个项目只补这一块缺口：**在不 fork Harness 核心的前提下，为它提供真正终端原生、持续多轮的 CLI/TUI。**
+`dshc` 只补这一块缺口，并坚持一个边界：
 
-目标包括：
+> **Harness 负责 Agent 语义；`dshc` 负责终端交互、状态投影与呈现。**
 
-- 启动或连接官方 DeepSeek Harness runtime；
-- 把 durable session/event stream 渲染成易读的 coding-agent 终端对话；
-- 支持持续多轮输入、session、subagent、tool 与 approval；
-- Harness 继续负责 Agent loop、模型、工具、持久化与插件系统；
-- 终端只负责交互和呈现，不把 Web 页面硬塞进终端。
+因此我们不会 fork Harness 核心，也不会重新实现 Agent loop。
+
+## 这个项目真正不同在哪里
+
+`dshc` 的定位不是“再做一个 coding agent”。它是 **DeepSeek Harness 的 terminal-native console**。
+
+与 DSH Web UI 相比，它是终端原生、适合仓库目录、编辑器 Terminal、SSH/远程 shell 等工作流；与官方 headless 模式相比，它面向持续多轮交互，而不是一次任务后打印最终结果；与 Codex CLI / Claude Code 相比，它不拥有另一套 Agent loop，而是把 DeepSeek Harness 本身的 session、tool、subagent、runtime state 等概念带进终端；与 Pi/OpenCode 一类 Harness 相比，它不准备再建立第二套 provider/tool/plugin 生态，而是尽量复用 DSH 的插件和 provider 能力。
+
+核心差异化是：
+
+1. **DSH-native**：通过官方 Harness SDK/runtime 边界工作，不是 DeepSeek API 聊天壳。
+2. **Event-native**：终端状态来自 Harness session/runtime event，而不是只拿最终 assistant 文本。
+3. **Harness 概念一等化**：session、tool、subagent、activity/runtime state 在 UI 中明确可见。
+4. **协议诚实**：上游没有 cancel 就不假装有；`session/prompt` 只是 enqueue receipt，就不包装成严格一问一答协议。
+5. **Observability-first**：用户应当看得懂 Harness 正在干什么，而不是只看到 spinner。
+6. **薄前端**：Agent 行为由上游负责，终端 renderer/TUI 可替换而不改变 Harness 语义。
+
+详见 [项目差异化](docs/DIFFERENTIATION.md)。
 
 ## 项目边界
 
@@ -26,53 +39,52 @@ DeepSeek Harness（`dsh`）是 DeepSeek AI 开源的插件化 Agent Harness。�
 
 - 持续交互式 CLI/TUI；
 - Harness session / agent event renderer；
-- `/model`、`/session`、`/resume`、`/agents`、`/clear`、`/help` 等终端命令；
+- 对 session、runtime、tool、subagent 状态清晰的终端呈现；
 - 对官方 SDK/runtime 的薄兼容层；
-- 对工具执行、审批、错误和退出流程友好的终端 UX；
-- Linux、macOS、Windows 跨平台支持，Windows 从第一天开始纳入测试。
+- 可靠的错误、退出、进程生命周期与终端安全处理；
+- Windows、Linux、macOS 跨平台支持，其中 Windows 从 M1 开始就是 blocking target。
 
 ### 我们不做
 
 - DeepSeek Harness fork；
-- 重新实现 Agent loop、模型 adapter、tool registry 或 persistence；
+- 重写 Agent loop、模型 adapter、tool registry 或 persistence；
 - 再做一个浏览器 UI；
-- 重写 DeepSeek 模型协议；
+- 纯 DeepSeek API 聊天客户端；
+- alpha 前自建 API Key 密钥库；
 - 冒充 DeepSeek 官方产品。
 
 ## 当前上游约束
 
-项目启动时（2026-08-20），DeepSeek Harness 上游版本为 `0.1.0-rc.8`，官方明确标注为 developer preview，并警告会发生兼容性破坏。
+2026-08-20 的 M0 最终复核基线是 DeepSeek Harness `0.1.0-rc.8`，仍属于 developer preview。
 
-对本项目最重要的上游入口是：
+与本项目直接相关的公开入口包括：
 
-- **Web UI**：上游当前维护的交互式界面；
-- **headless profile**：一次提交一个任务，最后输出一次结果，不支持持续交互；
+- **Web UI**：上游维护的交互式前端；
+- **headless profile**：一次任务、一次最终 stdout；
 - **stdio JSON-RPC SDK runtime**：供外部进程驱动 Harness；
-- **TypeScript SDK client**：可以启动 Harness runtime 子进程并消费 session/subagent 通知；
-- **ACP**：另一条非 Web 集成路径。
+- **TypeScript SDK client**：启动 Harness runtime 子进程并消费 session/subagent 通知；
+- **ACP**：另一条公开集成边界。
 
-当前 JSON-RPC wire 很小：客户端主要使用 `initialize`、`session/prompt`、`shutdown`，服务端发送 session event/status 与 subagent 通知。协议目前没有 per-prompt cancel、没有 per-session close，也没有正式的协议版本协商。本项目会把这些当成架构约束，而不是在 UI 层假装它们不存在。
+当前 JSON-RPC 主要提供 `initialize`、`session/prompt`、`shutdown`，以及 session event/status 和 subagent 通知。没有 per-prompt cancel、没有 per-session close；`session/prompt` 返回的是 enqueue receipt，而不是某条 assistant response 的严格结果 ID。
 
-详见 [上游兼容策略](docs/UPSTREAM-COMPATIBILITY.md)。
+这些限制会直接进入 UX 和状态机设计，而不会在 UI 中被“补出来”。
 
-## 计划架构
+## 架构
 
 ```mermaid
 flowchart LR
-    U[Terminal user] --> T[dshc TUI / CLI]
+    U[Terminal user] --> T[dshc CLI / TUI]
     T --> C[Command + interaction layer]
-    T --> R[Event renderer]
+    T --> R[Terminal renderer]
     C --> S[DSH SDK adapter]
     S <-->|stdio JSON-RPC| H[Official DeepSeek Harness runtime]
     H -->|session.event / session.status| S
-    S --> E[Normalized event store]
+    S --> E[Normalized event projection]
     E --> R
     R --> T
 ```
 
-核心原则只有一句：**终端负责 presentation 与 interaction；Harness 负责 agent behavior。**
-
-我们优先使用官方 `@deepseek-ai/dsh-sdk-client` 与官方 JSON-RPC runtime composition，而不是依赖 Harness 内部包。如果 developer preview 阶段的 breaking change 迫使我们加临时兼容层，它必须隔离在 `src/upstream/`，并记录进兼容矩阵。
+上游版本/协议相关代码统一隔离在 `src/upstream/`。终端层依赖本项目自己的 normalized projection，不直接依赖 Harness 私有实现对象。
 
 ## 目标终端体验
 
@@ -97,69 +109,71 @@ workspace  E:\project                     session  8b72…
 ● Running tests...
 ✓ 42 passed
 
-> /agents
+> /status
 > /session
-> /model
+> /agents
 ```
 
-第一阶段不会优先追求视觉花哨。优先级是：事件是否正确、执行状态是否清楚、能否可靠中断、工具调用是否可追踪。
+最终外观暂不锁定。协议正确性、进程生命周期、tool/subagent 状态、终端安全优先于视觉装饰。
 
 ## 命令名
 
-官方 `@deepseek-ai/dsh` 已经占用了 `dsh` 可执行命令，因此本项目不能覆盖它。当前工作名称是：
+官方已经使用 `dsh`，因此当前工作 binary 为：
 
 ```sh
 dshc
 ```
 
-含义为 **DeepSeek Harness Console**。npm package 与 binary 的最终命名会在首个公开 release 前确定。
+含义为 **DeepSeek Harness Console**。npm package 名称会在公开 alpha 前最终确定。
 
 ## 当前开发阶段
 
-仓库目前处于 **M0 — Contract & Architecture Lock**，还没有发布运行时代码。
+M0 已完成。当前进入 **M1 — Runtime vertical slice**，主追踪 Issue 为 [#10](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/10)。
 
-第一条实现链路必须保持最小：
+第一个开发任务是 [#2 — TypeScript/ESM 工程与固定 toolchain](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/2)。
 
-1. 初始化 TypeScript、测试和 CI；
-2. 启动官方 JSON-RPC Harness runtime；
-3. 完成 `initialize`；
-4. 提交一条 prompt；
-5. 实时接收并渲染 session events；
-6. 在 Linux、macOS、Windows 上干净退出。
+M1 只证明最小闭环：
 
-只有这条 vertical slice 验证通过，才进入 full-screen TUI。
+```text
+启动官方 runtime
+  -> initialize
+  -> enqueue prompt
+  -> 接收有序 session notifications
+  -> 投影并输出 assistant 内容
+  -> 观察 idle
+  -> 干净 shutdown
+```
 
-详细计划见 [ROADMAP](docs/ROADMAP.md)。
+M1 不选择 full-screen TUI 框架。先用 plain event-native renderer 验证 runtime boundary；到 M3 再依据真实需求选择 Ink 或其他方案。
 
 ## 文档
 
 - [文档索引](docs/README.md)
+- [产品规格](docs/PRODUCT-SPEC.md)
+- [项目差异化](docs/DIFFERENTIATION.md)
 - [架构](docs/ARCHITECTURE.md)
+- [终端 UX 契约](docs/UX-CONTRACT.md)
 - [JSON-RPC 协议说明](docs/PROTOCOL.md)
 - [上游兼容策略](docs/UPSTREAM-COMPATIBILITY.md)
-- [开发指南](docs/DEVELOPMENT.md)
-- [开发路线与里程碑验收条件](docs/ROADMAP.md)
+- [依赖策略](docs/DEPENDENCY-POLICY.md)
+- [测试策略](docs/TESTING-STRATEGY.md)
+- [威胁模型](docs/THREAT-MODEL.md)
+- [风险登记](docs/RISK-REGISTER.md)
+- [M1 Definition of Ready](docs/DEFINITION-OF-READY.md)
+- [开发路线](docs/ROADMAP.md)
+- [当前状态](docs/STATUS.md)
 - [贡献指南](CONTRIBUTING.md)
 
 ## 设计原则
 
-1. **Upstream-first**：先使用官方公开接口，再考虑兼容适配。
-2. **Thin host**：不把 Agent 语义搬进 TUI。
-3. **Event-native**：从 session event 渲染，不靠抓取最终文本。
-4. **Safe by default**：工具执行和审批在终端必须清楚可见。
-5. **Cross-platform by construction**：Windows 不能留到发布前再适配。
-6. **Fail loudly on protocol drift**：上游协议变化时明确报错，不静默猜测。
-7. **No fake stability**：上游仍在 developer preview 时，靠 pin + tests 管兼容，不假装稳定。
-
-## 上游资料
-
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [上游架构文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
-- [SDK protocol](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)
-- [TypeScript SDK client](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/client/README.md)
-- [JSON-RPC server](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/server/README.md)
-- [Headless bundle](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)
-- [上游删除 TUI 的设计记录](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/simplification/2026-08-04-remove-tui-package.md)
+1. **Upstream-first**：先使用官方公开接口。
+2. **Thin host**：Agent 语义不搬进终端前端。
+3. **Event-native**：从 session/runtime event 构建 UI。
+4. **Protocol-truthful**：不宣称 wire contract 没有提供的能力。
+5. **Safe by default**：不可信输出必须经过终端安全处理，状态改变应可观察。
+6. **Cross-platform by construction**：Windows 不是发布前再补的 port。
+7. **Fail loudly on protocol drift**：兼容变化明确失败，不静默猜测。
+8. **No fake stability**：上游 developer preview 阶段依靠版本 pin + tests 管理兼容。
 
 ## License 与关系说明
 
