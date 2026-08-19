@@ -1,109 +1,160 @@
-# Protocol notes
+# Protocol and upstream compatibility
 
-This document records the public DeepSeek Harness SDK wire contract that `dshc` depends on. It is not a replacement for upstream documentation.
+This document records the public DeepSeek Harness boundary that `dshc` depends on. Upstream documentation remains authoritative.
+
+Last reviewed: **2026-08-20**.
+
+## Current baseline
+
+M1 targets the DeepSeek Harness developer-preview line around `0.1.0-rc.8`.
+
+Current upstream toolchain baseline:
+
+- Node: `^22.19.0 || >=24.0.0`;
+- pnpm: `11.7.0`.
+
+The implementation lockfile must pin the exact packages actually tested. Public releases must state their tested Harness/SDK range.
+
+Preferred public dependencies are the official TypeScript SDK client, official JSON-RPC runtime entry point/protocol types where exported, and a public Cordis runtime composition. Avoid private source imports, copied upstream TUI code, undocumented plugin internals and parsing human-formatted output when structured events exist.
 
 ## Transport
 
-The official SDK protocol uses newline-delimited JSON-RPC 2.0 over caller-owned stdin/stdout streams. One compact JSON frame is written per newline.
+The SDK protocol uses newline-delimited JSON-RPC 2.0 over caller-owned stdin/stdout.
 
-The terminal frontend must therefore treat the Harness child process stdout as protocol-only. Human-readable diagnostics belong on stderr or in a separate log file.
+Harness stdout is therefore protocol-only. Human diagnostics belong on the `dshc` side, stderr, or a separate scrubbed log.
 
-## Current request surface
+## Request surface
 
-At project bootstrap, the public protocol exposes three client-to-runtime requests:
+At the current baseline the public client-to-runtime requests are:
 
 | Method | Purpose | Important semantics |
 |---|---|---|
-| `initialize` | Configure workspace/provider/model and initialize the runtime client | Handshake only; not a protocol-version negotiation |
-| `session/prompt` | Enqueue a user message into a session | Returns an enqueue receipt (`messageId`), not a prompt result |
-| `shutdown` | Ask the runtime to shut down | Process lifecycle still needs timeout/escalation handling |
+| `initialize` | Initialize workspace/provider/model configuration | handshake, not protocol-version negotiation |
+| `session/prompt` | Queue a user message into a session | returns an enqueue receipt (`messageId`), not an assistant result |
+| `shutdown` | Request runtime shutdown | process teardown still requires bounded escalation |
 
-## Current notification surface
+## Notification surface
 
 The runtime can emit:
 
 | Method | Purpose |
 |---|---|
-| `session.event` | Durable session-log event envelope |
-| `session.status` | Whole-agent `running` / `idle` transition |
-| `subagent.started` | Announces a child agent |
-| `subagent.finished` | Announces completion for supported in-process children |
+| `session.event` | durable session-log event envelope |
+| `session.status` | whole-agent `running` / `idle` transition |
+| `subagent.started` | child-agent start notification |
+| `subagent.finished` | child completion for supported in-process descendants |
 
-The runtime emits session notifications globally. Session-tree scoping is performed by the client.
+Notifications may be global to the runtime; client-side projection must scope root and descendant sessions correctly.
 
 ## Prompt ownership is not prompt/result RPC
 
-`session/prompt` acknowledges that a user message was durably queued. The returned `messageId` does not identify a later assistant message and does not establish a strict request/response pair.
+`session/prompt` confirms that a message was queued. Its `messageId` does not identify a later assistant message and does not establish strict one-request/one-response causality.
 
-The official high-level TypeScript client defines an activity interval roughly as:
+The high-level activity interval is approximately:
 
 1. enqueue prompt;
-2. observe its durable receipt;
-3. collect the subsequent event stream;
+2. observe durable receipt;
+3. consume subsequent events;
 4. finish when the whole agent becomes idle.
 
-Even the final assistant text in that interval is not a formally prompt-attributed response. Steering, injected context, queued work, or descendants may contribute before idle.
-
-`dshc` must therefore avoid inventing stronger causality than upstream provides.
+Steering, queued work, injected context or descendants may contribute before idle. `dshc` must not invent stronger causality in its state model or labels.
 
 ## Event handling rules
 
-The adapter and renderer must obey these rules:
-
 1. Preserve upstream wire order.
-2. Keep the durable event envelope available to the projection layer.
-3. Do not infer missing event types from presentation needs.
-4. Treat streaming chunks as ephemeral until a durable committed message arrives.
-5. Track root-session events separately from descendant-session events.
-6. Use `session.status` for runtime activity state rather than guessing from spinner/tool output.
-7. Make unknown event types visible in diagnostics and safe to ignore in the renderer when possible.
+2. Keep enough durable envelope data for projection/debugging.
+3. Treat streaming chunks as ephemeral until committed output arrives.
+4. Avoid duplicate output when a committed assistant message replaces streaming text.
+5. Track root and descendant session activity separately.
+6. Use `session.status` for whole-agent running/idle state when available.
+7. Unknown event types should degrade safely and remain visible in diagnostics.
+8. Do not infer protocol events merely because the UI would like them to exist.
 
-## Cancellation
+## Cancellation and interruption
 
-The current public protocol has no prompt-cancel request and no per-session close request.
+The current public protocol has **no per-prompt cancel request** and **no per-session close request**.
 
-Therefore a reliable mid-turn cancellation cannot be represented as a normal protocol operation today. The only coarse fallback is terminating/closing the owned runtime process.
+Therefore:
 
-Initial product behavior:
-
-- do not claim that Ctrl+C cancelled a model turn unless the runtime actually terminated or a future upstream cancel contract confirms cancellation;
-- distinguish clearing local input from interrupting runtime activity;
-- make destructive runtime termination explicit;
-- keep cancellation behavior isolated behind the upstream adapter so it can be replaced when the protocol grows a cancel method.
+- clearing local input is not runtime cancellation;
+- `dshc` must not print “cancelled” unless a real terminal condition is known;
+- abandoning active work may require explicit runtime-process termination;
+- destructive process termination must be described truthfully;
+- a future official cancel method should replace the fallback behind `src/upstream/` without forcing a UI rewrite.
 
 ## Shutdown
 
-The official TypeScript SDK attempts protocol `shutdown`, then escalates through process teardown when required. `dshc` should rely on the official client lifecycle where possible and add terminal-level signal handling around it.
+Prefer the official SDK lifecycle: protocol `shutdown`, then bounded teardown/escalation where necessary.
 
-Critical cases to test:
+Important test cases:
 
-- normal `/exit` while idle;
-- Ctrl+C while idle;
-- Ctrl+C while running;
-- runtime exits unexpectedly;
-- stdin closes;
-- Windows console close / process-tree behavior;
-- SIGTERM on POSIX.
+- normal exit while idle;
+- Ctrl+C while idle and while running;
+- runtime crash/EOF;
+- transport failure;
+- Windows process-tree behavior;
+- SIGTERM/EOF behavior on POSIX.
 
-## Protocol drift policy
+## Compatibility strategy
 
-DeepSeek Harness is currently pre-release. The wire has no negotiated compatibility version.
+DeepSeek Harness is developer preview and the current wire does not negotiate a protocol version. Compatibility must therefore be explicit.
 
-`dshc` will therefore:
+`dshc` will:
 
-- pin a tested upstream version range;
-- expose the detected upstream/runtime version in diagnostics;
-- run protocol contract tests in CI;
-- fail clearly when required methods or payload assumptions no longer hold;
-- keep all compatibility shims under `src/upstream/`;
-- never silently reinterpret a changed wire field.
+- pin and test an upstream range;
+- isolate all version-specific behavior under `src/upstream/`;
+- expose detected versions in diagnostics where available;
+- run synthetic/fake-runtime contract tests without credentials;
+- run official-runtime smoke tests against the pinned baseline;
+- fail clearly when required behavior changes;
+- never silently reinterpret a changed wire field or widen a version range without tests.
 
-See [UPSTREAM-COMPATIBILITY.md](UPSTREAM-COMPATIBILITY.md).
+### Startup checks
 
-## Upstream sources
+As implementation matures, startup should validate as much as the public boundary permits:
 
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/client/README.md
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/server/README.md
+1. runtime executable/config resolution;
+2. successful `initialize`;
+3. workspace validity;
+4. provider/model configuration acceptance;
+5. detected Harness/SDK version against the tested range;
+6. optional terminal/bridge capabilities.
 
-Last reviewed: 2026-08-20.
+A mismatch should report detected version, tested range and failing capability without leaking credentials.
+
+### CI compatibility layers
+
+**Protocol/fake-runtime tests:** initialize success/failure, prompt receipt, event ordering, running/idle transitions, subagent lifecycle, malformed frames, unknown notifications, timeout and EOF/transport loss.
+
+**Official-runtime smoke:** boot -> initialize -> enqueue prompt or deterministic mock path -> observe events -> idle -> graceful shutdown. Credentialed live-provider tests must remain optional/trusted, never required on untrusted PRs.
+
+### Breaking upstream change response
+
+1. reproduce against a contract/smoke test;
+2. verify whether a documented public boundary changed;
+3. patch `src/upstream/` when possible;
+4. add a regression fixture/test;
+5. update the tested compatibility range and release notes;
+6. avoid leaking raw upstream types into renderer/plugin code.
+
+## Upstream areas to monitor
+
+- protocol methods/payload shapes;
+- SDK lifecycle behavior;
+- runtime package/executable layout;
+- session event vocabulary;
+- cancellation/session-close additions;
+- client-facing approval/question semantics;
+- provider/model initialization parameters;
+- Cordis config required by the JSON-RPC runtime;
+- public capability/plugin metadata useful for `dshc`.
+
+## Primary upstream sources
+
+- DeepSeek Harness repository: `deepseek-ai/deepseek-harness`
+- `docs/architecture.md`
+- `docs/capability-seams.md`
+- `packages/sdk/protocol/README.md`
+- `packages/sdk/client/README.md`
+- `packages/sdk/server/README.md`
+- `packages/examples/jsonrpc-demo/README.md`
