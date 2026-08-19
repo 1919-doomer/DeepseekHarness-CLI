@@ -7,10 +7,23 @@ This directory contains the design contract for DeepSeek Harness CLI (`dshc`). U
 | Document | Purpose |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Process boundaries, modules, event flow, terminal host responsibilities and safety boundaries |
-| [PROTOCOL.md](PROTOCOL.md) | The upstream stdio JSON-RPC surface we depend on and how it maps into terminal state |
-| [UPSTREAM-COMPATIBILITY.md](UPSTREAM-COMPATIBILITY.md) | Version pinning, compatibility rules and policy for upstream developer-preview changes |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Local development workflow, repository layout, testing and release engineering |
-| [ROADMAP.md](ROADMAP.md) | Milestones, dependency order and exit criteria |
+| [PROTOCOL.md](PROTOCOL.md) | Upstream stdio JSON-RPC surface and how it maps into terminal state |
+| [UPSTREAM-COMPATIBILITY.md](UPSTREAM-COMPATIBILITY.md) | Version pinning and policy for upstream developer-preview changes |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Development workflow, repository layout and testing |
+| [ROADMAP.md](ROADMAP.md) | Milestones and exit criteria |
+| [IMPLEMENTATION-ORDER.md](IMPLEMENTATION-ORDER.md) | Dependency-driven implementation order |
+| [RELEASE-CRITERIA.md](RELEASE-CRITERIA.md) | First-alpha release blockers |
+| [STATUS.md](STATUS.md) | Current phase and immediate next work |
+| [TRACKING.md](TRACKING.md) | GitHub Issue-based work tracking model |
+| [PROJECT-GOVERNANCE.md](PROJECT-GOVERNANCE.md) | GitHub source-of-truth policy |
+| [NAMING.md](NAMING.md) | Project, package and executable naming policy |
+| [M0-CHECKLIST.md](M0-CHECKLIST.md) | Bootstrap completion checklist |
+| [adr/](adr/) | Architecture Decision Records |
+
+Repository-level policies:
+
+- [Contributing](../CONTRIBUTING.md)
+- [Security](../SECURITY.md)
 
 ## Authority order
 
@@ -18,11 +31,12 @@ When documents disagree, use this order:
 
 1. current official DeepSeek Harness source and documentation;
 2. `UPSTREAM-COMPATIBILITY.md` for the exact upstream version targeted by this repository;
-3. `ARCHITECTURE.md` for local design decisions;
-4. `PROTOCOL.md` for the adapter contract;
-5. `ROADMAP.md` for sequencing.
+3. accepted ADRs and `ARCHITECTURE.md` for local design decisions;
+4. `PROTOCOL.md` for adapter semantics;
+5. GitHub Issues for live execution state;
+6. `ROADMAP.md` for milestone intent and sequencing.
 
-The upstream project is in developer preview. A stale assumption must be corrected in this repository rather than preserved for compatibility with our own documentation.
+The upstream project is in developer preview. A stale assumption must be corrected here rather than preserved merely because older documentation said otherwise.
 
 ## Upstream primary sources
 
@@ -39,12 +53,4 @@ The upstream project is in developer preview. A stale assumption must be correct
 
 Technical claims about DeepSeek Harness should link to an upstream primary source whenever practical. Community tutorials may be useful for debugging, but they are not normative for this project.
 
-Any commit that changes one of the following should update the relevant document in the same pull request:
-
-- supported upstream DSH version;
-- JSON-RPC method/event handling;
-- process lifecycle or shutdown behavior;
-- tool/approval UX semantics;
-- supported platforms;
-- release/install procedure;
-- milestone exit criteria.
+Any change that modifies supported upstream versions, protocol/event handling, lifecycle semantics, tool/approval UX, supported platforms, install/release procedure or milestone exit criteria must update the relevant document in the same PR.
