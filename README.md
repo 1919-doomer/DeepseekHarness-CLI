@@ -4,7 +4,7 @@
 
 **Status: pre-alpha. M0 development preparation is complete; M1 runtime implementation is ready to start. Not ready for installation yet.**
 
-[简体中文](README.zh-CN.md) · [Product](docs/PRODUCT-SPEC.md) · [Why it is different](docs/DIFFERENTIATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Roadmap](docs/ROADMAP.md) · [Status](docs/STATUS.md)
+[简体中文](README.zh-CN.md) · [Product](docs/PRODUCT-SPEC.md) · [Why it is different](docs/DIFFERENTIATION.md) · [Plugin architecture](docs/PLUGIN-ARCHITECTURE.md) · [Feature Lab](docs/FEATURE-LAB.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Status](docs/STATUS.md)
 
 ## Why this project exists
 
@@ -16,12 +16,21 @@ The product rule is simple:
 
 > **Harness owns agent semantics; `dshc` owns terminal interaction, projection and presentation.**
 
+And the extensibility rule is:
+
+> **DSH: Everything is a Plugin.**
+>
+> **dshc: Everything You See Is a Plugin.**
+
+This means the runtime remains plugin-driven by Harness while the terminal experience becomes composable through commands, tool/event renderers, views, status segments, diagnostics and capability adapters. `dshc` does not build a second model/tool/agent plugin ecosystem.
+
 The goal is a thin terminal host that:
 
 - launches or connects to an official DeepSeek Harness runtime through supported public boundaries;
 - renders the durable session/event stream as a readable coding-agent transcript;
 - supports persistent multi-turn terminal work;
 - exposes sessions, tools, subagents and runtime state instead of flattening Harness into generic chat;
+- adapts its terminal surface to supported active Harness capabilities;
 - keeps the Harness plugin/provider/runtime architecture upstream-owned;
 - behaves like a real command-line product rather than a browser UI embedded in a terminal.
 
@@ -36,11 +45,30 @@ Its strongest differentiators are:
 1. **DSH-native integration** through the official SDK/runtime boundary, not a raw DeepSeek model API wrapper.
 2. **Event-native terminal state** built from Harness session/runtime notifications.
 3. **Harness concepts as first-class UI objects**: sessions, tools, subagents, activity and future supported capabilities.
-4. **Protocol-truthful UX**: no fake cancellation, no invented prompt/result causality, no silent protocol guessing.
-5. **Observability as a product feature**: users should understand what the Harness is doing without reading JSON-RPC.
-6. **Thin, replaceable frontend architecture** so upstream owns agent behavior and `dshc` can evolve independently as a terminal product.
+4. **Capability-driven terminal UI**: supported DSH capabilities can activate matching views/renderers/status components instead of being flattened into generic chat.
+5. **Plugin-shaped terminal experience**: built-in and future terminal features converge on common command/render/view/status seams.
+6. **Protocol-truthful UX**: no fake cancellation, no invented prompt/result causality, no silent protocol guessing.
+7. **Observability as a product feature**: users should understand what the Harness is doing without reading JSON-RPC.
+8. **Thin, replaceable frontend architecture** so upstream owns agent behavior and `dshc` can evolve independently as a terminal product.
 
-See [Product differentiation](docs/DIFFERENTIATION.md).
+See [Product differentiation](docs/DIFFERENTIATION.md) and [Terminal plugin architecture](docs/PLUGIN-ARCHITECTURE.md).
+
+## Capability-driven UI vision
+
+The long-term terminal should reflect the Harness that is actually running:
+
+```text
+DSH capability                   dshc terminal surface
+--------------                   ---------------------
+subagents          ────────────►  agent tree
+jobs               ────────────►  jobs monitor
+plan mode          ────────────►  plan view
+custom tool        ────────────►  specialized renderer
+session query      ────────────►  session browser / trace
+unknown plugin     ────────────►  generic safe fallback
+```
+
+A flagship `/plugins` or `/capabilities` view should eventually make the active Harness composition visible rather than hiding the plugin graph behind a chat interface.
 
 ## Project boundaries
 
@@ -49,6 +77,7 @@ See [Product differentiation](docs/DIFFERENTIATION.md).
 - a persistent interactive CLI/TUI;
 - a renderer for Harness session and agent events;
 - terminal-local commands for status/session/navigation and later supported Harness controls;
+- a terminal plugin plane for presentation, interaction and observability;
 - a small compatibility layer around the official SDK/runtime boundary;
 - safe terminal UX for tool execution, failures and runtime shutdown;
 - cross-platform support, with Windows as a first-class blocking target.
@@ -57,6 +86,7 @@ See [Product differentiation](docs/DIFFERENTIATION.md).
 
 - a fork of DeepSeek Harness;
 - a replacement agent loop, model adapter, tool registry or persistence engine;
+- a second runtime plugin ecosystem that duplicates DSH models/tools/skills;
 - another browser UI;
 - a raw DeepSeek API chat wrapper;
 - a custom credential vault before alpha;
@@ -83,14 +113,14 @@ See [Upstream compatibility](docs/UPSTREAM-COMPATIBILITY.md) and the [M0 final r
 ```mermaid
 flowchart LR
     U[Terminal user] --> T[dshc CLI / TUI]
-    T --> C[Command + interaction layer]
-    T --> R[Terminal renderer]
+    T --> P[Terminal plugin plane]
+    P --> C[Commands / views / renderers]
     C --> S[DSH SDK adapter]
     S <-->|stdio JSON-RPC| H[Official DeepSeek Harness runtime]
     H -->|session.event / session.status| S
     S --> E[Normalized event projection]
-    E --> R
-    R --> T
+    E --> P
+    P --> T
 ```
 
 We prefer the official SDK/runtime boundary over private Harness imports. Upstream-specific/version-specific code stays isolated behind `src/upstream/`.
@@ -121,6 +151,8 @@ workspace  E:\project                     session  8b72…
 > /status
 > /session
 > /agents
+> /plugins
+> /trace
 ```
 
 The final appearance is intentionally not frozen. Transcript correctness, lifecycle behavior, tool-state clarity and terminal security come before decoration.
@@ -153,13 +185,15 @@ launch official runtime
   -> clean shutdown
 ```
 
-No full-screen TUI framework is selected in M1. The runtime boundary is proven first with a plain event-native renderer.
+No full-screen TUI framework or dynamic plugin loader is selected in M1. The runtime boundary is proven first with a plain event-native renderer. Plugin-shaped seams are an architectural direction, not an excuse to turn M1 into framework work.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
 - [Product specification](docs/PRODUCT-SPEC.md)
 - [Product differentiation](docs/DIFFERENTIATION.md)
+- [Terminal plugin architecture](docs/PLUGIN-ARCHITECTURE.md)
+- [Feature Lab](docs/FEATURE-LAB.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Terminal UX contract](docs/UX-CONTRACT.md)
 - [Upstream JSON-RPC protocol notes](docs/PROTOCOL.md)
@@ -177,12 +211,13 @@ No full-screen TUI framework is selected in M1. The runtime boundary is proven f
 
 1. **Upstream-first.** Use public DeepSeek Harness surfaces before writing adapters.
 2. **Thin host.** Do not move agent semantics into the terminal frontend.
-3. **Event-native.** Render from session/runtime events rather than scraping only final text.
-4. **Protocol-truthful.** Never claim capabilities or causality the wire does not provide.
-5. **Safe by default.** Untrusted output is sanitized and state-changing activity remains inspectable.
-6. **Cross-platform by construction.** Windows cannot be a post-release port.
-7. **Fail loudly on protocol drift.** Never silently guess when upstream changes a contract.
-8. **No fake stability.** While upstream is developer preview, compatibility is pinned and tested rather than assumed.
+3. **Composable terminal.** Commands, renderers, views and status surfaces should converge on common terminal plugin seams.
+4. **Event-native.** Render from session/runtime events rather than scraping only final text.
+5. **Protocol-truthful.** Never claim capabilities or causality the wire does not provide.
+6. **Safe by default.** Untrusted output is sanitized and state-changing activity remains inspectable.
+7. **Cross-platform by construction.** Windows cannot be a post-release port.
+8. **Fail loudly on protocol drift.** Never silently guess when upstream changes a contract.
+9. **No fake stability.** While upstream is developer preview, compatibility is pinned and tested rather than assumed.
 
 ## License and affiliation
 
