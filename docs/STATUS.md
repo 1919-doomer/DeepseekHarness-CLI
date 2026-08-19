@@ -1,41 +1,57 @@
 # Project status
 
-Current phase: **M0 — Contract and architecture lock**
+Current phase: **M1 — Runtime vertical slice (ready to start)**
 
 Updated: 2026-08-20
 
-## Complete
+## M0 status
 
-- public repository created;
-- project positioning documented;
-- English and Chinese README present;
-- architecture documented;
-- protocol dependency documented;
-- upstream compatibility policy documented;
-- development workflow documented;
-- milestone roadmap documented;
-- contribution and security policies added;
-- ADR mechanism initialized;
-- initial architecture decisions recorded;
-- issue and pull-request templates added.
+**Complete.** Development-readiness review is recorded in [M0-REVIEW-2026-08-20.md](M0-REVIEW-2026-08-20.md) and the gate is defined in [DEFINITION-OF-READY.md](DEFINITION-OF-READY.md).
 
-## In progress
+Completed pre-development work includes:
 
-- GitHub milestone Issues creation;
-- final M0 review against current upstream Harness developer-preview contracts.
+- product positioning, scope and differentiation;
+- English and Chinese README;
+- runtime/process architecture;
+- current JSON-RPC protocol semantics;
+- terminal UX contract;
+- upstream compatibility policy and final upstream re-review;
+- dependency/toolchain policy;
+- testing strategy;
+- threat model and risk register;
+- development, contribution and security policies;
+- roadmap, release gates and ADR mechanism;
+- GitHub Issue-based source-of-truth tracking;
+- executable M1 task decomposition.
 
-## Next
+## Upstream baseline entering M1
 
-M1 begins with the smallest end-to-end runtime slice:
+Reviewed 2026-08-20 against DeepSeek Harness `0.1.0-rc.8`.
 
-1. scaffold TypeScript package;
-2. pin the tested DeepSeek Harness SDK/runtime;
-3. launch the official JSON-RPC runtime;
-4. initialize against a workspace/provider/model;
-5. submit one prompt;
-6. consume durable session notifications;
-7. render committed assistant output;
-8. shut down cleanly;
-9. run the path in CI across supported platforms.
+Important constraints entering implementation:
 
-No full-screen TUI work should begin before this path is proven.
+- official TS SDK/runtime uses stdio JSON-RPC;
+- `session/prompt` returns an enqueue receipt, not an exact prompt result;
+- current protocol exposes no per-prompt cancellation or session-close request;
+- upstream is developer preview, so compatibility is pinned/tested rather than assumed.
+
+## Live execution
+
+Master M1 issue: [#10 — Runtime vertical slice](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/10)
+
+Execution order:
+
+1. [#2](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/2) — scaffold TypeScript/ESM project and pinned toolchain;
+2. [#3](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/3) — launch official Harness JSON-RPC runtime;
+3. [#4](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/4) — initialize and compatibility handshake;
+4. [#5](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/5) — prompt + session notifications;
+5. [#6](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/6) — normalized projection + plain renderer;
+6. [#7](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/7) — shutdown/process lifecycle;
+7. [#8](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/8) — protocol/fake-runtime fixtures;
+8. [#9](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/9) — cross-platform CI/smoke gate.
+
+## Immediate next action
+
+Start issue **#2**.
+
+No full-screen TUI framework is selected or required in M1. The first implementation should prove the runtime boundary with a plain event-native renderer.
