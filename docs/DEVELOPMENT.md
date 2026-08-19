@@ -1,188 +1,176 @@
-# Development guide
+# Development
 
-This document describes how development should proceed once implementation begins.
+GitHub is the project source of truth. Long-lived design lives in `docs/`; executable work and current status live in GitHub Issues; implementation changes should reference the smallest relevant Issue.
 
-## Repository rule
+## M1 toolchain
 
-GitHub is the project's source of truth.
+Use the toolchain supported by the pinned DeepSeek Harness baseline unless an implementation problem justifies a documented change:
 
-- architecture and protocol decisions live under `docs/`;
-- work items live in GitHub Issues;
-- implementation changes should reference the issue they advance;
-- meaningful behavior changes update documentation in the same PR;
-- `main` should remain buildable once M1 scaffolding lands.
+- TypeScript / ESM;
+- Node `^22.19.0 || >=24.0.0` at the current upstream baseline;
+- pnpm `11.7.0` at the current upstream baseline;
+- official DeepSeek Harness SDK/runtime surfaces;
+- no full-screen TUI framework during M1;
+- tests based on Vitest or an equivalent deterministic Node test runner;
+- GitHub Actions with Windows as a blocking target.
 
-## Planned stack
+Exact dependencies must be locked. Avoid adding convenience packages unless they materially reduce complexity or cross-platform risk.
 
-Initial implementation direction:
-
-- TypeScript;
-- Node.js version aligned with the pinned DeepSeek Harness release;
-- official `@deepseek-ai/dsh-sdk-client` for runtime control;
-- React/Ink or an equivalent terminal renderer only after the vertical protocol slice is proven;
-- Vitest or Node's test runner for unit/contract tests;
-- GitHub Actions on Ubuntu, macOS and Windows.
-
-The TUI framework is not an architectural dependency. If Ink creates lifecycle, performance or Windows-terminal problems, the rendering layer may change without changing the upstream adapter or session projection model.
-
-## Planned repository layout
+## Planned source layout
 
 ```text
-.
-├─ src/
-│  ├─ cli/
-│  ├─ commands/
-│  ├─ config/
-│  ├─ lifecycle/
-│  ├─ session/
-│  ├─ tui/
-│  └─ upstream/
-├─ runtime/
-│  └─ cordis.yml
-├─ tests/
-│  ├─ contract/
-│  ├─ integration/
-│  └─ unit/
-├─ docs/
-├─ .github/
-│  └─ workflows/
-├─ package.json
-└─ tsconfig.json
+src/
+├─ cli/          # executable, args, one-shot commands
+├─ commands/     # local/capability-aware command registry
+├─ config/       # local config schema/load
+├─ lifecycle/    # signals, shutdown, process ownership
+├─ session/      # normalized events/projection/reducers
+├─ terminal/     # plain renderer first; TUI/plugin host later
+└─ upstream/     # all DSH SDK/runtime/version-specific adaptation
+
+runtime/         # public Cordis composition if required
+tests/           # unit, fixtures, fake-runtime, integration
+docs/            # compact long-lived documentation
 ```
 
-## Development order
+The dependency direction remains:
 
-Do not start with the visual TUI.
-
-The required order is:
-
-1. project scaffold and CI;
-2. runtime launcher;
-3. JSON-RPC initialize;
-4. single prompt and streamed event capture;
-5. deterministic event normalization/projection;
-6. lifecycle/shutdown tests;
-7. interactive REPL;
-8. full terminal renderer;
-9. sessions/subagents/commands;
-10. packaging and public alpha.
-
-This order prevents a polished terminal shell from hiding an unstable runtime contract.
-
-## Local development target
-
-Once M1 lands, the expected workflow should converge toward:
-
-```bash
-npm install
-npm run build
-npm test
-npm run dev
+```text
+terminal / commands / plugins
+            ↓
+    normalized projection
+            ↓
+      upstream adapter
+            ↓
+ official DSH SDK/runtime
 ```
 
-A later developer command may accept an explicit runtime path/config while upstream package resolution remains pre-release.
+## Implementation order
 
-## Testing strategy
+Do not start with visual TUI work.
+
+1. scaffold TypeScript/ESM package and CI;
+2. launch the official JSON-RPC runtime;
+3. implement `initialize` and compatibility diagnostics;
+4. submit one prompt and consume ordered notifications;
+5. build normalized local event/projection types;
+6. render through a plain safe terminal renderer;
+7. implement bounded shutdown/process cleanup;
+8. add deterministic fake-runtime/fixture tests;
+9. establish cross-platform smoke gates;
+10. only then build the persistent interactive loop;
+11. extract stable terminal plugin seams from real behavior;
+12. choose/full-screen TUI implementation in M3.
+
+GitHub Issue #10 is the M1 master tracker; #2-#9 are its current executable tasks.
+
+## Test strategy
+
+Required CI must be credential-free.
 
 ### Unit tests
 
-Cover pure logic:
+Pure logic such as config validation, command parsing, normalized reducers, compatibility checks, output folding and terminal-control sanitization.
 
-- slash-command parsing;
-- event reducers;
-- transcript projection;
-- terminal control-sequence sanitization;
-- config validation;
-- compatibility-range checks.
+### Protocol fixtures
 
-### Protocol contract tests
+Synthetic newline-delimited JSON-RPC sequences covering success, errors, malformed frames, ordering, unknown notifications, timeouts and transport loss.
 
-Feed JSON-RPC fixtures into the adapter and assert normalized behavior.
+### Fake-runtime integration
 
-### Runtime integration tests
+Launch a deterministic subprocess that behaves like the current protocol so lifecycle/process tests run offline on every PR.
 
-Boot the pinned official Harness runtime and exercise initialize → prompt → events → idle → shutdown.
+### Official-runtime smoke
 
-### Terminal behavior tests
+Use the pinned official Harness runtime to prove launch -> initialize -> events -> idle -> shutdown. Prefer a public deterministic/mock path where available. Live provider/API-key tests are optional trusted/manual workflows only.
 
-After M2/M3:
+### Terminal/product tests
 
-- narrow and wide terminals;
-- resize behavior;
-- Ctrl+C semantics;
-- input while agent is active;
-- large tool output;
-- malformed/untrusted ANSI escape sequences;
-- Windows Terminal / ConPTY behavior;
-- non-TTY stdout for one-shot commands.
+From M2/M3 onward cover narrow/wide terminals, resize, Ctrl+C/EOF, large output, non-TTY output, Windows Terminal/ConPTY behavior, plugin fallback behavior and hostile control sequences.
 
-## Code-quality gates
+## Security engineering
 
-Before M1 exits, CI should enforce at least:
+Treat the terminal boundary as hostile input. Model text, tool output, filenames, repository content and diagnostics may contain active control sequences.
 
-- typecheck;
-- tests;
-- formatting/linting;
-- build;
-- platform matrix smoke test where practical.
+Release blockers include:
 
-No release should depend on manual local-only validation.
+- terminal escape/control injection;
+- API keys or sensitive environment values in normal logs/support bundles;
+- hidden or misleading state-changing tool activity;
+- UI behavior that silently weakens upstream approval/sandbox semantics;
+- orphaned runtime/child processes;
+- unbounded output buffers causing practical denial of service;
+- arbitrary third-party terminal plugin loading without a credible isolation model.
 
-## Security-sensitive areas
+`dshc` should not own API credentials for alpha. Prefer environment/upstream credential mechanisms and scrub diagnostics.
 
-Treat these as engineering requirements:
+Third-party plugins must not be described as sandboxed unless isolation is actually enforced. First-party/internal plugin seams can land earlier; community package loading is deferred.
 
-- terminal escape injection;
-- accidental credential logging;
-- subprocess command/environment leakage;
-- tool execution visibility;
-- approval state presentation;
-- runtime process-tree cleanup;
-- unbounded transcript/tool-output memory growth.
+See root `SECURITY.md` for reporting policy.
 
-A security-related bug that can execute terminal control sequences or leak credentials blocks release.
+## Cross-platform rules
 
-## Commit and PR guidance
+Windows is first-class from M1. Do not assume Unix-only signals, `/bin/sh`, POSIX paths/quoting or identical ANSI behavior.
 
-Prefer small, issue-scoped changes.
+Required CI direction:
 
-Suggested commit prefixes:
+- Windows latest — blocking;
+- Ubuntu latest — blocking;
+- macOS latest — blocking when the pinned upstream runtime supports the tested path.
 
-```text
-feat:
-fix:
-docs:
-test:
-refactor:
-chore:
-```
+Keep repository text LF-normalized through `.gitattributes`/`.editorconfig` to avoid cross-platform churn.
 
-A feature PR should explain:
+## Diagnostics
 
-- which issue/milestone it advances;
-- what upstream contract it relies on;
-- what user-visible behavior changed;
-- how it was tested;
-- whether compatibility documentation needs an update.
+Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes:
 
-## Architecture decision changes
+- dshc/upstream version;
+- runtime command/config path;
+- method names/ids;
+- session ids;
+- event counts/types;
+- lifecycle transitions;
+- process exit reason/code.
 
-If implementation reveals that a documented invariant is wrong, change the document deliberately instead of working around it silently.
+Do not log raw model/tool/repository content by default.
 
-For large decisions, add an ADR under `docs/adr/` with:
+A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/plugin compatibility without printing secrets.
 
-- context;
-- decision;
-- alternatives considered;
-- consequences;
-- date/status.
+## Pull requests and changes
+
+Prefer small issue-scoped changes. A feature PR should state:
+
+- Issue/milestone advanced;
+- upstream contract relied on;
+- user-visible behavior changed;
+- tests run;
+- compatibility/security implications;
+- docs changed when design/protocol behavior changed.
+
+Suggested commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`.
 
 ## Definition of done
 
-A task is not done because code exists. It is done when:
+A task is done when:
 
-- behavior is implemented;
-- tests cover the relevant contract;
-- docs are updated if behavior/architecture changed;
-- cross-platform implications are considered;
-- the linked GitHub Issue's exit criteria are satisfied.
+- acceptance criteria in its GitHub Issue are met;
+- relevant tests pass;
+- protocol/security/cross-platform implications are covered;
+- long-lived docs are updated if the contract changed;
+- no known blocker is being hidden by a renderer or compatibility shim.
+
+## Release gates
+
+The first public alpha requires at minimum:
+
+- fresh documented install/start path;
+- M1-M4 blockers closed;
+- pinned compatibility statement;
+- Windows/Linux/macOS validation for supported paths;
+- zero known terminal-injection or credential-leak blockers;
+- deterministic child-process cleanup;
+- required CI independent of secrets;
+- unofficial/community status clear in package/repository docs;
+- update/uninstall and diagnostics instructions.
+
+Roadmap prose does not duplicate live task status: use GitHub Issues for that.
