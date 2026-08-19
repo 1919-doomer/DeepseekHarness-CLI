@@ -1,24 +1,46 @@
 # DeepSeek Harness CLI
 
-> An unofficial, terminal-native interactive frontend for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), inspired by the ergonomics of Codex CLI and Claude Code.
+> An unofficial, terminal-native interactive frontend for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), inspired by the ergonomics of modern coding-agent CLIs without copying their agent architecture.
 
-**Status: pre-alpha / architecture bootstrap. Not ready for installation yet.**
+**Status: pre-alpha. M0 development preparation is complete; M1 runtime implementation is ready to start. Not ready for installation yet.**
 
-[简体中文](README.zh-CN.md) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Roadmap](docs/ROADMAP.md) · [Development](docs/DEVELOPMENT.md)
+[简体中文](README.zh-CN.md) · [Product](docs/PRODUCT-SPEC.md) · [Why it is different](docs/DIFFERENTIATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Roadmap](docs/ROADMAP.md) · [Status](docs/STATUS.md)
 
 ## Why this project exists
 
-DeepSeek Harness (`dsh`) is an open-source, plugin-first agent harness developed by DeepSeek AI. Its shipped interactive product is currently the Web UI; it also exposes ACP, stdio JSON-RPC SDK, and a one-shot headless CLI. The upstream project intentionally removed its previous TUI package, leaving no maintained interactive terminal frontend.
+DeepSeek Harness (`dsh`) is an open-source, plugin-first agent harness developed by DeepSeek AI. Its maintained interactive product surface is the Web UI; it also exposes ACP, a stdio JSON-RPC SDK runtime, and a one-shot headless CLI. The upstream project removed its previous TUI package, leaving no maintained persistent interactive terminal frontend.
 
-This project fills that specific gap without forking the Harness core.
+`dshc` fills that specific gap without forking the Harness core.
 
-The goal is a thin, terminal-native host that:
+The product rule is simple:
 
-- launches or connects to an official DeepSeek Harness runtime;
+> **Harness owns agent semantics; `dshc` owns terminal interaction, projection and presentation.**
+
+The goal is a thin terminal host that:
+
+- launches or connects to an official DeepSeek Harness runtime through supported public boundaries;
 - renders the durable session/event stream as a readable coding-agent transcript;
-- supports multi-turn interactive prompts, sessions, subagents, tools and approvals;
-- keeps the Harness plugin/runtime architecture upstream-owned;
-- behaves like a terminal product rather than a browser UI wrapped in a terminal.
+- supports persistent multi-turn terminal work;
+- exposes sessions, tools, subagents and runtime state instead of flattening Harness into generic chat;
+- keeps the Harness plugin/provider/runtime architecture upstream-owned;
+- behaves like a real command-line product rather than a browser UI embedded in a terminal.
+
+## What makes `dshc` different
+
+`dshc` is **not another independent coding-agent harness**.
+
+Compared with the DSH Web UI, it is terminal-native and repository-local. Compared with the official headless mode, it is designed for persistent multi-turn work rather than one task/one final stdout result. Compared with Codex CLI or Claude Code, it does not replace the underlying agent semantics with its own loop: it stays thin over DeepSeek Harness and exposes Harness-native concepts. Compared with hackable harnesses such as Pi/OpenCode-style systems, extensibility should primarily come from DSH providers/plugins instead of building a second parallel agent ecosystem.
+
+Its strongest differentiators are:
+
+1. **DSH-native integration** through the official SDK/runtime boundary, not a raw DeepSeek model API wrapper.
+2. **Event-native terminal state** built from Harness session/runtime notifications.
+3. **Harness concepts as first-class UI objects**: sessions, tools, subagents, activity and future supported capabilities.
+4. **Protocol-truthful UX**: no fake cancellation, no invented prompt/result causality, no silent protocol guessing.
+5. **Observability as a product feature**: users should understand what the Harness is doing without reading JSON-RPC.
+6. **Thin, replaceable frontend architecture** so upstream owns agent behavior and `dshc` can evolve independently as a terminal product.
+
+See [Product differentiation](docs/DIFFERENTIATION.md).
 
 ## Project boundaries
 
@@ -26,53 +48,52 @@ The goal is a thin, terminal-native host that:
 
 - a persistent interactive CLI/TUI;
 - a renderer for Harness session and agent events;
-- terminal commands such as `/model`, `/session`, `/resume`, `/agents`, `/clear` and `/help`;
+- terminal-local commands for status/session/navigation and later supported Harness controls;
 - a small compatibility layer around the official SDK/runtime boundary;
-- safe terminal UX for tool execution, approvals, failures and runtime shutdown;
-- cross-platform support, with Windows as a first-class target.
+- safe terminal UX for tool execution, failures and runtime shutdown;
+- cross-platform support, with Windows as a first-class blocking target.
 
 ### We are not building
 
 - a fork of DeepSeek Harness;
 - a replacement agent loop, model adapter, tool registry or persistence engine;
 - another browser UI;
-- a second implementation of DeepSeek's model protocol;
+- a raw DeepSeek API chat wrapper;
+- a custom credential vault before alpha;
 - an application that pretends to be an official DeepSeek product.
 
 ## Upstream facts that shape the design
 
-At project bootstrap (2026-08-20), upstream DeepSeek Harness is `0.1.0-rc.8` and explicitly in developer preview with compatibility-breaking changes expected.
+The M0 final review on 2026-08-20 targets upstream DeepSeek Harness `0.1.0-rc.8`, which is still developer preview.
 
-The relevant supported surfaces are:
+The relevant public surfaces are:
 
-- **Web UI** — the shipped interactive frontend;
-- **headless profile** — one submitted task, one final stdout result, no interactive follow-up;
+- **Web UI** — maintained interactive frontend;
+- **headless profile** — one submitted task, one final stdout result;
 - **stdio JSON-RPC SDK runtime** — intended for out-of-process clients;
-- **TypeScript SDK client** — can drive a Harness runtime subprocess and consume session/subagent notifications;
+- **TypeScript SDK client** — drives a Harness runtime subprocess and consumes session/subagent notifications;
 - **ACP** — another supported non-Web integration surface.
 
-The upstream JSON-RPC wire is intentionally small today: `initialize`, `session/prompt`, `shutdown`, plus session-status/event and subagent notifications. It currently has no per-prompt cancellation, no per-session close method and no negotiated protocol version. Those limitations are first-class design constraints here, not details to hide.
+The current JSON-RPC wire exposes `initialize`, `session/prompt`, `shutdown`, plus session-status/event and subagent notifications. It has no per-prompt cancellation or per-session close method. `session/prompt` is an enqueue receipt rather than an exact assistant-result contract. Those limitations are first-class design constraints, not details to hide.
 
-See [Upstream compatibility](docs/UPSTREAM-COMPATIBILITY.md).
+See [Upstream compatibility](docs/UPSTREAM-COMPATIBILITY.md) and the [M0 final review](docs/M0-REVIEW-2026-08-20.md).
 
 ## Proposed architecture
 
 ```mermaid
 flowchart LR
-    U[Terminal user] --> T[dshc TUI / CLI]
+    U[Terminal user] --> T[dshc CLI / TUI]
     T --> C[Command + interaction layer]
-    T --> R[Event renderer]
+    T --> R[Terminal renderer]
     C --> S[DSH SDK adapter]
     S <-->|stdio JSON-RPC| H[Official DeepSeek Harness runtime]
     H -->|session.event / session.status| S
-    S --> E[Normalized event store]
+    S --> E[Normalized event projection]
     E --> R
     R --> T
 ```
 
-The key rule is simple: **the terminal owns presentation and interaction; Harness owns agent behavior.**
-
-We will prefer the official `@deepseek-ai/dsh-sdk-client` and official JSON-RPC runtime composition over importing internal Harness packages. If an upstream pre-release break forces a temporary adapter, it stays isolated behind `src/upstream/` and is documented in the compatibility matrix.
+We prefer the official SDK/runtime boundary over private Harness imports. Upstream-specific/version-specific code stays isolated behind `src/upstream/`.
 
 ## Target terminal experience
 
@@ -97,69 +118,71 @@ workspace  E:\project                     session  8b72…
 ● Running tests...
 ✓ 42 passed
 
-> /agents
+> /status
 > /session
-> /model
+> /agents
 ```
 
-The final appearance is intentionally not frozen yet. Transcript correctness, interruption behavior and tool-state clarity come before decoration.
+The final appearance is intentionally not frozen. Transcript correctness, lifecycle behavior, tool-state clarity and terminal security come before decoration.
 
 ## Command name
 
-The upstream package already owns the `dsh` executable, so this project must not shadow it. The working binary name is:
+The upstream package already owns the `dsh` executable. The working binary name is:
 
 ```sh
 dshc
 ```
 
-`dshc` means **DeepSeek Harness Console**. The package name and binary name will be finalized before the first public package release.
+`dshc` means **DeepSeek Harness Console**. Package naming will be finalized before public alpha.
 
-## Repository status
+## Development status
 
-No runtime code has been published yet. The repository is currently in **M0 — contract and architecture lock**.
+M0 is complete. Development begins with [M1 — Runtime vertical slice, issue #10](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/10).
 
-The first implementation milestone is deliberately small:
+The first executable task is [#2 — scaffold TypeScript/ESM project and pinned toolchain](https://github.com/1919-doomer/DeepseekHarness-CLI/issues/2).
 
-1. scaffold TypeScript, tests and CI;
-2. boot an official JSON-RPC Harness runtime;
-3. complete `initialize`;
-4. submit one prompt;
-5. stream and render the resulting session events;
-6. shut down cleanly on Linux, macOS and Windows.
+M1 deliberately proves only the smallest complete path:
 
-Only after that vertical slice works do we add full-screen TUI behavior.
+```text
+launch official runtime
+  -> initialize
+  -> enqueue one prompt
+  -> consume ordered session notifications
+  -> project/render assistant output
+  -> observe idle
+  -> clean shutdown
+```
 
-See the detailed [development roadmap](docs/ROADMAP.md).
+No full-screen TUI framework is selected in M1. The runtime boundary is proven first with a plain event-native renderer.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Product specification](docs/PRODUCT-SPEC.md)
+- [Product differentiation](docs/DIFFERENTIATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Terminal UX contract](docs/UX-CONTRACT.md)
 - [Upstream JSON-RPC protocol notes](docs/PROTOCOL.md)
 - [Upstream compatibility policy](docs/UPSTREAM-COMPATIBILITY.md)
-- [Development guide](docs/DEVELOPMENT.md)
-- [Roadmap and milestone exit criteria](docs/ROADMAP.md)
+- [Dependency policy](docs/DEPENDENCY-POLICY.md)
+- [Testing strategy](docs/TESTING-STRATEGY.md)
+- [Threat model](docs/THREAT-MODEL.md)
+- [Risk register](docs/RISK-REGISTER.md)
+- [Development readiness](docs/DEFINITION-OF-READY.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Current status](docs/STATUS.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Design principles
 
 1. **Upstream-first.** Use public DeepSeek Harness surfaces before writing adapters.
-2. **Thin host.** Do not move agent semantics into the TUI.
-3. **Event-native.** Render from session events rather than scraping final text.
-4. **Safe by default.** Tool execution and approvals must be legible in a terminal.
-5. **Cross-platform by construction.** Windows cannot be a post-release port.
-6. **Fail loudly on protocol drift.** Never silently guess when upstream changes a wire contract.
-7. **No fake stability.** Until upstream leaves developer preview, compatibility is pinned and tested rather than assumed.
-
-## Upstream references
-
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Upstream architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
-- [SDK protocol](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)
-- [TypeScript SDK client](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/client/README.md)
-- [JSON-RPC server](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/server/README.md)
-- [Headless bundle](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)
-- [Upstream TUI removal decision](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/simplification/2026-08-04-remove-tui-package.md)
+2. **Thin host.** Do not move agent semantics into the terminal frontend.
+3. **Event-native.** Render from session/runtime events rather than scraping only final text.
+4. **Protocol-truthful.** Never claim capabilities or causality the wire does not provide.
+5. **Safe by default.** Untrusted output is sanitized and state-changing activity remains inspectable.
+6. **Cross-platform by construction.** Windows cannot be a post-release port.
+7. **Fail loudly on protocol drift.** Never silently guess when upstream changes a contract.
+8. **No fake stability.** While upstream is developer preview, compatibility is pinned and tested rather than assumed.
 
 ## License and affiliation
 
