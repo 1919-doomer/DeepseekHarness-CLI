@@ -42,6 +42,7 @@
     "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.0-rc.8",
     "@deepseek-ai/dsh-session-checkpoint-policy": "0.1.0-rc.8",
     "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-shell-env": "0.1.0-rc.8",
     "@deepseek-ai/dsh-subagent": "0.1.0-rc.8",
     "@deepseek-ai/dsh-subagent-spawn-in-process": "0.1.0-rc.8",
     "@deepseek-ai/dsh-subprocess-local": "0.1.0-rc.8",
