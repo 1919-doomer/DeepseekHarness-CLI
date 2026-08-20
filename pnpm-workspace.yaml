@@ -1,0 +1,9 @@
+# pnpm 11 defaults to a 24-hour minimum release age. M1 intentionally pins the
+# just-released DeepSeek Harness developer-preview closure to 0.1.0-rc.8, so
+# only the upstream DeepSeek scope is exempted. All other dependencies retain
+# pnpm's default supply-chain maturity check.
+autoInstallPeers: true
+strictPeerDependencies: false
+saveExact: true
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/*'
