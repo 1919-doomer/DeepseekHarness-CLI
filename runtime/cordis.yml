@@ -1,7 +1,8 @@
 # dshc M4 coding runtime composition.
 #
 # This is a complete stdio JSON-RPC Harness process composition aligned with
-# DeepSeek Harness 0.1.0-rc.8 `examples/jsonrpc-agent/cordis.yml`.
+# DeepSeek Harness 0.1.0-rc.8 `examples/jsonrpc-agent/cordis.yml` plus the
+# zero-config repository additions validated in M4.1.
 # Harness owns agent/tool/session semantics; dshc owns only the terminal front end.
 # stdout belongs exclusively to JSON-RPC: do not add console loggers or UI plugins.
 #
@@ -21,7 +22,7 @@
     thinking: enabled
     reasoningEffort: max
 
-# Managed process groups shared by the platform shell providers.
+# Managed process groups shared by platform shell providers and ripgrep search.
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
@@ -39,13 +40,15 @@
     cwd: !!js process.env.DSH_CWD ?? process.cwd()
     timeoutMs: 60000
 
-# Shared agent spine. Shell schemas are mounted explicitly below so the visible
-# model-facing command language matches the host platform.
+# Shared agent spine. M4.1 enables the same bounded workspace-context budget
+# used by the pinned upstream coding/headless compositions. Shell schemas remain
+# external so the visible command language can match the host platform.
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
-    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent.'
-    workspaceContext: false
+    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent. Inspect the repository before changing it, make focused changes, and verify your work.'
+    workspaceContext:
+      maxBytes: 65536
     toolBash: false
     toolJobs: false
 
@@ -111,6 +114,14 @@
 
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
+
+# `glob` / `grep` are provided by the pinned DSH search plugin and its packaged
+# ripgrep binary. It uses the same DSH_CWD-backed workdir as fs-local so search
+# results are directly follow-up-readable with the filesystem tools.
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
 
 # Long-session context controls from the official JSON-RPC reference.
 - id: token-meter
