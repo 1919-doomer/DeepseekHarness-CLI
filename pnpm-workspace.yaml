@@ -7,3 +7,9 @@ strictPeerDependencies: false
 saveExact: true
 minimumReleaseAgeExclude:
   - '@deepseek-ai/*'
+
+# pnpm 11 rejects unreviewed dependency build scripts by default. esbuild is
+# the only package in the current M1 closure that requires an install-time
+# build/bootstrap script; it is used by the pinned TS/Vitest toolchain.
+allowBuilds:
+  esbuild: true
