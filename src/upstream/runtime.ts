@@ -67,6 +67,8 @@ export interface RunActivityResult {
   projection: ProjectionState
 }
 
+type RuntimeLifecycleState = 'idle' | 'starting' | 'running' | 'closing' | 'closed'
+
 export class HarnessRuntime {
   private readonly workspace: string
   private readonly provider: string
@@ -77,6 +79,7 @@ export class HarnessRuntime {
   private metadataValue: HarnessRuntimeMetadata | undefined
   private startTask: Promise<HarnessRuntimeMetadata> | undefined
   private closeTask: Promise<void> | undefined
+  private lifecycle: RuntimeLifecycleState = 'idle'
 
   constructor(private readonly options: HarnessRuntimeOptions = {}) {
     this.workspace = resolve(options.workspace ?? process.cwd())
@@ -91,11 +94,15 @@ export class HarnessRuntime {
   }
 
   async start(): Promise<HarnessRuntimeMetadata> {
-    if (this.closeTask !== undefined) {
-      throw new DshcRuntimeError('Harness runtime is already closing or closed.', 'runtime')
+    if (this.lifecycle === 'closing' || this.lifecycle === 'closed') {
+      throw runtimeClosingError()
     }
-    this.startTask ??= this.performStart()
-    return this.startTask
+    if (this.startTask !== undefined) return this.startTask
+
+    this.lifecycle = 'starting'
+    const task = this.performStart()
+    this.startTask = task
+    return task
   }
 
   async run(input: string, options: RunActivityOptions = {}): Promise<RunActivityResult> {
@@ -164,8 +171,16 @@ export class HarnessRuntime {
   }
 
   close(): Promise<void> {
-    this.closeTask ??= this.performClose()
-    return this.closeTask
+    if (this.closeTask !== undefined) return this.closeTask
+
+    // Closing is a lifecycle decision, not merely a snapshot of the currently
+    // published client. Once requested, startup may never publish a successful
+    // runtime later. performClose() closes both an already-published client and
+    // any client that becomes visible while the in-flight start task unwinds.
+    this.lifecycle = 'closing'
+    const task = this.performClose()
+    this.closeTask = task
+    return task
   }
 
   private async performStart(): Promise<HarnessRuntimeMetadata> {
@@ -173,8 +188,11 @@ export class HarnessRuntime {
     let client: HarnessClient | undefined
     try {
       await assertWorkspace(this.workspace)
+      this.assertStartupStillOwned()
+
       if (!this.options.skipInstalledVersionCheck) {
         versions = await readInstalledDshVersions()
+        this.assertStartupStillOwned()
         assertInstalledCompatibility(versions)
       }
 
@@ -188,6 +206,8 @@ export class HarnessRuntime {
         disposeGraceMs: this.options.disposeGraceMs,
         override: this.options.launchOverride,
       })
+      this.assertStartupStillOwned()
+
       client = new HarnessClient(launch)
       this.client = client
       client.start()
@@ -197,6 +217,7 @@ export class HarnessRuntime {
         model: this.model,
         ...(this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens }),
       })
+      this.assertStartupStillOwned()
       assertRuntimeIdentity(initialized.serverInfo)
 
       const metadata: HarnessRuntimeMetadata = {
@@ -211,32 +232,78 @@ export class HarnessRuntime {
         }),
       }
       this.metadataValue = metadata
+      this.lifecycle = 'running'
       return metadata
     } catch (error) {
-      this.startTask = undefined
-      if (client !== undefined) {
+      this.metadataValue = undefined
+      if (client !== undefined && this.client === client) {
+        this.client = undefined
         try {
           await client.close()
         } catch {
           // Preserve the original start failure; close is best effort here.
         }
       }
-      this.client = undefined
+
+      if (this.lifecycle !== 'closing' && this.lifecycle !== 'closed') {
+        // Ordinary startup failures remain retryable, matching the previous
+        // public behavior. A close request is terminal and never resets start.
+        this.lifecycle = 'idle'
+        this.startTask = undefined
+      }
       throw classifyRuntimeError(error, this.options.env ?? process.env)
     }
   }
 
   private async performClose(): Promise<void> {
-    const client = this.client
-    this.client = undefined
-    this.metadataValue = undefined
-    if (client === undefined) return
+    const inFlightStart = this.startTask
+    let firstFailure: unknown
+
+    const closePublishedClient = async (): Promise<void> => {
+      const client = this.client
+      this.client = undefined
+      if (client === undefined) return
+      try {
+        await client.close()
+      } catch (error) {
+        firstFailure ??= error
+      }
+    }
+
     try {
-      await client.close()
-    } catch (error) {
-      throw classifyRuntimeError(error, this.options.env ?? process.env)
+      // If startup has already published/started a client, close it now so an
+      // initialize request does not hold signal shutdown open unnecessarily.
+      await closePublishedClient()
+
+      // A start that was still in workspace/version/launch resolution when the
+      // close arrived must be allowed to observe `closing` and unwind. Awaiting
+      // that exact task prevents a late publication from escaping cleanup.
+      if (inFlightStart !== undefined) {
+        await inFlightStart.catch(() => undefined)
+      }
+
+      // Cover the narrow case where startup published between the first client
+      // snapshot and observing the close request.
+      await closePublishedClient()
+    } finally {
+      this.metadataValue = undefined
+      this.lifecycle = 'closed'
+    }
+
+    if (firstFailure !== undefined) {
+      throw classifyRuntimeError(firstFailure, this.options.env ?? process.env)
     }
   }
+
+  private assertStartupStillOwned(): void {
+    if (this.lifecycle === 'closing' || this.lifecycle === 'closed') {
+      throw runtimeClosingError()
+    }
+  }
+}
+
+function runtimeClosingError(): DshcRuntimeError {
+  return new DshcRuntimeError('Harness runtime is already closing or closed.', 'runtime')
 }
 
 async function assertWorkspace(workspace: string): Promise<void> {
