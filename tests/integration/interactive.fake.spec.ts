@@ -87,7 +87,9 @@ describe('M2 interactive loop with fake Harness runtime', () => {
       expect(records[2]?.sessionId).not.toBe('session-first')
 
       const rendered = capture.read()
-      expect(rendered.match(/assistant> hello/g)).toHaveLength(3)
+      expect(rendered.match(/assistant> hel/g)).toHaveLength(3)
+      expect(rendered.match(/assistant> lo/g)).toHaveLength(3)
+      expect(rendered).not.toContain('assistant(committed)> hello')
       expect(rendered).toContain('tool> read')
       expect(rendered).toContain('agent+')
       expect(rendered).not.toContain('private-reasoning-must-not-render')
@@ -112,7 +114,10 @@ describe('M2 interactive loop with fake Harness runtime', () => {
         initialSessionId: 'session-eof',
       })
       expect(result).toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
-      expect(capture.read()).toContain('assistant> hello')
+      const rendered = capture.read()
+      expect(rendered).toContain('assistant> hel')
+      expect(rendered).toContain('assistant> lo')
+      expect(rendered).not.toContain('assistant(committed)> hello')
     } finally {
       await runtime.close()
     }
