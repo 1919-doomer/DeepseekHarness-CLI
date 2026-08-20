@@ -1,0 +1,46 @@
+{
+  "name": "deepseek-harness-cli",
+  "version": "0.0.0-dev",
+  "description": "Unofficial terminal-native console for DeepSeek Harness",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "bin": {
+    "dshc": "./dist/cli/bin.js"
+  },
+  "files": [
+    "dist",
+    "runtime",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli/bin.ts",
+    "lint": "oxlint src tests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude tests/integration/official-runtime.spec.ts",
+    "test:official-runtime": "vitest run tests/integration/official-runtime.spec.ts",
+    "test:all": "vitest run",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent-spine-demo": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-sdk-client": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-sdk-jsonrpc-demo": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.0-rc.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.0",
+    "oxlint": "1.76.0",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

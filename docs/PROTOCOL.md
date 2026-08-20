@@ -2,36 +2,57 @@
 
 This document records the public DeepSeek Harness boundary that `dshc` depends on. Upstream documentation remains authoritative.
 
-Last reviewed: **2026-08-20**.
+Last reviewed and exercised in CI: **2026-08-20**.
 
-## Current baseline
+## Validated M1 baseline
 
-M1 targets the DeepSeek Harness developer-preview line around `0.1.0-rc.8`.
+M1 is pinned to DeepSeek Harness `0.1.0-rc.8` and the current SDK server protocol identity:
 
-Current upstream toolchain baseline:
-
+- DeepSeek Harness packages: `0.1.0-rc.8`;
+- `@deepseek-ai/cordis`: `4.0.1`;
+- SDK server name: `deepseek-harness-sdk-runtime`;
+- SDK protocol version: `0.0.1`;
 - Node: `^22.19.0 || >=24.0.0`;
 - pnpm: `11.7.0`.
 
-The implementation lockfile must pin the exact packages actually tested. Public releases must state their tested Harness/SDK range.
+The exact dependency closure is committed in `pnpm-lock.yaml`. Startup checks reject an unexpected SDK/runtime package version or server protocol identity instead of silently guessing compatibility.
 
-Preferred public dependencies are the official TypeScript SDK client, official JSON-RPC runtime entry point/protocol types where exported, and a public Cordis runtime composition. Avoid private source imports, copied upstream TUI code, undocumented plugin internals and parsing human-formatted output when structured events exist.
+The credential-free official-runtime smoke is green on:
+
+- Windows latest / Node 24;
+- macOS latest / Node 24;
+- Ubuntu latest / Node 24;
+- Ubuntu latest / Node 22.19.0.
+
+M1 uses only public package/runtime surfaces: `@deepseek-ai/dsh-sdk-client`, the published `dsh-jsonrpc-agent` entry point from `@deepseek-ai/dsh-sdk-jsonrpc-demo`, the public JSON-RPC server, and a small external Cordis composition under `runtime/cordis.yml`.
 
 ## Transport
 
-The SDK protocol uses newline-delimited JSON-RPC 2.0 over caller-owned stdin/stdout.
+The SDK protocol uses newline-delimited JSON-RPC 2.0 over caller-owned stdin/stdout. Harness stdout is protocol-only; human diagnostics belong on the `dshc` side or stderr.
 
-Harness stdout is therefore protocol-only. Human diagnostics belong on the `dshc` side, stderr, or a separate scrubbed log.
+The M1 process model is:
+
+```text
+dshc process
+    │
+    │ stdin/stdout JSON-RPC
+    ▼
+official dsh-jsonrpc-agent
+    │
+    └─ runtime/cordis.yml
+```
+
+`src/upstream/` owns all launch/version/wire adaptation. Terminal code consumes normalized local events instead of private Harness objects.
 
 ## Request surface
 
-At the current baseline the public client-to-runtime requests are:
+At the validated baseline the public client-to-runtime requests are:
 
-| Method | Purpose | Important semantics |
+| Method | Purpose | Semantics used by dshc |
 |---|---|---|
-| `initialize` | Initialize workspace/provider/model configuration | handshake, not protocol-version negotiation |
-| `session/prompt` | Queue a user message into a session | returns an enqueue receipt (`messageId`), not an assistant result |
-| `shutdown` | Request runtime shutdown | process teardown still requires bounded escalation |
+| `initialize` | configure workspace/provider/model | handshake; returns server identity |
+| `session/prompt` | queue a user message | returns an enqueue receipt (`messageId`), not an assistant result |
+| `shutdown` | request runtime shutdown | followed by bounded SDK process teardown when needed |
 
 ## Notification surface
 
@@ -41,120 +62,82 @@ The runtime can emit:
 |---|---|
 | `session.event` | durable session-log event envelope |
 | `session.status` | whole-agent `running` / `idle` transition |
-| `subagent.started` | child-agent start notification |
-| `subagent.finished` | child completion for supported in-process descendants |
+| `subagent.started` | descendant start notification |
+| `subagent.finished` | descendant completion notification where supported |
 
-Notifications may be global to the runtime; client-side projection must scope root and descendant sessions correctly.
+M1 subscribes before prompting, waits for the matching durable `agent/inbox/spliced` receipt, then projects subsequent root/descendant notifications until the root session reports `idle`. This mirrors the ownership interval used by the official high-level SDK without inventing strict prompt/response causality.
+
+## Event projection rules
+
+M1 normalizes the public event stream into terminal-facing state.
+
+Rules:
+
+1. preserve SDK notification order;
+2. scope unrelated global session traffic out of the active session tree;
+3. render `text-delta` streaming as ephemeral visible output;
+4. treat the committed assistant message as authoritative and avoid duplicate rendering;
+5. keep tool call/result and subagent lifecycle visible;
+6. do **not** surface reasoning deltas as normal assistant text;
+7. retain terminal turn failures separately from later `idle` state;
+8. count unknown event vocabulary for diagnostics and degrade safely;
+9. never invent an event merely because the UI would like one.
 
 ## Prompt ownership is not prompt/result RPC
 
-`session/prompt` confirms that a message was queued. Its `messageId` does not identify a later assistant message and does not establish strict one-request/one-response causality.
+`session/prompt` confirms that a user message was queued. Its `messageId` does not identify a later assistant message.
 
-The high-level activity interval is approximately:
+The M1 activity interval is:
 
-1. enqueue prompt;
-2. observe durable receipt;
-3. consume subsequent events;
-4. finish when the whole agent becomes idle.
+```text
+subscribe session tree
+ -> enqueue prompt
+ -> observe matching durable inbox receipt
+ -> consume ordered notifications
+ -> stop at root session.status(idle)
+```
 
-Steering, queued work, injected context or descendants may contribute before idle. `dshc` must not invent stronger causality in its state model or labels.
+Steering, injected context, queued work or descendants can contribute before idle. `dshc` therefore uses terms such as activity/turn interval rather than exposing a false `prompt -> exact response` protocol abstraction.
 
-## Event handling rules
+## Cancellation, timeout and shutdown
 
-1. Preserve upstream wire order.
-2. Keep enough durable envelope data for projection/debugging.
-3. Treat streaming chunks as ephemeral until committed output arrives.
-4. Avoid duplicate output when a committed assistant message replaces streaming text.
-5. Track root and descendant session activity separately.
-6. Use `session.status` for whole-agent running/idle state when available.
-7. Unknown event types should degrade safely and remain visible in diagnostics.
-8. Do not infer protocol events merely because the UI would like them to exist.
+The validated public protocol still has **no per-prompt cancel** and **no per-session close** request.
 
-## Cancellation and interruption
+Therefore M1:
 
-The current public protocol has **no per-prompt cancel request** and **no per-session close request**.
+- bounds request and activity waits;
+- reports activity timeout without claiming the model turn was cancelled;
+- makes SIGINT/SIGTERM close the owned Harness runtime, not a fictitious single prompt;
+- relies on the official SDK shutdown sequence and bounded process escalation;
+- treats transport/runtime failure separately from a model turn error.
 
-Therefore:
+A future official cancel method belongs behind `src/upstream/` and must replace, not disguise, the current coarse process-level fallback.
 
-- clearing local input is not runtime cancellation;
-- `dshc` must not print “cancelled” unless a real terminal condition is known;
-- abandoning active work may require explicit runtime-process termination;
-- destructive process termination must be described truthfully;
-- a future official cancel method should replace the fallback behind `src/upstream/` without forcing a UI rewrite.
+## Compatibility policy
 
-## Shutdown
+DeepSeek Harness remains developer preview. Before each milestone, issue #17 requires a fresh upstream check.
 
-Prefer the official SDK lifecycle: protocol `shutdown`, then bounded teardown/escalation where necessary.
+When the public boundary changes:
 
-Important test cases:
+1. reproduce the change in fixture/official-runtime tests;
+2. update only `src/upstream/` where possible;
+3. add a regression test;
+4. update this validated baseline;
+5. fail clearly on unsupported identities instead of silently reinterpreting fields.
 
-- normal exit while idle;
-- Ctrl+C while idle and while running;
-- runtime crash/EOF;
-- transport failure;
-- Windows process-tree behavior;
-- SIGTERM/EOF behavior on POSIX.
+## M1 contract tests
 
-## Compatibility strategy
+Required CI is credential-free and contains two layers:
 
-DeepSeek Harness is developer preview and the current wire does not negotiate a protocol version. Compatibility must therefore be explicit.
+**Fake-runtime subprocess tests** cover initialize validation, receipt ownership, ordering, unrelated-session filtering, text vs reasoning chunks, tool/subagent projection, activity timeout, malformed protocol, child crash/EOF, secret redaction and bounded shutdown.
 
-`dshc` will:
-
-- pin and test an upstream range;
-- isolate all version-specific behavior under `src/upstream/`;
-- expose detected versions in diagnostics where available;
-- run synthetic/fake-runtime contract tests without credentials;
-- run official-runtime smoke tests against the pinned baseline;
-- fail clearly when required behavior changes;
-- never silently reinterpret a changed wire field or widen a version range without tests.
-
-### Startup checks
-
-As implementation matures, startup should validate as much as the public boundary permits:
-
-1. runtime executable/config resolution;
-2. successful `initialize`;
-3. workspace validity;
-4. provider/model configuration acceptance;
-5. detected Harness/SDK version against the tested range;
-6. optional terminal/bridge capabilities.
-
-A mismatch should report detected version, tested range and failing capability without leaking credentials.
-
-### CI compatibility layers
-
-**Protocol/fake-runtime tests:** initialize success/failure, prompt receipt, event ordering, running/idle transitions, subagent lifecycle, malformed frames, unknown notifications, timeout and EOF/transport loss.
-
-**Official-runtime smoke:** boot -> initialize -> enqueue prompt or deterministic mock path -> observe events -> idle -> graceful shutdown. Credentialed live-provider tests must remain optional/trusted, never required on untrusted PRs.
-
-### Breaking upstream change response
-
-1. reproduce against a contract/smoke test;
-2. verify whether a documented public boundary changed;
-3. patch `src/upstream/` when possible;
-4. add a regression fixture/test;
-5. update the tested compatibility range and release notes;
-6. avoid leaking raw upstream types into renderer/plugin code.
-
-## Upstream areas to monitor
-
-- protocol methods/payload shapes;
-- SDK lifecycle behavior;
-- runtime package/executable layout;
-- session event vocabulary;
-- cancellation/session-close additions;
-- client-facing approval/question semantics;
-- provider/model initialization parameters;
-- Cordis config required by the JSON-RPC runtime;
-- public capability/plugin metadata useful for `dshc`.
+**Official-runtime keyless smoke** launches the published `dsh-jsonrpc-agent`, initializes the real Harness composition, routes the DeepSeek adapter to a local deterministic HTTP model stub, observes committed output and idle, then performs clean shutdown. No provider secret or paid model call is required.
 
 ## Primary upstream sources
 
-- DeepSeek Harness repository: `deepseek-ai/deepseek-harness`
-- `docs/architecture.md`
-- `docs/capability-seams.md`
+- `deepseek-ai/deepseek-harness/package.json`
 - `packages/sdk/protocol/README.md`
 - `packages/sdk/client/README.md`
 - `packages/sdk/server/README.md`
 - `packages/examples/jsonrpc-demo/README.md`
+- `examples/jsonrpc-agent/`
