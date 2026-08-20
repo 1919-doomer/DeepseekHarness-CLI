@@ -4,6 +4,7 @@ import {
   TERMINAL_PLUGIN_API_VERSION,
   type TerminalCommandContext,
   type TerminalPluginSpec,
+  type TerminalRenderContext,
   type TerminalViewContext,
   type TranscriptMutation,
 } from './api.js'
@@ -58,24 +59,24 @@ function activityPlugin(): TerminalPluginSpec {
         id: 'tool-block',
         priority: 100,
         match: event => event.kind === 'tool-call' || event.kind === 'tool-result',
-        render: event => toolMutations(event),
+        render: (event, context) => toolMutations(event, context),
       },
       {
         id: 'agent-block',
         priority: 90,
         match: event => event.kind === 'subagent-started' || event.kind === 'subagent-finished',
-        render: event => agentMutations(event),
+        render: (event, context) => agentMutations(event, context),
       },
     ],
   }
 }
 
-function toolMutations(event: NormalizedEvent): readonly TranscriptMutation[] {
+function toolMutations(event: NormalizedEvent, context: TerminalRenderContext): readonly TranscriptMutation[] {
   if (event.kind === 'tool-call') {
     return [{
       kind: 'append',
       block: {
-        id: `tool-${event.callId}`,
+        id: `tool-${context.activityId}-${event.callId}`,
         kind: 'tool',
         title: `tool · ${sanitizeTerminalText(event.name)}`,
         text: sanitizeTerminalText(event.arguments),
@@ -88,7 +89,7 @@ function toolMutations(event: NormalizedEvent): readonly TranscriptMutation[] {
   if (event.kind === 'tool-result') {
     return [{
       kind: 'patch',
-      id: `tool-${event.callId}`,
+      id: `tool-${context.activityId}-${event.callId}`,
       patch: {
         detail: sanitizeTerminalText(event.text),
         state: event.isError ? 'error' : 'success',
@@ -99,12 +100,12 @@ function toolMutations(event: NormalizedEvent): readonly TranscriptMutation[] {
   return []
 }
 
-function agentMutations(event: NormalizedEvent): readonly TranscriptMutation[] {
+function agentMutations(event: NormalizedEvent, context: TerminalRenderContext): readonly TranscriptMutation[] {
   if (event.kind === 'subagent-started') {
     return [{
       kind: 'append',
       block: {
-        id: `agent-${event.childSessionId}`,
+        id: `agent-${context.activityId}-${event.childSessionId}`,
         kind: 'agent',
         title: event.provider === undefined ? 'subagent' : `subagent · ${sanitizeTerminalText(event.provider)}`,
         text: sanitizeTerminalText(event.childSessionId),
@@ -115,7 +116,7 @@ function agentMutations(event: NormalizedEvent): readonly TranscriptMutation[] {
     }]
   }
   if (event.kind === 'subagent-finished') {
-    return [{ kind: 'patch', id: `agent-${event.childSessionId}`, patch: { state: 'finished' } }]
+    return [{ kind: 'patch', id: `agent-${context.activityId}-${event.childSessionId}`, patch: { state: 'finished' } }]
   }
   return []
 }
@@ -153,23 +154,23 @@ function renderCapabilities(context: TerminalViewContext): string {
 
 function renderTrace(context: TerminalViewContext): string {
   if (context.events.length === 0) return 'No normalized runtime events have been observed in this terminal process yet.'
-  return context.events.slice(-120).map(formatTraceEvent).join('\n')
+  return context.events.slice(-120).map((event, index) => formatTraceEvent(event, context.events.length - Math.min(120, context.events.length) + index)).join('\n')
 }
 
-export function formatTraceEvent(event: NormalizedEvent): string {
-  const prefix = String(event.sequence).padStart(4, '0')
+export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.sequence): string {
+  const prefix = String(timelineIndex).padStart(4, '0')
   switch (event.kind) {
     case 'session-status': return `${prefix} session ${short(event.sessionId)} ${event.status}`
     case 'user-message': return `${prefix} user ${short(event.sessionId)} ${preview(event.text)}`
     case 'assistant-delta': return `${prefix} assistant.stream ${short(event.sessionId)} +${event.text.length} chars`
     case 'assistant-message': return `${prefix} assistant.commit ${short(event.sessionId)} ${event.text.length} chars`
-    case 'tool-call': return `${prefix} tool.call ${event.name} ${short(event.callId)}`
+    case 'tool-call': return `${prefix} tool.call ${sanitizeTerminalText(event.name)} ${short(event.callId)}`
     case 'tool-result': return `${prefix} tool.${event.isError ? 'error' : 'result'} ${short(event.callId)} ${event.text.length} chars`
     case 'subagent-started': return `${prefix} agent.start ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'subagent-finished': return `${prefix} agent.finish ${short(event.childSessionId)}`
     case 'turn-error': return `${prefix} turn.error ${preview(event.message)}`
-    case 'internal': return `${prefix} internal ${event.type}`
-    case 'unknown': return `${prefix} unknown ${event.method}${event.type === undefined ? '' : `/${event.type}`}`
+    case 'internal': return `${prefix} internal ${sanitizeTerminalText(event.type)}`
+    case 'unknown': return `${prefix} unknown ${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`
   }
 }
 
@@ -191,9 +192,9 @@ function renderAgents(context: TerminalViewContext): string {
       })
     }
   }
-  const lines = [`root ${context.session.sessionId} · ${context.phase}`]
+  const lines = [`root ${sanitizeTerminalText(context.session.sessionId)} · ${context.phase}`]
   for (const [id, agent] of agents) {
-    lines.push(`  └─ ${id} · ${agent.status}${agent.provider === undefined ? '' : ` · ${agent.provider}`}`)
+    lines.push(`  └─ ${sanitizeTerminalText(id)} · ${agent.status}${agent.provider === undefined ? '' : ` · ${sanitizeTerminalText(agent.provider)}`}`)
   }
   if (agents.size === 0) lines.push('  └─ no descendant activity observed')
   return lines.join('\n')
@@ -208,7 +209,7 @@ function compactSession(sessionId: string): string {
 }
 
 function short(value: string): string {
-  return value.length <= 16 ? value : `${value.slice(0, 7)}…${value.slice(-6)}`
+  return value.length <= 16 ? sanitizeTerminalText(value) : `${sanitizeTerminalText(value.slice(0, 7))}…${sanitizeTerminalText(value.slice(-6))}`
 }
 
 function preview(value: string): string {
