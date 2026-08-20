@@ -9,11 +9,13 @@ import {
   type TerminalViewContext,
   type TranscriptMutation,
 } from './api.js'
+import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { TerminalPluginHost } from './host.js'
 
 export function createDefaultTerminalHost(): TerminalPluginHost {
   const host = new TerminalPluginHost()
   host.register(corePlugin())
+  host.register(codingActivityPlugin())
   host.register(activityPlugin())
   return host
 }
@@ -139,6 +141,7 @@ function renderHelp(context: TerminalViewContext): string {
 function renderCapabilities(context: TerminalViewContext): string {
   const plugins = context.plugins.map(plugin => `- ${plugin.id}@${plugin.version}`).join('\n') || '- none'
   const renderers = context.renderers.map(renderer => `- ${renderer.id} · ${renderer.pluginId} · priority ${renderer.priority}`).join('\n') || '- generic safe fallback only'
+  const defaultShell = process.platform === 'win32' ? 'pwsh' : 'bash'
   return [
     'Harness boundary',
     `- runtime: ${context.runtime.serverName}/${context.runtime.protocolVersion}`,
@@ -148,6 +151,11 @@ function renderCapabilities(context: TerminalViewContext): string {
     '- runtime plugin inventory: partial/unavailable on SDK protocol 0.0.1',
     '- prompt cancel: unavailable',
     '- per-session close: unavailable',
+    '',
+    'Shipped dshc default coding baseline',
+    '- source: locally validated default composition; this is not runtime discovery',
+    '- runtime-config overrides may differ and are not inferred as active capabilities',
+    `- tools: ${VALIDATED_DEFAULT_CODING_TOOLS.filter(tool => tool !== 'bash' && tool !== 'pwsh').join(', ')}, ${defaultShell}`,
     '',
     'Active dshc terminal plugins',
     plugins,
