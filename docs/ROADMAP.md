@@ -70,25 +70,74 @@ M3 intentionally does **not** load arbitrary third-party Node plugins. The first
 
 Issue #35 continues into M4 for deeper trace/debugger hardening rather than being treated as fully closed by the initial M3 trace/topology slice.
 
-## M4 — Reliability, security and compatibility — next — #13
+## M4 — Simple-by-default daily-use baseline + hardening — next — #13
 
-Make daily use dependable and prepare the terminal/plugin boundaries for alpha-quality scrutiny:
+M4 turns the M3 terminal product into a practical daily repository frontend while preserving the central architecture rule: DSH owns agent semantics and runtime capabilities; `dshc` owns the terminal control plane.
 
-- compatibility/startup diagnostics and `dshc doctor` direction;
+The product principle for M4 and later is:
+
+> **Simple by default, Harness-native underneath.**
+
+The intended normal-user path is:
+
+```text
+install / configure provider
+ -> cd <repository>
+ -> dshc
+ -> use the active DSH runtime through the terminal
+```
+
+A first useful coding task must not require the user to understand Cordis, edit `cordis.yml`, or manually assemble a Harness plugin tree.
+
+### M4.0 — Upstream-native runtime baseline
+
+- validate the pinned DSH profile/bundle/composition contracts used for real repository work;
+- prefer consuming/following official DSH composition over maintaining a parallel handwritten `dshc` tool inventory;
+- replace the intentionally minimal M1-M3 runtime composition as the product default once the supported upstream boundary is proven;
+- retain a minimal composition only where it is useful for deterministic fixtures and contract tests;
+- add upstream-drift/compatibility tests around the chosen composition boundary.
+
+### M4.1 — Zero-config repository workflow
+
+- current working directory is the default workspace;
+- `cd repo && dshc` exposes the verified DSH-backed repository baseline;
+- use upstream-owned workspace context, filesystem/search, shell, skills, jobs/subagents and related capabilities where supported by the chosen runtime composition;
+- preserve DSH ownership of platform-specific shell execution, sandbox, approvals, persistence and tool semantics;
+- keep profile/runtime overrides as advanced configuration rather than first-run requirements;
+- missing capabilities degrade visibly and truthfully rather than being guessed or emulated.
+
+### M4.2 — Capability-driven terminal control plane
+
+- render observed DSH tool/skill/subagent activity clearly without redefining it;
+- keep unknown-capability/event generic fallbacks safe and inspectable;
+- improve capability discovery and diagnostics only from supported/public metadata;
+- keep first-party terminal plugins limited to interaction, projection, observability and presentation.
+
+### M4.3 — Reliability and security
+
+- compatibility/startup guards;
 - long-session memory/backpressure/output hardening;
 - deterministic process and terminal-state cleanup under failures;
 - structured secret-safe diagnostics/support data;
 - terminal-injection and alternate-screen security review;
+- credential redaction;
+- Windows/POSIX lifecycle coverage, including host-specific interrupt semantics.
+
+### M4.4 — Diagnose and recover
+
+- `dshc doctor` direction and implementation as supported by the active runtime contract;
+- runtime/config/version/protocol/provider/terminal capability diagnostics without printing secrets;
 - Session Debugger/trace filtering, durations and failure inspection (#35 continuation);
-- first-party plugin boundary/API hardening and isolation research;
-- Windows/POSIX lifecycle coverage, including host-specific interrupt semantics;
+- crash/recovery diagnostics;
 - upstream contract re-validation before alpha.
 
-Security gate: #18. Third-party plugin isolation research: #37.
+M4 completion requires an end-to-end real-repository task proving that DSH owns the workspace/tool execution path while `dshc` truthfully renders it and exits cleanly.
+
+Security gate: #18. Third-party terminal plugin isolation research: #37.
 
 ## M5 — Public alpha — #14
 
-Ship the first installable community preview:
+Ship the first installable community preview only after both reliability and first-run usability are proven:
 
 - finalize package/binary naming;
 - release/npm automation;
@@ -96,20 +145,40 @@ Ship the first installable community preview:
 - compatibility statement;
 - demo/screenshots;
 - changelog/release notes;
-- public alpha tag.
+- public alpha tag;
+- fresh-environment first-run validation on supported platforms.
+
+The release-blocking user path is approximately:
+
+```text
+install dshc
+configure a supported provider
+cd <real-repository>
+dshc
+ -> inspect repository
+ -> perform a safe change
+ -> run relevant tests
+ -> observe DSH-owned tool activity
+ -> clean shutdown
+```
+
+The normal path must not require hand-editing Harness composition. Advanced runtime/profile configuration remains progressive disclosure.
 
 Release requires the gates in `DEVELOPMENT.md` to pass.
 
 ## M6 — Post-alpha capability growth — #16
 
+M6 grows the already-working M4 repository baseline; it is not where basic coding capability begins.
+
 Candidate work, promoted only when backed by a real user problem and supported upstream contract:
 
 - public third-party terminal plugin SDK after isolation design is credible;
-- terminal profiles: minimal / coding / research / observer;
+- advanced terminal profiles such as minimal / research / observer and an explicitly tuned coding profile beyond the default M4 baseline;
 - richer agent topology and future Agent Teams views;
-- background jobs monitor;
+- richer background jobs/workflow monitor;
 - session browser/resume/time navigation using Harness persistence/query capabilities;
-- change review/diff view;
+- change review/diff-oriented terminal surfaces;
+- deeper LSP-aware presentation where supported by the active DSH composition;
 - exporter/support-bundle plugins;
 - notification plugins;
 - shell completion/additional distribution channels;
@@ -118,22 +187,23 @@ Candidate work, promoted only when backed by a real user problem and supported u
 - performance work for very long sessions;
 - plugin replay/development harness and optional hot reload.
 
-Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` must remain usable without it.
+Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` must remain useful without it.
 
 ## Feature priorities after M3
 
-The highest-value next work is no longer visual polish for its own sake. Priority is:
+The highest-value next work is:
 
-1. **Reliability under long sessions and failures.**
-2. **Security review of the terminal/plugin boundary.**
-3. **Session Debugger / Trace hardening.**
-4. **`dshc doctor` and compatibility diagnostics.**
-5. **Capability metadata improvements when supported upstream.**
-6. **Safe extension isolation before any community package loading.**
+1. **Prove the upstream-native DSH composition boundary for real repository work.**
+2. **Make `cd repo && dshc` the simple default path.**
+3. **Keep DSH capabilities visible and controllable without duplicating their semantics.**
+4. **Harden reliability, security, long-session behavior and cleanup.**
+5. **Strengthen Session Debugger / Trace and `dshc doctor`.**
+6. **Prepare the installable public alpha.**
+7. **Only then grow advanced profiles and third-party extension surfaces.**
 
 ## Admission test for new features
 
-Before creating an implementation Issue, ask whether the feature exposes or improves a real DSH capability, improves observability/control/terminal workflow, is protocol-truthful, belongs to the terminal plane, degrades safely when absent, preserves cross-platform behavior, and has an understandable security boundary.
+Before creating an implementation Issue, ask whether the feature exposes or improves a real DSH capability, improves observability/control/terminal workflow, reduces first-run complexity, is protocol-truthful, belongs to the terminal plane, degrades safely when absent, preserves cross-platform behavior, and has an understandable security boundary.
 
 If most answers are no, it probably does not belong in `dshc`.
 
