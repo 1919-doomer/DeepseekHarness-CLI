@@ -22,7 +22,8 @@ For non-sensitive bugs, use normal GitHub Issues.
 
 ## Project security invariants
 
-- Untrusted model/tool/repository text must be sanitized before terminal rendering.
+- Untrusted model/tool/repository/plugin-presented text must be neutralized before it can become terminal-active output. Transcript `title`/`text`/`detail` is also stored in terminal-inert form so future debugger/exporter/replay consumers cannot revive raw controls by bypassing Ink's final rendering boundary.
+- Intentional raw ANSI is limited to dshc-owned fixed terminal controls such as alternate-screen enter/leave and local clear. Attacker/model/tool/plugin data must never be interpolated into those control strings.
 - API keys and full environments must not be included in default logs.
 - Runtime diagnostics must redact exact sensitive environment values against the environment actually supplied to the Harness child. `HarnessRuntimeOptions.env` is an incremental patch for the default launch; an explicit `launchOverride.env` is authoritative, while an override without `env` inherits `process.env`.
 - Diagnostic redaction and child launch environment semantics must not diverge: callers must never need to duplicate the full parent environment merely to preserve credential scrubbing.
@@ -48,5 +49,7 @@ The M4 default composition uses the pinned DeepSeek Harness `0.1.0-rc.8` securit
 - `@deepseek-ai/dsh-pwsh-sandbox` on Windows.
 
 Credential-free official-runtime CI exercises repository-local read/edit/shell work and adversarial writes to sibling paths located outside both the session workspace and upstream temporary-root allowlist. The same gate verifies an explicit `danger-full-access` retry cannot create the target when no approval answerer exists.
+
+Terminal-security CI additionally injects ESC/CSI/OSC-52/BEL/C1/bidi payloads through plain assistant/tool/error output, JSON output, transcript renderer mutations, Ink status/view/event-renderer output, and local command errors. The attacker sequences must never occur raw in captured output, while their visible escaped forms remain diagnosable and dshc-owned alternate-screen controls still restore normally.
 
 These requirements are release blockers for the first public alpha.
