@@ -3,7 +3,7 @@ import { parseCliArgs } from '../../src/cli/args.js'
 
 describe('doctor CLI parsing', () => {
   it('parses doctor with diagnostic-safe options and no prompt', () => {
-    expect(parseCliArgs([
+    const options = parseCliArgs([
       'doctor',
       '--workspace',
       '/repo',
@@ -16,7 +16,9 @@ describe('doctor CLI parsing', () => {
       '--request-timeout-ms',
       '9000',
       '--json',
-    ])).toMatchObject({
+    ])
+
+    expect(options).toMatchObject({
       command: 'doctor',
       workspace: '/repo',
       provider: 'deepseek-official',
@@ -24,8 +26,8 @@ describe('doctor CLI parsing', () => {
       runtimeConfig: '/runtime/cordis.yml',
       requestTimeoutMs: 9000,
       json: true,
-      prompt: undefined,
     })
+    expect(Object.hasOwn(options, 'prompt')).toBe(false)
   })
 
   it('keeps a positional token visible so mode validation can reject doctor prompts', () => {
