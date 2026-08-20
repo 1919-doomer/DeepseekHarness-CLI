@@ -13,7 +13,12 @@ import {
 import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { TerminalPluginHost } from './host.js'
 
-const TRACE_PAGE_SIZE = 80
+const TRACE_PAGE_SIZE = 20
+const TRACE_USAGE = [
+  '/trace [all|errors|tools|agents|unknown] [--page N]',
+  '/trace session <id> [--page N]',
+  '/trace find <text> [--page N]',
+].join('\n')
 
 export type TraceQueryMode = 'all' | 'errors' | 'tools' | 'agents' | 'unknown' | 'session' | 'find'
 
@@ -46,8 +51,11 @@ function corePlugin(): TerminalPluginSpec {
       { name: 'plugins', aliases: ['capabilities'], summary: 'Inspect verified runtime metadata and active terminal adapters', execute: () => ({ kind: 'view', viewId: 'capabilities' }) },
       {
         name: 'trace',
-        summary: 'Query the bounded normalized event debugger; use /trace help for filters and paging',
+        summary: 'Query the bounded normalized event debugger; /trace help shows filters and paging',
         execute: (_context, args) => {
+          if (args.length === 1 && args[0]?.toLowerCase() === 'help') {
+            return { kind: 'message', title: 'trace', text: TRACE_USAGE }
+          }
           traceQuery = parseTraceQuery(args)
           return { kind: 'view', viewId: 'trace' }
         },
@@ -154,7 +162,7 @@ function renderHelp(context: TerminalViewContext): string {
     const aliases = command.aliases.length === 0 ? '' : ` (${command.aliases.map(alias => `/${alias}`).join(', ')})`
     return `/${command.name}${aliases}\n  ${command.summary}`
   })
-  return `Commands exposed by the active terminal plugin host:\n\n${rows.join('\n\n')}\n\nTrace debugger:\n  /trace [all|errors|tools|agents|unknown] [--page N]\n  /trace session <id> [--page N]\n  /trace find <text> [--page N]\n\nUse //text to send a literal prompt beginning with /.`
+  return `Commands exposed by the active terminal plugin host:\n\n${rows.join('\n\n')}\n\nTrace debugger:\n  ${TRACE_USAGE.replaceAll('\n', '\n  ')}\n\nUse //text to send a literal prompt beginning with /.`
 }
 
 function renderCapabilities(context: TerminalViewContext): string {
@@ -196,21 +204,21 @@ export function parseTraceQuery(args: readonly string[]): TraceQuery {
 
   if (tokens.length === 0) return { mode: 'all', page }
   const mode = tokens[0]!.toLowerCase()
-  if (mode === 'help') throw new Error('usage: /trace [all|errors|tools|agents|unknown|session <id>|find <text>] [--page N]')
+  if (mode === 'help') throw new Error(`usage:\n${TRACE_USAGE}`)
   if (mode === 'all' || mode === 'errors' || mode === 'tools' || mode === 'agents' || mode === 'unknown') {
     if (tokens.length !== 1) throw new Error(`/trace ${mode} does not accept extra arguments`)
     return { mode, page }
   }
   if (mode === 'session') {
     if (tokens.length !== 2 || tokens[1]!.length === 0) throw new Error('/trace session requires exactly one session id')
-    return { mode: 'session', page, value: sanitizeTerminalText(tokens[1]!) }
+    return { mode: 'session', page, value: tokens[1]! }
   }
   if (mode === 'find') {
     const value = sanitizeTerminalText(tokens.slice(1).join(' ').trim())
     if (value.length === 0) throw new Error('/trace find requires search text')
     return { mode: 'find', page, value }
   }
-  throw new Error('usage: /trace [all|errors|tools|agents|unknown|session <id>|find <text>] [--page N]')
+  throw new Error(`usage:\n${TRACE_USAGE}`)
 }
 
 export function renderTraceQuery(context: TerminalViewContext, query: TraceQuery): string {
