@@ -10,15 +10,23 @@ import { HarnessRuntime } from '../../src/upstream/runtime.js'
 const tempRoots: string[] = []
 const cliEntry = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
 
+const EXPECTED_CODING_TOOLS = [
+  'read',
+  'write',
+  'edit',
+  'subagent',
+  'todo_write',
+] as const
+
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('official DeepSeek Harness JSON-RPC runtime', () => {
-  it('proves initialize -> prompt -> events -> idle -> shutdown without a real provider credential', async () => {
+  it('proves initialize -> coding-capability request -> events -> idle -> shutdown without a real provider credential', async () => {
     const root = await testWorkspace()
     const modelRequests: Record<string, unknown>[] = []
-    const stub = await startModelStub('m1-official-ok', modelRequests)
+    const stub = await startModelStub('m4-official-ok', modelRequests)
 
     const runtime = new HarnessRuntime({
       workspace: root,
@@ -26,7 +34,7 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       maxTokens: 128,
       requestTimeoutMs: 10_000,
       activityTimeoutMs: 20_000,
-      env: modelEnvironment(stub.baseUrl),
+      env: modelEnvironment(stub.baseUrl, root),
     })
 
     try {
@@ -38,8 +46,8 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
         runtimePackageVersion: '0.1.0-rc.8',
       })
 
-      const result = await runtime.run('Reply with the smoke-test marker.', { sessionId: 'm1-smoke' })
-      expect(result.finalResponse).toBe('m1-official-ok')
+      const result = await runtime.run('Reply with the smoke-test marker.', { sessionId: 'm4-smoke' })
+      expect(result.finalResponse).toBe('m4-official-ok')
       expect(result.projection.activity).toBe('idle')
       expect(result.projection.lastTurnError).toBeUndefined()
       expect(modelRequests.length).toBeGreaterThanOrEqual(1)
@@ -47,16 +55,21 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
         model: 'deepseek-v4-flash',
         max_tokens: 128,
       })
+
+      const toolNames = modelToolNames(modelRequests[0])
+      expect(toolNames).toEqual(expect.arrayContaining(EXPECTED_CODING_TOOLS))
+      expect(toolNames).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
+      expect(toolNames).not.toContain(process.platform === 'win32' ? 'bash' : 'pwsh')
     } finally {
       await runtime.close()
       await closeServer(stub.server)
     }
   }, 30_000)
 
-  it('runs the built dshc one-shot distribution entrypoint through the published runtime', async () => {
+  it('runs the built dshc one-shot distribution entrypoint through the published coding runtime', async () => {
     const root = await testWorkspace()
     const modelRequests: Record<string, unknown>[] = []
-    const stub = await startModelStub('m1-cli-ok', modelRequests)
+    const stub = await startModelStub('m4-cli-ok', modelRequests)
 
     try {
       const result = await runProcess(
@@ -73,13 +86,14 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
           '20000',
           'Reply with the CLI smoke-test marker.',
         ],
-        modelEnvironment(stub.baseUrl),
+        modelEnvironment(stub.baseUrl, root),
       )
 
       expect(result.code).toBe(0)
-      expect(result.stdout).toBe('assistant> m1-cli-ok\n')
+      expect(result.stdout).toBe('assistant> m4-cli-ok\n')
       expect(result.stderr).toBe('')
       expect(modelRequests.length).toBeGreaterThanOrEqual(1)
+      expect(modelToolNames(modelRequests[0])).toEqual(expect.arrayContaining(EXPECTED_CODING_TOOLS))
     } finally {
       await closeServer(stub.server)
     }
@@ -87,17 +101,35 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
 })
 
 async function testWorkspace(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'dshc-official-m1-'))
+  const root = await mkdtemp(join(tmpdir(), 'dshc-official-m4-'))
   tempRoots.push(root)
   return root
 }
 
-function modelEnvironment(baseUrl: string): NodeJS.ProcessEnv {
+function modelEnvironment(baseUrl: string, root: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     DEEPSEEK_API_KEY: 'dshc-keyless-smoke-no-real-call',
     DEEPSEEK_BASE_URL: baseUrl,
+    DSH_HOME: join(root, '.dsh-home'),
+    DSH_SESSION_ROOT: join(root, '.dsh-sessions'),
   }
+}
+
+function modelToolNames(request: Record<string, unknown>): string[] {
+  const tools = request['tools']
+  if (!Array.isArray(tools)) return []
+  return tools.flatMap(tool => {
+    if (tool === null || typeof tool !== 'object') return []
+    const record = tool as Record<string, unknown>
+    const fn = record['function']
+    if (fn !== null && typeof fn === 'object') {
+      const name = (fn as Record<string, unknown>)['name']
+      return typeof name === 'string' ? [name] : []
+    }
+    const name = record['name']
+    return typeof name === 'string' ? [name] : []
+  })
 }
 
 async function startModelStub(
