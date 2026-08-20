@@ -50,7 +50,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 function shouldRunInteractive(options: CliOptions): boolean {
-  if (options.command === 'run') return false
+  if (options.command === 'run' || options.json) return false
   if (options.interactive) return true
   if (options.prompt !== undefined) return false
   return process.stdin.isTTY === true
