@@ -5,6 +5,8 @@ This document is the long-lived product and architecture contract for DeepSeek H
 > **DeepSeek Harness: Everything is a Plugin.**
 >
 > **dshc: Every terminal surface is pluggable.**
+>
+> **Simple by default, Harness-native underneath.**
 
 The central boundary is:
 
@@ -21,6 +23,27 @@ The product is deliberately event-native and protocol-truthful:
 - the UI never invents cancellation, causal ids or capabilities absent from the wire;
 - models, tools, skills, approvals, sandboxing, persistence, subagents and the agent loop remain upstream-owned;
 - Windows is a blocking target rather than a later port.
+
+## Simplicity and upstream-native composition
+
+Normal users should not need to understand Cordis or manually assemble a Harness plugin tree before the first useful task.
+
+The intended default path is:
+
+```text
+configure provider
+ -> cd <repository>
+ -> dshc
+ -> use the active Harness runtime
+```
+
+`dshc` should therefore provide a sensible supported runtime path while hiding nonessential composition complexity from first-run UX. Advanced runtime/profile/config overrides remain available through progressive disclosure.
+
+This simplicity must not be achieved by copying Harness semantics into the terminal process. In particular, `dshc` must not become the owner of filesystem operations, shell execution, skills, sandbox/approval policy, persistence, jobs, subagent scheduling or the agent loop merely to make startup easier.
+
+When the pinned DSH baseline exposes a supported profile/bundle/composition mechanism, prefer consuming or following that upstream mechanism over maintaining a parallel handwritten inventory of runtime tools. If a `dshc` compatibility composition is required, keep it minimal, public, replaceable and covered by upstream-drift tests.
+
+The current working directory is the natural default workspace unless the user explicitly selects another one. Missing runtime capabilities degrade visibly and truthfully rather than being silently emulated by terminal code.
 
 ## Process architecture
 
@@ -126,11 +149,15 @@ This is a **first-party/internal plugin plane**. M3 does not load arbitrary thir
 
 Harness decides what the agent can do: models, tools, skills, persistence, approval, sandbox, subagents, jobs, workflows and other runtime capabilities.
 
+Harness plugin composition is the capability layer. A runtime may combine service providers, policy plugins and model-facing tool consumers so capabilities can be replaced or omitted without changing `dshc` into the owner of those semantics.
+
 ### dshc terminal plugins
 
 `dshc` decides how supported capabilities are presented and interacted with in the terminal.
 
 A terminal plugin may improve display or local navigation. It must not silently change model routing, tool semantics, approval policy, sandbox policy, persistence or subagent scheduling.
+
+This separation is intentional: DSH plugin extensibility changes or composes what the runtime can do; dshc plugin extensibility changes how those verified capabilities appear at the terminal control plane.
 
 ## Capability-driven UI
 
@@ -167,7 +194,9 @@ M4 may add filtering, duration analysis and stronger diagnostics without changin
 - narrow terminals preserve the newest useful activity rather than corrupting the input area;
 - alternate-screen teardown must be exception-safe;
 - correctness cannot depend on color or icon-only meaning;
-- all untrusted model/tool/repository text is sanitized before terminal rendering.
+- all untrusted model/tool/repository text is sanitized before terminal rendering;
+- a first useful repository task should not require hand-editing Harness composition;
+- advanced configuration should be discoverable without becoming mandatory first-run ceremony.
 
 ## Third-party plugin security
 
@@ -189,6 +218,8 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 10. Treat local activity ids as presentation grouping only.
 11. Treat session identity as part of transcript/projection identity whenever session-tree events can interleave.
 12. Contain terminal-plugin faults so presentation extensions cannot redefine runtime success/failure.
+13. Optimize the default path for `cd repo && dshc`; expose advanced composition progressively.
+14. Prefer supported upstream DSH profile/bundle/composition mechanisms over duplicating runtime capability semantics in `dshc`.
 
 ## Non-negotiable invariants
 
@@ -204,3 +235,4 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 10. Capabilities absent from the active runtime degrade explicitly rather than being faked.
 11. Descendant session events cannot silently impersonate root completion/output state.
 12. A terminal plugin exception cannot be reported as a Harness runtime failure unless the runtime itself failed.
+13. Simpler onboarding cannot justify moving filesystem, shell, skill, approval, sandbox, persistence, jobs or subagent semantics into the terminal process.
