@@ -46,10 +46,12 @@ export function reduceTerminalEvent(
   state: TerminalTranscriptState,
   event: NormalizedEvent,
   host: TerminalPluginHost,
+  activityId: string,
   debug = false,
 ): TerminalTranscriptState {
+  const context = { debug, activityId }
   const renderer = host.matchingRenderer(event)
-  const mutations = renderer?.render(event, { debug }) ?? genericEventMutations(event, debug)
+  const mutations = renderer?.render(event, context) ?? genericEventMutations(event, context)
   const next = applyMutations(state, mutations)
   return event.kind === 'unknown'
     ? { ...next, unknownEventCount: next.unknownEventCount + 1 }
@@ -92,15 +94,19 @@ export function applyMutations(
   return { ...state, blocks }
 }
 
-function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly TranscriptMutation[] {
+function genericEventMutations(
+  event: NormalizedEvent,
+  context: { debug: boolean; activityId: string },
+): readonly TranscriptMutation[] {
   switch (event.kind) {
-    case 'assistant-delta':
+    case 'assistant-delta': {
+      const id = `assistant-${context.activityId}`
       return [{
         kind: 'append-text',
-        id: assistantStreamId(event.sessionId),
+        id,
         text: event.text,
         fallback: {
-          id: assistantStreamId(event.sessionId),
+          id,
           kind: 'assistant',
           title: 'assistant',
           text: '',
@@ -108,11 +114,12 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
           sessionId: event.sessionId,
         },
       }]
+    }
     case 'assistant-message':
       return [{
         kind: 'append',
         block: {
-          id: assistantStreamId(event.sessionId),
+          id: `assistant-${context.activityId}`,
           kind: 'assistant',
           title: 'assistant',
           text: sanitizeTerminalText(event.text),
@@ -124,7 +131,7 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
       return [{
         kind: 'append',
         block: {
-          id: `tool-${event.callId}`,
+          id: `tool-${context.activityId}-${event.callId}`,
           kind: 'tool',
           title: sanitizeTerminalText(event.name),
           text: sanitizeTerminalText(event.arguments),
@@ -136,7 +143,7 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
     case 'tool-result':
       return [{
         kind: 'patch',
-        id: `tool-${event.callId}`,
+        id: `tool-${context.activityId}-${event.callId}`,
         patch: {
           detail: sanitizeTerminalText(event.text),
           state: event.isError ? 'error' : 'success',
@@ -147,7 +154,7 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
       return [{
         kind: 'append',
         block: {
-          id: `agent-${event.childSessionId}`,
+          id: `agent-${context.activityId}-${event.childSessionId}`,
           kind: 'agent',
           title: event.provider === undefined ? 'subagent' : `subagent · ${sanitizeTerminalText(event.provider)}`,
           text: sanitizeTerminalText(event.childSessionId),
@@ -157,12 +164,12 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
         },
       }]
     case 'subagent-finished':
-      return [{ kind: 'patch', id: `agent-${event.childSessionId}`, patch: { state: 'finished' } }]
+      return [{ kind: 'patch', id: `agent-${context.activityId}-${event.childSessionId}`, patch: { state: 'finished' } }]
     case 'turn-error':
       return [{
         kind: 'append',
         block: {
-          id: `error-${event.sequence}`,
+          id: `error-${context.activityId}-${event.sequence}`,
           kind: 'error',
           title: 'turn error',
           text: sanitizeTerminalText(event.message),
@@ -171,10 +178,10 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
         },
       }]
     case 'unknown':
-      return debug ? [{
+      return context.debug ? [{
         kind: 'append',
         block: {
-          id: `unknown-${event.sequence}`,
+          id: `unknown-${context.activityId}-${event.sequence}`,
           kind: 'debug',
           title: 'unknown event',
           text: `${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`,
@@ -185,8 +192,4 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
     case 'internal':
       return []
   }
-}
-
-function assistantStreamId(sessionId: string): string {
-  return `assistant-current-${sessionId}`
 }
