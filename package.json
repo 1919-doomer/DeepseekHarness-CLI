@@ -24,8 +24,8 @@
     "lint": "oxlint src tests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude tests/integration/official-runtime.spec.ts --exclude tests/integration/official-interactive.spec.ts",
-    "test:official-runtime": "vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts",
-    "test:all": "vitest run",
+    "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts",
+    "test:all": "pnpm build && vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {

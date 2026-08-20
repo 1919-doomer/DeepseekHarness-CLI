@@ -61,5 +61,5 @@ jobs:
         run: pnpm build
       - name: Fake-runtime protocol and lifecycle tests
         run: pnpm test
-      - name: Official DSH runtime keyless smoke
+      - name: Official DSH runtime + built CLI smoke
         run: pnpm test:official-runtime

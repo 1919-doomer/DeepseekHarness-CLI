@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { TERMINAL_PLUGIN_API_VERSION } from '../../src/plugins/api.js'
+import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
 import { runTerminalProduct } from '../../src/terminal/product.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
@@ -16,43 +18,21 @@ class TestInput extends PassThrough {
   isTTY = true
   isRaw = false
   referenced = false
-
-  setRawMode(mode: boolean): this {
-    this.isRaw = mode
-    return this
-  }
-
-  ref(): this {
-    this.referenced = true
-    return this
-  }
-
-  unref(): this {
-    this.referenced = false
-    return this
-  }
+  setRawMode(mode: boolean): this { this.isRaw = mode; return this }
+  ref(): this { this.referenced = true; return this }
+  unref(): this { this.referenced = false; return this }
 }
 
 class TestOutput extends PassThrough {
   isTTY = true
   columns = 96
   rows = 28
-
-  getColorDepth(): number {
-    return 8
-  }
-
-  hasColors(): boolean {
-    return true
-  }
+  getColorDepth(): number { return 8 }
+  hasColors(): boolean { return true }
 }
 
-function runtimeFor(root: string, logPath: string): HarnessRuntime {
-  const env = {
-    ...process.env,
-    DSHC_FAKE_MODE: 'success',
-    DSHC_FAKE_LOG: logPath,
-  }
+function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRuntime {
+  const env = { ...process.env, DSHC_FAKE_MODE: mode, DSHC_FAKE_LOG: logPath }
   return new HarnessRuntime({
     workspace: root,
     env,
@@ -83,7 +63,7 @@ afterEach(async () => {
 })
 
 describe('M3 Ink terminal product with injected TTY streams', () => {
-  it('drives two same-session turns, capability view, resize and clean exit', async () => {
+  it('drives same-session turns, session-scoped descendants, capability view, resize and clean exit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-product-'))
     tempRoots.push(root)
     const logPath = join(root, 'prompts.jsonl')
@@ -112,13 +92,16 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await submitLine(input, 'first product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 1)
       await waitFor(() => readOutput().includes('hello'))
+      expect(readOutput()).toContain('working')
+      expect(readOutput()).toContain('child')
+      expect(readOutput()).toContain('child-read')
+      expect(readOutput()).toContain('child result')
+      expect(readOutput()).toContain('README content')
 
       await submitLine(input, 'second product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 2)
       await waitFor(() => readOutput().includes('turns:2'))
-
       const records = await promptRecords(logPath)
-      expect(records).toHaveLength(2)
       expect(records.map(record => record.sessionId)).toEqual(['m3-product-session', 'm3-product-session'])
 
       await submitLine(input, '/plugins')
@@ -136,17 +119,97 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
       await submitLine(input, '/exit')
       const result = await product
-      expect(result).toEqual({
-        exitCode: 0,
-        interrupted: false,
-        totalTurns: 2,
-        sessionId: 'm3-product-session',
-      })
+      expect(result).toEqual({ exitCode: 0, interrupted: false, totalTurns: 2, sessionId: 'm3-product-session' })
       await waitFor(() => !input.isRaw)
       expect(input.referenced).toBe(false)
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
       expect(readOutput()).not.toContain('private-reasoning-must-not-render')
       expect(readError()).toBe('')
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('contains command, view and status callback failures inside presentation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m3-plugin-fault-'))
+    tempRoots.push(root)
+    const runtime = runtimeFor(root, join(root, 'prompts.jsonl'))
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    const host = createDefaultTerminalHost()
+    host.register({
+      id: 'fault-test',
+      version: '1',
+      apiVersion: TERMINAL_PLUGIN_API_VERSION,
+      commands: [
+        { name: 'boom', summary: 'throw', execute: async () => { throw new Error('command exploded') } },
+        { name: 'badview', summary: 'bad view', execute: () => ({ kind: 'view', viewId: 'exploding-view' }) },
+      ],
+      views: [{ id: 'exploding-view', title: 'Exploding View', render: () => { throw new Error('view exploded') } }],
+      statusSegments: [{ id: 'exploding-status', priority: 200, render: () => { throw new Error('status exploded') } }],
+    })
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'm3-plugin-fault-session',
+      host,
+    })
+
+    try {
+      await waitFor(() => readOutput().includes('status:exploding-status:error'))
+      await submitLine(input, '/boom')
+      await waitFor(() => readOutput().includes('command exploded'))
+      await submitLine(input, '/badview')
+      await waitFor(() => readOutput().includes('view exploded'))
+      input.write('q')
+      await delay(30)
+      await submitLine(input, '/exit')
+      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false })
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('Ctrl+C during an active turn closes the whole runtime and restores terminal state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m3-product-signal-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath, 'hang-activity')
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'm3-product-signal',
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'wait for ctrl-c')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      await waitFor(() => readOutput().includes('Harness is running'))
+      input.write('\u0003')
+      const result = await product
+      expect(result).toEqual({ exitCode: 130, interrupted: true, totalTurns: 0, sessionId: 'm3-product-signal' })
+      await waitFor(() => !input.isRaw)
+      expect(input.referenced).toBe(false)
+      expect(readOutput()).toContain('no prompt-level cancel')
+      expect(readOutput()).not.toContain('cancelled')
+      expect(readOutput()).toContain(ALT_SCREEN_OFF)
     } finally {
       input.end()
       await runtime.close()
@@ -163,9 +226,7 @@ async function submitLine(input: TestInput, text: string): Promise<void> {
 async function promptRecords(logPath: string): Promise<Array<{ sessionId: string }>> {
   try {
     const text = await readFile(logPath, 'utf8')
-    return text.trim().length === 0
-      ? []
-      : text.trim().split('\n').map(line => JSON.parse(line) as { sessionId: string })
+    return text.trim().length === 0 ? [] : text.trim().split('\n').map(line => JSON.parse(line) as { sessionId: string })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error

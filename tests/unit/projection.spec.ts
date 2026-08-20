@@ -4,15 +4,20 @@ import {
   SessionProjector,
   isInboxReceipt,
   normalizeNotification,
+  toolProjectionKey,
 } from '../../src/session/projection.js'
 
 function notification(method: string, params: Record<string, unknown>): HarnessNotification {
   return { method, params }
 }
 
-function sessionEvent(type: string, data: Record<string, unknown>): HarnessNotification {
+function sessionEvent(
+  type: string,
+  data: Record<string, unknown>,
+  sessionId = 'main',
+): HarnessNotification {
   return notification('session.event', {
-    sessionId: 'main',
+    sessionId,
     event: { type, data, seq: 1, time: 1 },
   })
 }
@@ -42,64 +47,108 @@ describe('session projection', () => {
     expect(reasoning).toMatchObject({ kind: 'internal', type: 'assistant/chunk' })
   })
 
-  it('tracks committed assistant text, tools, subagents, failures and idle separately', () => {
-    const projector = new SessionProjector()
+  it('keeps root response/activity isolated from descendant sessions and namespaces tool calls', () => {
+    const projector = new SessionProjector('main')
     const inputs: HarnessNotification[] = [
       notification('session.status', { sessionId: 'main', status: 'running' }),
-      sessionEvent('assistant/chunk', {
-        turn: 1,
-        step: 1,
-        chunk: { type: 'text-delta', index: 0, text: 'hel' },
-      }),
-      sessionEvent('tool/call', {
-        turn: 1,
-        step: 1,
-        callId: 'c1',
-        name: 'read',
-        arguments: '{"path":"README.md"}',
-      }),
-      sessionEvent('tool/result', {
-        turn: 1,
-        step: 1,
-        message: {
-          role: 'tool',
-          toolCallId: 'c1',
-          content: [{ type: 'text', text: 'ok' }],
-        },
-      }),
       notification('subagent.started', {
         parentSessionId: 'main',
         childSessionId: 'child',
         providerName: 'spawn',
       }),
-      notification('subagent.finished', {
-        parentSessionId: 'main',
-        childSessionId: 'child',
-      }),
+      notification('session.status', { sessionId: 'child', status: 'running' }),
+      sessionEvent('assistant/chunk', {
+        turn: 1,
+        step: 1,
+        chunk: { type: 'text-delta', index: 0, text: 'child-' },
+      }, 'child'),
+      sessionEvent('tool/call', {
+        turn: 1,
+        step: 1,
+        callId: 'same-call',
+        name: 'child-read',
+        arguments: '{}',
+      }, 'child'),
+      sessionEvent('tool/result', {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'tool',
+          toolCallId: 'same-call',
+          content: [{ type: 'text', text: 'child-result' }],
+        },
+      }, 'child'),
       sessionEvent('assistant/message', {
         turn: 1,
         step: 1,
-        message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+        message: { role: 'assistant', content: [{ type: 'text', text: 'child-answer' }] },
+      }, 'child'),
+      notification('session.status', { sessionId: 'child', status: 'idle' }),
+      sessionEvent('assistant/chunk', {
+        turn: 1,
+        step: 2,
+        chunk: { type: 'text-delta', index: 0, text: 'root-' },
+      }),
+      sessionEvent('tool/call', {
+        turn: 1,
+        step: 2,
+        callId: 'same-call',
+        name: 'root-read',
+        arguments: '{}',
+      }),
+      sessionEvent('tool/result', {
+        turn: 1,
+        step: 2,
+        message: {
+          role: 'tool',
+          toolCallId: 'same-call',
+          content: [{ type: 'text', text: 'root-result' }],
+        },
+      }),
+      sessionEvent('assistant/message', {
+        turn: 1,
+        step: 2,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'root-answer' }] },
       }),
       sessionEvent('turn/end', {
         turn: 1,
-        reason: { kind: 'error', error: { message: 'provider failed', code: 'PROVIDER' } },
+        reason: { kind: 'error', error: { message: 'root failure', code: 'PROVIDER' } },
+      }),
+      sessionEvent('turn/end', {
+        turn: 1,
+        reason: { kind: 'error', error: { message: 'child failure', code: 'PROVIDER' } },
+      }, 'child'),
+      notification('subagent.finished', {
+        parentSessionId: 'main',
+        childSessionId: 'child',
       }),
       notification('session.status', { sessionId: 'main', status: 'idle' }),
     ]
 
     for (const input of inputs) projector.ingest(input)
 
+    expect(projector.state.rootSessionId).toBe('main')
     expect(projector.state.activity).toBe('idle')
-    expect(projector.state.lastTurnError).toBe('provider failed')
-    expect(projector.state.lastAssistantMessage).toBe('hello')
+    expect(projector.state.lastTurnError).toBe('root failure')
+    expect(projector.state.lastAssistantMessage).toBe('root-answer')
     expect(projector.state.streamedAssistantText).toBe('')
-    expect(projector.state.tools.get('c1')).toMatchObject({ name: 'read', result: 'ok', isError: false })
+    expect(projector.state.tools.get(toolProjectionKey('main', 'same-call'))).toMatchObject({
+      sessionId: 'main',
+      name: 'root-read',
+      result: 'root-result',
+      isError: false,
+    })
+    expect(projector.state.tools.get(toolProjectionKey('child', 'same-call'))).toMatchObject({
+      sessionId: 'child',
+      name: 'child-read',
+      result: 'child-result',
+      isError: false,
+    })
     expect(projector.state.subagents.get('child')).toMatchObject({ status: 'finished', provider: 'spawn' })
   })
 
   it('counts unknown event vocabulary instead of silently interpreting it', () => {
-    const projector = new SessionProjector()
+    const projector = new SessionProjector('main')
     const event = projector.ingest(sessionEvent('plugin/new-event', { value: 1 }))
     expect(event).toMatchObject({ kind: 'unknown', type: 'plugin/new-event' })
     expect(projector.state.unknownEventCount).toBe(1)

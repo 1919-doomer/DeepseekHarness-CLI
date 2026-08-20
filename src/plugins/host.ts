@@ -20,8 +20,10 @@ export class TerminalPluginHost {
   private readonly commands = new Map<string, OwnedCommand>()
   private readonly canonicalCommands = new Map<string, OwnedCommand>()
   private readonly renderers: OwnedRenderer[] = []
+  private readonly rendererOwners = new Map<string, string>()
   private readonly views = new Map<string, OwnedView>()
   private readonly statusSegments: OwnedStatus[] = []
+  private readonly statusOwners = new Map<string, string>()
   private registrationOrder = 0
 
   register(plugin: TerminalPluginSpec): void {
@@ -30,18 +32,62 @@ export class TerminalPluginHost {
     }
     if (this.plugins.has(plugin.id)) throw new Error(`Duplicate terminal plugin id: ${plugin.id}`)
 
-    for (const command of plugin.commands ?? []) this.assertCommandAvailable(plugin.id, command)
+    // Preflight the entire incoming plugin before mutating any registry. This
+    // catches conflicts both against the host and inside one plugin spec.
+    const commandNames = new Set<string>()
+    const canonicalNames = new Set<string>()
+    for (const command of plugin.commands ?? []) {
+      const canonical = normalizeName(command.name)
+      if (canonicalNames.has(canonical)) {
+        throw new Error(`Terminal plugin ${plugin.id} repeats command /${canonical}.`)
+      }
+      canonicalNames.add(canonical)
+      for (const rawName of [command.name, ...(command.aliases ?? [])]) {
+        const name = normalizeName(rawName)
+        if (commandNames.has(name)) {
+          throw new Error(`Terminal plugin ${plugin.id} repeats command or alias /${name}.`)
+        }
+        commandNames.add(name)
+        const owner = this.commands.get(name)
+        if (owner !== undefined) {
+          throw new Error(`Terminal command /${name} from ${plugin.id} conflicts with ${owner.pluginId}.`)
+        }
+      }
+    }
+
+    const viewIds = new Set<string>()
     for (const view of plugin.views ?? []) {
-      if (this.views.has(view.id)) throw new Error(`Duplicate terminal view id: ${view.id}`)
+      if (viewIds.has(view.id)) throw new Error(`Terminal plugin ${plugin.id} repeats view id: ${view.id}`)
+      viewIds.add(view.id)
+      const owner = this.views.get(view.id)
+      if (owner !== undefined) throw new Error(`Terminal view ${view.id} from ${plugin.id} conflicts with ${owner.pluginId}.`)
+    }
+
+    const rendererIds = new Set<string>()
+    for (const renderer of plugin.eventRenderers ?? []) {
+      if (rendererIds.has(renderer.id)) throw new Error(`Terminal plugin ${plugin.id} repeats renderer id: ${renderer.id}`)
+      rendererIds.add(renderer.id)
+      const owner = this.rendererOwners.get(renderer.id)
+      if (owner !== undefined) throw new Error(`Terminal renderer ${renderer.id} from ${plugin.id} conflicts with ${owner}.`)
+    }
+
+    const statusIds = new Set<string>()
+    for (const segment of plugin.statusSegments ?? []) {
+      if (statusIds.has(segment.id)) throw new Error(`Terminal plugin ${plugin.id} repeats status id: ${segment.id}`)
+      statusIds.add(segment.id)
+      const owner = this.statusOwners.get(segment.id)
+      if (owner !== undefined) throw new Error(`Terminal status ${segment.id} from ${plugin.id} conflicts with ${owner}.`)
     }
 
     this.plugins.set(plugin.id, plugin)
     for (const command of plugin.commands ?? []) this.addCommand(plugin.id, command)
     for (const renderer of plugin.eventRenderers ?? []) {
+      this.rendererOwners.set(renderer.id, plugin.id)
       this.renderers.push({ pluginId: plugin.id, spec: renderer, order: this.registrationOrder++ })
     }
     for (const view of plugin.views ?? []) this.views.set(view.id, { pluginId: plugin.id, spec: view })
     for (const segment of plugin.statusSegments ?? []) {
+      this.statusOwners.set(segment.id, plugin.id)
       this.statusSegments.push({ pluginId: plugin.id, spec: segment, order: this.registrationOrder++ })
     }
     this.renderers.sort(comparePriority)
@@ -49,7 +95,8 @@ export class TerminalPluginHost {
   }
 
   resolveCommand(name: string): TerminalCommandSpec | undefined {
-    return this.commands.get(normalizeName(name))?.spec
+    const normalized = tryNormalizeName(name)
+    return normalized === undefined ? undefined : this.commands.get(normalized)?.spec
   }
 
   resolveView(id: string): TerminalViewSpec | undefined {
@@ -90,21 +137,20 @@ export class TerminalPluginHost {
     }))
   }
 
-  private assertCommandAvailable(pluginId: string, command: TerminalCommandSpec): void {
-    const names = [command.name, ...(command.aliases ?? [])].map(normalizeName)
-    if (new Set(names).size !== names.length) throw new Error(`Command ${command.name} repeats one of its own names.`)
-    for (const name of names) {
-      const owner = this.commands.get(name)
-      if (owner !== undefined) throw new Error(`Terminal command /${name} from ${pluginId} conflicts with ${owner.pluginId}.`)
-    }
-  }
-
   private addCommand(pluginId: string, spec: TerminalCommandSpec): void {
     const owned = { pluginId, spec }
     const canonical = normalizeName(spec.name)
     this.canonicalCommands.set(canonical, owned)
     this.commands.set(canonical, owned)
     for (const alias of spec.aliases ?? []) this.commands.set(normalizeName(alias), owned)
+  }
+}
+
+function tryNormalizeName(value: string): string | undefined {
+  try {
+    return normalizeName(value)
+  } catch {
+    return undefined
   }
 }
 

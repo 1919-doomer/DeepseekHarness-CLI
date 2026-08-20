@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { toolProjectionKey } from '../../src/session/projection.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
 const fakeRuntimePath = fileURLToPath(new URL('../fixtures/fake-runtime.mjs', import.meta.url))
@@ -14,7 +15,12 @@ async function workspace(): Promise<string> {
   return root
 }
 
-function runtimeFor(root: string, mode: string, extraEnv: NodeJS.ProcessEnv = {}, activityTimeoutMs = 1_000): HarnessRuntime {
+function runtimeFor(
+  root: string,
+  mode: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  activityTimeoutMs = 1_000,
+): HarnessRuntime {
   const env = {
     ...process.env,
     ...extraEnv,
@@ -43,7 +49,7 @@ afterEach(async () => {
 })
 
 describe('HarnessRuntime fake-process integration', () => {
-  it('runs receipt -> ordered events -> idle -> clean shutdown', async () => {
+  it('runs receipt -> faithful multi-step/session-tree events -> root idle -> clean shutdown', async () => {
     const root = await workspace()
     const runtime = runtimeFor(root, 'success')
     try {
@@ -57,11 +63,18 @@ describe('HarnessRuntime fake-process integration', () => {
       const result = await runtime.run('hello', { sessionId: 'main' })
       expect(result.messageId).toBe('msg-1')
       expect(result.finalResponse).toBe('hello')
+      expect(result.projection.rootSessionId).toBe('main')
       expect(result.projection.lastAssistantMessage).toBe('hello')
       expect(result.projection.lastTurnError).toBeUndefined()
-      expect(result.projection.tools.get('call-1')).toMatchObject({
+      expect(result.projection.tools.get(toolProjectionKey('main', 'call-1'))).toMatchObject({
+        sessionId: 'main',
         name: 'read',
         result: 'README content',
+      })
+      expect(result.projection.tools.get(toolProjectionKey('child-1', 'call-1'))).toMatchObject({
+        sessionId: 'child-1',
+        name: 'child-read',
+        result: 'child result',
       })
       expect(result.projection.subagents.get('child-1')).toMatchObject({
         status: 'finished',
@@ -71,7 +84,32 @@ describe('HarnessRuntime fake-process integration', () => {
       expect(result.events.map(event => event.sequence)).toEqual(
         result.events.map((_event, index) => index),
       )
-      expect(result.events.some(event => event.kind === 'assistant-delta' && event.text === 'private-reasoning-must-not-render')).toBe(false)
+      expect(result.events.some(event => event.kind === 'assistant-message'
+        && event.sessionId === 'child-1'
+        && event.text === 'child')).toBe(true)
+      expect(result.events.some(event => event.kind === 'assistant-delta'
+        && event.text === 'private-reasoning-must-not-render')).toBe(false)
+
+      const rootAssistantMessageIndex = result.events.findIndex(event =>
+        event.kind === 'assistant-message' && event.sessionId === 'main' && event.text === 'working')
+      const rootToolCallIndex = result.events.findIndex(event =>
+        event.kind === 'tool-call' && event.sessionId === 'main')
+      expect(rootAssistantMessageIndex).toBeGreaterThanOrEqual(0)
+      expect(rootToolCallIndex).toBeGreaterThan(rootAssistantMessageIndex)
+    } finally {
+      await runtime.close()
+    }
+  })
+
+  it('gives receipt-to-idle a fresh activity timeout window', async () => {
+    const root = await workspace()
+    const runtime = runtimeFor(root, 'slow-receipt-turn', {}, 80)
+    try {
+      await runtime.start()
+      const startedAt = Date.now()
+      const result = await runtime.run('slow but valid', { sessionId: 'main' })
+      expect(result.finalResponse).toBe('hello')
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(90)
     } finally {
       await runtime.close()
     }

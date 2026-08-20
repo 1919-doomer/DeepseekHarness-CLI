@@ -16,6 +16,7 @@ export type NormalizedEvent =
   | { sequence: number; kind: 'unknown'; sessionId?: string; method: string; type?: string }
 
 export interface ToolProjection {
+  sessionId: string
   callId: string
   name: string
   arguments: string
@@ -31,6 +32,7 @@ export interface SubagentProjection {
 }
 
 export interface ProjectionState {
+  rootSessionId?: string
   activity: SessionActivity
   lastAssistantMessage: string
   streamedAssistantText: string
@@ -40,8 +42,9 @@ export interface ProjectionState {
   unknownEventCount: number
 }
 
-export function initialProjectionState(): ProjectionState {
+export function initialProjectionState(rootSessionId?: string): ProjectionState {
   return {
+    ...(rootSessionId === undefined ? {} : { rootSessionId }),
     activity: 'starting',
     lastAssistantMessage: '',
     streamedAssistantText: '',
@@ -51,17 +54,26 @@ export function initialProjectionState(): ProjectionState {
   }
 }
 
+export function toolProjectionKey(sessionId: string, callId: string): string {
+  return `${sessionId.length}:${sessionId}${callId}`
+}
+
 export function reduceProjection(state: ProjectionState, event: NormalizedEvent): ProjectionState {
   switch (event.kind) {
     case 'session-status':
-      return { ...state, activity: event.status }
+      return isRootSession(state, event.sessionId) ? { ...state, activity: event.status } : state
     case 'assistant-delta':
-      return { ...state, streamedAssistantText: state.streamedAssistantText + event.text }
+      return isRootSession(state, event.sessionId)
+        ? { ...state, streamedAssistantText: state.streamedAssistantText + event.text }
+        : state
     case 'assistant-message':
-      return { ...state, lastAssistantMessage: event.text, streamedAssistantText: '' }
+      return isRootSession(state, event.sessionId)
+        ? { ...state, lastAssistantMessage: event.text, streamedAssistantText: '' }
+        : state
     case 'tool-call': {
       const tools = new Map(state.tools)
-      tools.set(event.callId, {
+      tools.set(toolProjectionKey(event.sessionId, event.callId), {
+        sessionId: event.sessionId,
         callId: event.callId,
         name: event.name,
         arguments: event.arguments,
@@ -70,8 +82,10 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
     }
     case 'tool-result': {
       const tools = new Map(state.tools)
-      const previous = tools.get(event.callId)
-      tools.set(event.callId, {
+      const key = toolProjectionKey(event.sessionId, event.callId)
+      const previous = tools.get(key)
+      tools.set(key, {
+        sessionId: event.sessionId,
         callId: event.callId,
         name: previous?.name ?? 'unknown-tool',
         arguments: previous?.arguments ?? '',
@@ -102,7 +116,9 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
       return { ...state, subagents }
     }
     case 'turn-error':
-      return { ...state, activity: 'failed', lastTurnError: event.message }
+      return isRootSession(state, event.sessionId)
+        ? { ...state, activity: 'failed', lastTurnError: event.message }
+        : state
     case 'unknown':
       return { ...state, unknownEventCount: state.unknownEventCount + 1 }
     case 'user-message':
@@ -113,7 +129,11 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
 
 export class SessionProjector {
   private sequence = 0
-  private currentState: ProjectionState = initialProjectionState()
+  private currentState: ProjectionState
+
+  constructor(rootSessionId?: string) {
+    this.currentState = initialProjectionState(rootSessionId)
+  }
 
   get state(): ProjectionState {
     return this.currentState
@@ -187,7 +207,7 @@ export function normalizeNotification(notification: HarnessNotification, sequenc
     if (chunk !== undefined && stringField(chunk, 'type') === 'text-delta') {
       return { sequence, kind: 'assistant-delta', sessionId, text: stringField(chunk, 'text') ?? '' }
     }
-    // Reasoning and tool-call deltas are intentionally not surfaced as text in M1.
+    // Reasoning and tool-call deltas are intentionally not surfaced as text in M1/M2.
     return { sequence, kind: 'internal', sessionId, type }
   }
 
@@ -253,6 +273,10 @@ export function isInboxReceipt(notification: HarnessNotification, sessionId: str
   const data = event === undefined ? undefined : recordField(event, 'data')
   const inserted = data?.inserted
   return Array.isArray(inserted) && inserted.some((message) => isRecord(message) && message.id === messageId)
+}
+
+function isRootSession(state: ProjectionState, sessionId: string): boolean {
+  return state.rootSessionId === undefined || state.rootSessionId === sessionId
 }
 
 function extractContentText(value: unknown): string {
