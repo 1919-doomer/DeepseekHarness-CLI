@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const cliPath = fileURLToPath(new URL('../../src/cli/bin.ts', import.meta.url))
 const tempRoots: string[] = []
+const ALT_SCREEN_ON = '\u001B[?1049h'
 
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -69,12 +70,17 @@ describe('M3 official DeepSeek Harness TTY product', () => {
     child.stderr.on('data', chunk => { stderr += String(chunk) })
 
     try {
-      await waitFor(() => stdout.includes('M3') && stdout.includes('DeepSeek Harness Console'), 10_000, () => stdout)
+      // `script(1)` can delay forwarding Ink's first paint when its own stdout is
+      // a pipe. Alternate-screen entry is emitted immediately by dshc and proves
+      // that the real TTY product path was selected.
+      await waitFor(() => stdout.includes(ALT_SCREEN_ON), 10_000, () => stdout)
 
       child.stdin.write('first tui turn\r')
+      await waitFor(() => modelRequests.length >= 1, 15_000, () => stdout)
       await waitFor(() => stdout.includes('m3-tui-turn-1'), 15_000, () => stdout)
 
       child.stdin.write('second tui turn\r')
+      await waitFor(() => modelRequests.length >= 2, 15_000, () => stdout)
       await waitFor(() => stdout.includes('m3-tui-turn-2'), 15_000, () => stdout)
 
       child.stdin.write('/plugins\r')
@@ -91,6 +97,8 @@ describe('M3 official DeepSeek Harness TTY product', () => {
       const exit = await waitForExit(child, 15_000)
       expect(exit).toEqual({ code: 0, signal: null })
       expect(stderr).toBe('')
+      expect(stdout).toContain('M3')
+      expect(stdout).toContain('DeepSeek Harness Console')
       expect(stdout).toContain('first tui turn')
       expect(stdout).toContain('second tui turn')
       expect(modelRequests).toHaveLength(2)
