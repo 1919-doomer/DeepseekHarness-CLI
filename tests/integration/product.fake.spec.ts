@@ -31,6 +31,11 @@ class TestOutput extends PassThrough {
   hasColors(): boolean { return true }
 }
 
+interface PromptRecord {
+  sessionId: string
+  contentBlocks: Array<{ type: string; text?: string }>
+}
+
 function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRuntime {
   const env = { ...process.env, DSHC_FAKE_MODE: mode, DSHC_FAKE_LOG: logPath }
   return new HarnessRuntime({
@@ -131,6 +136,120 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 15_000)
 
+  it('preserves Unicode graphemes through editing, navigation, deletion and submission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m3-unicode-editor-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      initialSessionId: 'm3-unicode-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+
+      // Astral emoji backspace must remove the whole grapheme, not one surrogate.
+      input.write('😀')
+      await delay(20)
+      input.write('\u007f')
+      await delay(20)
+      await submitLine(input, 'after-delete')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      expect(promptText((await promptRecords(logPath))[0]!)).toBe('after-delete')
+
+      // Walk left across B and emoji, right across the emoji, then insert.
+      input.write('A😀B')
+      await delay(20)
+      input.write('\u001B[D\u001B[D\u001B[C')
+      await delay(20)
+      await submitLine(input, 'X')
+      await waitFor(async () => (await promptRecords(logPath)).length === 2)
+      expect(promptText((await promptRecords(logPath))[1]!)).toBe('A😀XB')
+
+      // A multi-code-point ZWJ family must delete as one editing unit.
+      input.write('👨‍👩‍👧‍👦')
+      await delay(20)
+      input.write('\u007f')
+      await delay(20)
+      await submitLine(input, 'family-deleted')
+      await waitFor(async () => (await promptRecords(logPath)).length === 3)
+      expect(promptText((await promptRecords(logPath))[2]!)).toBe('family-deleted')
+
+      // Combining grapheme is also one backspace unit.
+      input.write('e\u0301')
+      await delay(20)
+      input.write('\u007f')
+      await delay(20)
+      await submitLine(input, 'combining-deleted')
+      await waitFor(async () => (await promptRecords(logPath)).length === 4)
+      expect(promptText((await promptRecords(logPath))[3]!)).toBe('combining-deleted')
+
+      const mixed = '中文abc😀👍🏽'
+      await submitLine(input, mixed)
+      await waitFor(async () => (await promptRecords(logPath)).length === 5)
+      expect(promptText((await promptRecords(logPath))[4]!)).toBe(mixed)
+      expect((await promptRecords(logPath)).every(record => !hasLoneSurrogate(promptText(record)))).toBe(true)
+
+      await waitFor(() => readOutput().includes('hello'))
+      await submitLine(input, '/exit')
+      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 5 })
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 20_000)
+
+  it('crops a wide Unicode status segment in a narrow terminal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m3-wide-status-'))
+    tempRoots.push(root)
+    const runtime = runtimeFor(root, join(root, 'prompts.jsonl'))
+    const input = new TestInput()
+    const output = new TestOutput()
+    output.columns = 24
+    output.rows = 12
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    const host = createDefaultTerminalHost()
+    const wideStatus = `${'中文'.repeat(10)}${'😀'.repeat(8)}`
+    host.register({
+      id: 'wide-status-test',
+      version: '1',
+      apiVersion: TERMINAL_PLUGIN_API_VERSION,
+      statusSegments: [{ id: 'wide', priority: 999, render: () => wideStatus }],
+    })
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      initialSessionId: 'm3-wide-status-session',
+      host,
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await waitFor(() => readOutput().includes('…'))
+      expect(readOutput()).not.toContain(wideStatus)
+      await submitLine(input, '/exit')
+      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false })
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
   it('contains command, view and status callback failures inside presentation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-plugin-fault-'))
     tempRoots.push(root)
@@ -223,14 +342,35 @@ async function submitLine(input: TestInput, text: string): Promise<void> {
   input.write('\r')
 }
 
-async function promptRecords(logPath: string): Promise<Array<{ sessionId: string }>> {
+async function promptRecords(logPath: string): Promise<PromptRecord[]> {
   try {
     const text = await readFile(logPath, 'utf8')
-    return text.trim().length === 0 ? [] : text.trim().split('\n').map(line => JSON.parse(line) as { sessionId: string })
+    return text.trim().length === 0 ? [] : text.trim().split('\n').map(line => JSON.parse(line) as PromptRecord)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
   }
+}
+
+function promptText(record: PromptRecord): string {
+  return record.contentBlocks
+    .filter(block => block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text ?? '')
+    .join('')
+}
+
+function hasLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true
+      index++
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true
+    }
+  }
+  return false
 }
 
 async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {

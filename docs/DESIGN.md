@@ -164,6 +164,9 @@ M4 may add filtering, duration analysis and stronger diagnostics without changin
 - malformed or failing local slash commands remain local terminal errors and do not reach the model;
 - Ctrl+C closes the whole runtime while upstream lacks prompt cancellation;
 - non-TTY/one-shot behavior remains supported;
+- prompt editing indexes Unicode grapheme clusters, never UTF-16 code units; cursor movement/deletion must not split surrogate pairs, combining sequences, modifiers, flags or ZWJ emoji;
+- segmentation is editing/navigation metadata only: the exact user-provided Unicode prompt string is preserved for Harness submission rather than normalized or rewritten;
+- terminal layout budgets use display cells rather than JavaScript string length for status cropping, folding and transcript row estimation; cropping/folding stops on grapheme boundaries;
 - narrow terminals preserve the newest useful activity rather than corrupting the input area;
 - alternate-screen teardown must be exception-safe;
 - correctness cannot depend on color or icon-only meaning;
@@ -189,6 +192,7 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 10. Treat local activity ids as presentation grouping only.
 11. Treat session identity as part of transcript/projection identity whenever session-tree events can interleave.
 12. Contain terminal-plugin faults so presentation extensions cannot redefine runtime success/failure.
+13. Treat Unicode grapheme editing and terminal display-cell measurement as distinct presentation primitives; never use UTF-16 length as an editing or column-width model.
 
 ## Non-negotiable invariants
 
@@ -204,3 +208,4 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 10. Capabilities absent from the active runtime degrade explicitly rather than being faked.
 11. Descendant session events cannot silently impersonate root completion/output state.
 12. A terminal plugin exception cannot be reported as a Harness runtime failure unless the runtime itself failed.
+13. Prompt-editor operations cannot split Unicode grapheme clusters or silently alter the exact prompt string submitted upstream.
