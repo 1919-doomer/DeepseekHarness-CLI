@@ -31,17 +31,35 @@ function runtimeFor(
     env,
     skipInstalledVersionCheck: true,
     activityTimeoutMs,
-    launchOverride: {
-      command: process.execPath,
-      args: [fakeRuntimePath],
-      cwd: root,
-      env,
-      requestTimeoutMs: 500,
-      shutdownTimeoutMs: 100,
-      disposeEofGraceMs: 250,
-      disposeGraceMs: 250,
-    },
+    launchOverride: fakeLaunch(root, env),
   })
+}
+
+function runtimeWithEnvironmentPatch(
+  root: string,
+  optionsEnv: NodeJS.ProcessEnv,
+  launchEnv: NodeJS.ProcessEnv,
+): HarnessRuntime {
+  return new HarnessRuntime({
+    workspace: root,
+    env: optionsEnv,
+    skipInstalledVersionCheck: true,
+    activityTimeoutMs: 1_000,
+    launchOverride: fakeLaunch(root, launchEnv),
+  })
+}
+
+function fakeLaunch(root: string, env: NodeJS.ProcessEnv) {
+  return {
+    command: process.execPath,
+    args: [fakeRuntimePath],
+    cwd: root,
+    env,
+    requestTimeoutMs: 500,
+    shutdownTimeoutMs: 100,
+    disposeEofGraceMs: 250,
+    disposeGraceMs: 250,
+  }
 }
 
 afterEach(async () => {
@@ -170,24 +188,51 @@ describe('HarnessRuntime fake-process integration', () => {
     }
   })
 
-  it('redacts secrets from a crashed child stderr tail', async () => {
+  it('redacts a secret inherited from process.env even when options.env is only a patch', async () => {
     const root = await workspace()
-    const secret = 'super-secret-1234'
-    const runtime = runtimeFor(root, 'early-exit', { DEEPSEEK_API_KEY: secret })
+    const secret = 'parent-secret-1234'
+    const previous = process.env.DEEPSEEK_API_KEY
+    process.env.DEEPSEEK_API_KEY = secret
+    const optionsEnv = { DSHC_FAKE_MODE: 'early-exit' }
+    const launchEnv = { ...process.env, ...optionsEnv, DSH_CWD: root }
+    const runtime = runtimeWithEnvironmentPatch(root, optionsEnv, launchEnv)
+
     try {
-      await runtime.start()
-      let failure: unknown
-      try {
-        await runtime.run('crash', { sessionId: 'main' })
-      } catch (error) {
-        failure = error
-      }
-      expect(failure).toMatchObject({ code: 'transport-closed' })
-      const message = failure instanceof Error ? failure.message : String(failure)
-      expect(message).not.toContain(secret)
-      expect(message).toContain('[REDACTED]')
+      await expectRedactedTransportFailure(runtime, secret)
     } finally {
-      await runtime.close()
+      await runtime.close().catch(() => undefined)
+      restoreEnv('DEEPSEEK_API_KEY', previous)
+    }
+  })
+
+  it('redacts a secret supplied by the incremental options.env patch', async () => {
+    const root = await workspace()
+    const secret = 'options-secret-1234'
+    const optionsEnv = { DSHC_FAKE_MODE: 'early-exit', DEEPSEEK_API_KEY: secret }
+    const launchEnv = { ...process.env, ...optionsEnv, DSH_CWD: root }
+    const runtime = runtimeWithEnvironmentPatch(root, optionsEnv, launchEnv)
+    try {
+      await expectRedactedTransportFailure(runtime, secret)
+    } finally {
+      await runtime.close().catch(() => undefined)
+    }
+  })
+
+  it('redacts a secret supplied only by launchOverride.env', async () => {
+    const root = await workspace()
+    const secret = 'override-secret-1234'
+    const optionsEnv = { DSHC_FAKE_MODE: 'early-exit' }
+    const launchEnv = {
+      ...process.env,
+      DSHC_FAKE_MODE: 'early-exit',
+      DEEPSEEK_API_KEY: secret,
+      DSH_CWD: root,
+    }
+    const runtime = runtimeWithEnvironmentPatch(root, optionsEnv, launchEnv)
+    try {
+      await expectRedactedTransportFailure(runtime, secret)
+    } finally {
+      await runtime.close().catch(() => undefined)
     }
   })
 
@@ -199,6 +244,25 @@ describe('HarnessRuntime fake-process integration', () => {
     await expect(runtime.close()).resolves.toBeUndefined()
   })
 })
+
+async function expectRedactedTransportFailure(runtime: HarnessRuntime, secret: string): Promise<void> {
+  await runtime.start()
+  let failure: unknown
+  try {
+    await runtime.run('crash', { sessionId: 'main' })
+  } catch (error) {
+    failure = error
+  }
+  expect(failure).toMatchObject({ code: 'transport-closed' })
+  const message = failure instanceof Error ? failure.message : String(failure)
+  expect(message).not.toContain(secret)
+  expect(message).toContain('[REDACTED]')
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
+}
 
 async function lifecycleEvents(path: string): Promise<string[]> {
   try {
