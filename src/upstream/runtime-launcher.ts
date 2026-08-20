@@ -7,12 +7,31 @@ import { DshcRuntimeError } from './errors.js'
 export interface RuntimeLaunchOptions {
   workspace: string
   configPath?: string
+  /** Incremental environment patch for the default Harness launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
   shutdownTimeoutMs?: number
   disposeEofGraceMs?: number
   disposeGraceMs?: number
+  /**
+   * Authoritative Harness client launch options for tests/embedders. When an
+   * override supplies `env`, Node receives that environment exactly; when it
+   * omits `env`, the child inherits `process.env`.
+   */
   override?: HarnessClientOptions
+}
+
+/**
+ * Return the exact environment semantics used by the child process. This is
+ * also the environment diagnostics must scan for exact-value secret redaction.
+ */
+export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): NodeJS.ProcessEnv {
+  if (options.override !== undefined) return options.override.env ?? process.env
+  return {
+    ...process.env,
+    ...options.env,
+    DSH_CWD: options.workspace,
+  }
 }
 
 export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promise<HarnessClientOptions> {
@@ -40,11 +59,7 @@ export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promi
     command: process.execPath,
     args: [runtimeBin, configPath],
     cwd: options.workspace,
-    env: {
-      ...process.env,
-      ...options.env,
-      DSH_CWD: options.workspace,
-    },
+    env: effectiveRuntimeEnvironment(options),
     requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
     shutdownTimeoutMs: options.shutdownTimeoutMs ?? 1_000,
     disposeEofGraceMs: options.disposeEofGraceMs ?? 6_000,
