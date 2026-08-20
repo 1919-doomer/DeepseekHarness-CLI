@@ -13,7 +13,7 @@ import {
 import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { TerminalPluginHost } from './host.js'
 
-const TRACE_PAGE_SIZE = 20
+const TRACE_PAGE_SIZE = 15
 const TRACE_USAGE = [
   '/trace [all|errors|tools|agents|unknown] [--page N]',
   '/trace session <id> [--page N]',
