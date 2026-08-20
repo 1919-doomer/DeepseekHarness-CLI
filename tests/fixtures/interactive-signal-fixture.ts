@@ -7,7 +7,7 @@ const workspace = resolve(process.env.DSHC_SIGNAL_WORKSPACE ?? process.cwd())
 const fakeRuntimePath = fileURLToPath(new URL('./fake-runtime.mjs', import.meta.url))
 const env = {
   ...process.env,
-  DSHC_FAKE_MODE: 'hang-activity',
+  DSHC_FAKE_MODE: process.env.DSHC_SIGNAL_MODE ?? 'hang-activity',
 }
 
 const runtime = new HarnessRuntime({
