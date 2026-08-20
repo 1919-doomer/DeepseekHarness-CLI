@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { createSessionId } from '../session/interactive-state.js'
-import type { NormalizedEvent } from '../session/projection.js'
 import { classifyRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
@@ -16,6 +15,14 @@ import type {
 } from '../plugins/api.js'
 import { createDefaultTerminalHost } from '../plugins/builtins.js'
 import type { TerminalPluginHost } from '../plugins/host.js'
+import {
+  appendTerminalEventHistory,
+  initialAgentTopologyHistory,
+  initialTerminalEventHistory,
+  reduceAgentTopologyHistory,
+  type AgentTopologyHistory,
+  type TerminalEventHistory,
+} from './history.js'
 import {
   appendSystemMessage,
   appendUserPrompt,
@@ -162,7 +169,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [totalTurns, setTotalTurns] = useState(0)
   const [phase, setPhase] = useState<TerminalRuntimePhase>('idle')
   const [transcript, setTranscript] = useState<TerminalTranscriptState>(initialTerminalTranscript)
-  const [events, setEvents] = useState<readonly NormalizedEvent[]>([])
+  const [eventHistory, setEventHistory] = useState<TerminalEventHistory>(initialTerminalEventHistory)
+  const [agentTopology, setAgentTopology] = useState<AgentTopologyHistory>(initialAgentTopologyHistory)
   const [input, setInput] = useState('')
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
@@ -204,8 +212,15 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     commands: props.host.listCommands(),
     renderers: props.host.listRenderers(),
     plugins: props.host.listPlugins(),
-    events,
-  }), [commandContext, events, props.host])
+    events: eventHistory.items,
+    retention: {
+      totalEventCount: eventHistory.total,
+      droppedEventCount: eventHistory.dropped,
+      droppedTranscriptBlockCount: transcript.droppedBlockCount,
+      droppedTopologyEntryCount: agentTopology.dropped,
+    },
+    agentTopology: [...agentTopology.entries.values()],
+  }), [agentTopology, commandContext, eventHistory, props.host, transcript.droppedBlockCount])
 
   const finish = useCallback((exitCode: number, interrupted: boolean): void => {
     props.onFinish({
@@ -255,6 +270,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setSessionId(next)
         setGeneration(value => value + 1)
         setSessionTurns(0)
+        setAgentTopology(initialAgentTopologyHistory())
         setTranscript(state => appendSystemMessage(
           state,
           `new ${next}\nprevious ${previous} remains runtime-owned until exit; protocol ${props.metadata.protocolVersion} has no session-close request.`,
@@ -332,7 +348,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       const result = await props.runtime.run(prompt, {
         sessionId: rootSessionId,
         onEvent: event => {
-          setEvents(items => [...items, event])
+          // Complete normalized events feed presentation first. Only the local
+          // diagnostic copy is compacted/evicted afterward.
           setTranscript(state => reduceTerminalEvent(
             state,
             event,
@@ -341,6 +358,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             rootSessionId,
             props.debug,
           ))
+          setEventHistory(state => appendTerminalEventHistory(state, event))
+          setAgentTopology(state => reduceAgentTopologyHistory(state, event))
         },
       })
       setSessionTurns(value => value + 1)
