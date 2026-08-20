@@ -6,6 +6,7 @@ import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
 import { HELP_TEXT, parseCliArgs, type CliOptions } from './args.js'
+import { collectDoctorReport, doctorExitCode, renderDoctorHuman } from './doctor.js'
 import { runInteractiveLoop } from './interactive.js'
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -28,6 +29,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     process.stdout.write(`${DSHC_VERSION}\n`)
     return 0
   }
+  if (options.command === 'doctor') return runDoctorCommand(options)
 
   if (shouldRunInteractive(options)) return runInteractiveMode(options)
 
@@ -49,13 +51,32 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 function shouldRunInteractive(options: CliOptions): boolean {
-  if (options.command === 'run' || options.json) return false
+  if (options.command === 'run' || options.command === 'doctor' || options.json) return false
   if (options.interactive) return true
   if (options.prompt !== undefined) return false
   return process.stdin.isTTY === true
 }
 
 function validateModeOptions(options: CliOptions): void {
+  if (options.command === 'doctor') {
+    if (options.interactive) {
+      throw new DshcRuntimeError('`doctor` cannot be combined with `--interactive`.', 'configuration')
+    }
+    if (options.prompt !== undefined) {
+      throw new DshcRuntimeError('`doctor` does not accept a positional prompt.', 'configuration')
+    }
+    if (options.sessionId !== undefined) {
+      throw new DshcRuntimeError('`doctor` does not create or select a session; remove `--session`.', 'configuration')
+    }
+    if (options.maxTokens !== undefined) {
+      throw new DshcRuntimeError('`doctor` does not issue a model request; remove `--max-tokens`.', 'configuration')
+    }
+    if (options.activityTimeoutMs !== undefined) {
+      throw new DshcRuntimeError('`doctor` has no prompt activity; remove `--activity-timeout-ms`.', 'configuration')
+    }
+    return
+  }
+
   if (!options.interactive) return
   if (options.command === 'run') {
     throw new DshcRuntimeError('`run` and `--interactive` select conflicting modes.', 'configuration')
@@ -64,7 +85,7 @@ function validateModeOptions(options: CliOptions): void {
     throw new DshcRuntimeError('`--interactive` cannot be combined with a positional one-shot prompt.', 'configuration')
   }
   if (options.json) {
-    throw new DshcRuntimeError('`--json` is a one-shot output mode and cannot be combined with `--interactive`.', 'configuration')
+    throw new DshcRuntimeError('`--json` is a one-shot/doctor output mode and cannot be combined with `--interactive`.', 'configuration')
   }
 }
 
@@ -78,6 +99,25 @@ function createRuntime(options: CliOptions): HarnessRuntime {
     activityTimeoutMs: options.activityTimeoutMs,
     requestTimeoutMs: options.requestTimeoutMs,
   })
+}
+
+async function runDoctorCommand(options: CliOptions): Promise<number> {
+  try {
+    const report = await collectDoctorReport({
+      workspace: options.workspace,
+      provider: options.provider,
+      model: options.model,
+      configPath: options.runtimeConfig,
+      requestTimeoutMs: options.requestTimeoutMs,
+    })
+    process.stdout.write(options.json
+      ? `${stringifyTerminalSafeJson(report)}\n`
+      : renderDoctorHuman(report))
+    return doctorExitCode(report)
+  } catch (error) {
+    writeError(error)
+    return 1
+  }
 }
 
 async function runInteractiveMode(options: CliOptions): Promise<number> {
@@ -178,8 +218,12 @@ async function runOneShot(options: CliOptions, prompt: string): Promise<number> 
         messageId: result.messageId,
         finalResponse: result.finalResponse,
         turnError: result.projection.lastTurnError ?? null,
-        eventCount: result.events.length,
-        notificationCount: result.notifications.length,
+        eventCount: result.eventCount,
+        retainedEventCount: result.events.length,
+        droppedEventCount: result.droppedEventCount,
+        notificationCount: result.notificationCount,
+        retainedNotificationCount: result.notifications.length,
+        droppedNotificationCount: result.droppedNotificationCount,
         unknownEventCount: result.projection.unknownEventCount,
         runtime: metadata,
       })}\n`)
