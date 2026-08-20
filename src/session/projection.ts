@@ -34,6 +34,7 @@ export interface ProjectionState {
   activity: SessionActivity
   lastAssistantMessage: string
   streamedAssistantText: string
+  lastTurnError?: string
   tools: ReadonlyMap<string, ToolProjection>
   subagents: ReadonlyMap<string, SubagentProjection>
   unknownEventCount: number
@@ -101,7 +102,7 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
       return { ...state, subagents }
     }
     case 'turn-error':
-      return { ...state, activity: 'failed' }
+      return { ...state, activity: 'failed', lastTurnError: event.message }
     case 'unknown':
       return { ...state, unknownEventCount: state.unknownEventCount + 1 }
     case 'user-message':
