@@ -92,7 +92,7 @@ export async function runInteractiveLoop(
 
       if (!terminal) output.write(`user> ${sanitizeTerminalText(action.text)}\n`)
       phase = 'running'
-      rl.pause()
+      if (terminal) rl.pause()
       try {
         const result = await runtime.run(action.text, {
           sessionId: state.sessionId,
@@ -110,7 +110,7 @@ export async function runInteractiveLoop(
         throw classifyRuntimeError(error)
       } finally {
         phase = 'input'
-        if (!signals.interrupted) rl.resume()
+        if (terminal && !signals.interrupted) rl.resume()
       }
 
       promptAgain(rl, terminal, state.sessionId)
