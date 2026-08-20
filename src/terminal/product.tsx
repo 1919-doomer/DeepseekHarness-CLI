@@ -348,9 +348,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       const result = await props.runtime.run(prompt, {
         sessionId: rootSessionId,
         onEvent: event => {
-          // Every complete event reaches presentation before dshc keeps only a
-          // bounded diagnostic copy. Topology is projected independently so an
-          // early child relationship survives trace-tail eviction.
+          // Complete normalized events feed presentation first. Only the local
+          // diagnostic copy is compacted/evicted afterward.
           setTranscript(state => reduceTerminalEvent(
             state,
             event,
@@ -581,7 +580,7 @@ function renderEditor(value: string, cursor: number, disabled: boolean): string 
   const before = sanitizeTerminalText(sliceByGrapheme(value, 0, cursor))
   const currentGrapheme = graphemeAt(value, cursor)
   const current = currentGrapheme === undefined ? ' ' : sanitizeTerminalText(currentGrapheme)
-  const after = sanitizeTerminalText(sliceByGrapheme(value, cursor + (currentGrapheme === undefined ? 0 : 1))
+  const after = sanitizeTerminalText(sliceByGrapheme(value, cursor + (currentGrapheme === undefined ? 0 : 1)))
   return `❯ ${before}▌${current}${after}`
 }
 
