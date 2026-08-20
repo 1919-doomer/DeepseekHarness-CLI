@@ -82,14 +82,13 @@ describe('M4 bounded terminal process history', () => {
       await submitLine(input, '/new')
       await waitFor(() => readOutput().includes(`previous ${rootSessionId}`), 5_000, 'new session selection')
 
-      const beforeResetAgents = readOutput().length
       await submitLine(input, '/agents')
       await waitFor(
-        () => readOutput().slice(beforeResetAgents).includes('no descendant activity observed for this session'),
+        () => lastView(readOutput(), 'Agent Topology').includes('no descendant activity observed for this session'),
         5_000,
         'selected-session topology reset',
       )
-      expect(readOutput().slice(beforeResetAgents)).not.toContain(childSessionId)
+      expect(lastView(readOutput(), 'Agent Topology')).not.toContain(childSessionId)
 
       input.write('q')
       await delay(30)
@@ -102,6 +101,11 @@ describe('M4 bounded terminal process history', () => {
     }
   }, 25_000)
 })
+
+function lastView(output: string, title: string): string {
+  const index = output.lastIndexOf(title)
+  return index < 0 ? '' : output.slice(index)
+}
 
 function noisyActivity(rootSessionId: string, childSessionId: string): NormalizedEvent[] {
   const events: NormalizedEvent[] = [{
