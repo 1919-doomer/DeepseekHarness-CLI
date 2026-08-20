@@ -29,7 +29,7 @@ src/
 ├─ terminal/     # plain renderer, transcript projection, Ink terminal product
 └─ upstream/     # all DSH SDK/runtime/version-specific adaptation
 
-runtime/         # public Cordis composition
+runtime/         # public Cordis composition / compatibility composition when required
 tests/           # unit, fake-runtime, product and official-runtime integration
 docs/            # compact long-lived documentation
 ```
@@ -61,6 +61,26 @@ Never import private Harness implementation objects into terminal/plugin modules
 - Ctrl+C closes the whole owned runtime while upstream lacks prompt cancellation.
 - SIGINT/SIGTERM ownership begins before runtime startup. A close request during workspace/version/launch/initialize work is terminal: startup must not later publish a live client or successful metadata, and repeated close calls remain idempotent.
 
+## First-run product contract
+
+The default product path follows the design rule **Simple by default, Harness-native underneath**.
+
+For a normal user, the intended flow is approximately:
+
+```text
+configure a supported provider
+cd <repository>
+dshc
+```
+
+The current directory is the natural default workspace unless explicitly overridden. A first useful repository task must not require the user to hand-edit Cordis configuration or manually assemble a runtime tool tree.
+
+This convenience is a frontend/composition concern, not permission to duplicate Harness semantics. Filesystem/search, shell, skills, sandbox/approval, persistence, jobs, subagents and the agent loop remain DSH-owned.
+
+When the pinned DSH baseline offers a supported profile/bundle/composition mechanism for the required repository capabilities, prefer it over maintaining a parallel `dshc` inventory. If `runtime/` contains a compatibility composition, document why it is necessary, keep it minimal and replaceable, and cover it with upstream-drift/official-runtime tests.
+
+Advanced runtime/profile/configuration overrides are progressive disclosure. Missing capabilities must fail visibly and truthfully rather than being silently reimplemented by terminal code.
+
 ## M3 terminal plugin discipline
 
 The terminal plugin API is versioned and first-party only.
@@ -90,7 +110,7 @@ Root completion projection is scoped to the session explicitly submitted to `run
 
 ## Test strategy
 
-Required CI remains credential-free.
+Required CI remains credential-free where deterministic stubs can cover the contract.
 
 ### Unit tests
 
@@ -122,14 +142,32 @@ The fake runtime should model the pinned Harness ordering closely enough to catc
 
 ### Official-runtime smoke
 
-The published Harness runtime is launched with the repository Cordis composition. The DeepSeek adapter is routed to a local deterministic HTTP model stub, so required CI makes no paid provider call and needs no real key.
+The published Harness runtime is launched through the supported composition boundary selected by the current milestone. The DeepSeek adapter may be routed to a local deterministic HTTP model stub so required CI makes no paid provider call and needs no real key.
 
-Required smoke paths:
+Required smoke paths include:
 
 1. one-shot: build `dist`, launch the actual `dist/cli/bin.js` -> initialize -> prompt -> events -> idle -> shutdown;
-2. persistent line mode: one built `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown.
+2. persistent line mode: one built `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown;
+3. once M4 adopts the daily-use composition, a repository-capability smoke proving the active DSH runtime—not duplicated terminal code—owns representative workspace/tool execution used by the supported default path.
 
-The M3 product itself is tested against the same `HarnessRuntime` contract through injected TTY streams, while the official-runtime smokes validate the published upstream process boundary and the built distribution entrypoint rather than the TypeScript source runner.
+The Ink product itself may still use injected TTY streams for deterministic rendering tests, while the official-runtime smokes validate the published upstream process/composition boundary and built distribution entrypoint.
+
+### First-run E2E before public alpha
+
+M5 requires a fresh-environment path on supported platforms that resembles:
+
+```text
+install dshc
+configure provider
+cd <real-repository>
+dshc
+ -> inspect repository
+ -> perform a safe code change
+ -> run relevant tests
+ -> exit cleanly
+```
+
+This is a release gate, not a README-only example. It must demonstrate that the default runtime exposes the intended DSH-backed repository capabilities without hand-editing composition and that all observed state-changing activity remains inspectable in the terminal.
 
 ## Cross-platform rules
 
@@ -142,7 +180,9 @@ Required matrix:
 - Ubuntu latest / Node 24 — blocking;
 - Ubuntu latest / Node 22.19.0 — blocking lower-bound coverage.
 
-Every Runtime matrix job must build the Ink/React product before running tests. `pnpm test:official-runtime` also builds first so the smoke command is valid outside CI.
+Every Runtime matrix job must build the Ink/React product before running tests. Official-runtime tests also build first so smoke commands are valid outside CI.
+
+Platform-specific shell behavior belongs to the active DSH runtime/composition. `dshc` must not turn Windows support into a separate terminal-owned shell implementation.
 
 ## Terminal security and reliability
 
@@ -158,7 +198,8 @@ Release blockers include:
 - orphaned processes, including clients created by an interrupted startup after close has already been requested;
 - alternate-screen state not restored after failure;
 - unbounded practical output growth;
-- arbitrary unisolated third-party plugin loading.
+- arbitrary unisolated third-party plugin loading;
+- onboarding shortcuts that bypass or duplicate upstream security/tool semantics.
 
 Large output may be folded with visible disclosure, never silently deleted. `dshc` should not own provider credentials; prefer upstream/environment mechanisms and scrub diagnostics.
 
@@ -170,13 +211,17 @@ Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadat
 
 Do not log secrets or hidden reasoning. `/trace` is a normalized observable timeline, not a chain-of-thought viewer. `/agents` follows only publicly observed parent/child relationships reachable from the currently selected root; it does not relabel old-session descendants after `/new`.
 
-A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/plugin compatibility without printing secrets.
+A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/profile compatibility without printing secrets.
+
+For M4+, diagnostics should also make it clear which supported runtime/profile/composition path is active and whether expected repository capabilities are actually available. It must not invent an authoritative plugin inventory when the public protocol does not expose one.
 
 ## Pull requests and definition of done
 
 A feature PR should state the Issue/milestone advanced, upstream contract relied on, user-visible behavior, tests run, compatibility/security implications and documentation changes.
 
 A task is done when its Issue acceptance criteria are met, required tests pass, protocol/security/cross-platform implications are covered, long-lived docs match actual behavior and no known blocker is hidden by a renderer or compatibility shim.
+
+For changes to runtime composition or default capabilities, the PR must additionally state whether the behavior is upstream-owned, what public DSH contract is relied on, how upstream drift is detected, and why the change does not create a second Harness inside `dshc`.
 
 Suggested commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`.
 
@@ -190,8 +235,11 @@ The first public alpha requires at minimum:
 - Windows/Linux/macOS validation for supported paths;
 - zero known terminal-injection or credential-leak blockers;
 - deterministic child-process and terminal-state cleanup;
-- required CI independent of secrets;
+- required CI independent of secrets where deterministic stubs are sufficient;
 - unofficial/community status clear in package/repository docs;
-- update/uninstall and diagnostics instructions.
+- update/uninstall and diagnostics instructions;
+- a verified `cd repo && dshc` first-run path that does not require manual Cordis composition;
+- an end-to-end real-repository task showing DSH-owned workspace/tool execution and truthful `dshc` observation;
+- no duplication of Harness filesystem, shell, skill, sandbox/approval, persistence, jobs, subagent or agent-loop semantics for onboarding convenience.
 
 Use GitHub Issues for live execution state; do not duplicate task checklists across more documents.
