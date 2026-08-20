@@ -6,30 +6,31 @@ This document defines milestone intent. **GitHub Issues are the live execution t
 
 Product boundary, two-process architecture, protocol constraints, security posture, plugin direction and M1 execution backlog are locked well enough to implement. Historical preparation detail is intentionally kept in closed GitHub Issues rather than separate checklist documents.
 
-## M1 — Runtime vertical slice — #10
+## M1 — Runtime vertical slice — complete — #10
 
-Prove one complete supported path before building a TUI:
+Completed on 2026-08-20 and merged through PR #38. The validated path is:
 
 ```text
 scaffold
  -> launch official Harness runtime
  -> initialize
  -> enqueue one prompt
- -> consume ordered session notifications
+ -> observe matching durable receipt
+ -> consume ordered session-tree notifications
  -> normalize/project events
  -> plain safe terminal rendering
- -> idle
+ -> root idle
  -> clean shutdown
  -> cross-platform CI
 ```
 
-Executable tasks: #2-#9.
+Tasks #2-#9 are closed. Required CI validates the official Harness runtime and the actual `dshc` one-shot command on Windows, macOS and Ubuntu without provider secrets.
 
-No full-screen TUI and no general plugin framework in M1.
+No full-screen TUI and no general plugin framework were introduced in M1.
 
-## M2 — Interactive terminal loop — #11
+## M2 — Interactive terminal loop — next — #11
 
-Turn the vertical slice into a persistent multi-turn terminal application:
+Turn the validated vertical slice into a persistent multi-turn terminal application:
 
 - prompt loop and session ownership;
 - streamed transcript and tool/subagent visibility;
