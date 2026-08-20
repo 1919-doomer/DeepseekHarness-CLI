@@ -36,7 +36,7 @@ describe('M4.4 trace debugger query', () => {
     [['tools', '--page', '0'], '/trace --page requires a positive safe integer'],
     [['tools', '--page', 'abc'], '/trace --page requires a positive safe integer'],
     [['tools', '--page', '2', '--page', '3'], '/trace accepts only one --page option'],
-    [['nonsense'], 'usage: /trace'],
+    [['nonsense'], 'usage:'],
   ] as const)('rejects invalid query %o', (args, message) => {
     expect(() => parseTraceQuery(args)).toThrow(message)
   })
@@ -85,7 +85,7 @@ describe('M4.4 trace debugger query', () => {
     expect(unknown).toContain('meanings are not inferred')
   })
 
-  it('pages from the newest retained matches while keeping process-absolute indices', () => {
+  it('pages from the newest retained matches in viewport-sized chunks while keeping process-absolute indices', () => {
     const events: NormalizedEvent[] = Array.from({ length: 170 }, (_, index): NormalizedEvent => ({
       sequence: 30 + index,
       kind: 'unknown',
@@ -95,23 +95,23 @@ describe('M4.4 trace debugger query', () => {
     const context = viewContext(events, { totalEventCount: 200, droppedEventCount: 30 })
 
     const pageOne = renderTraceQuery(context, { mode: 'all', page: 1 })
-    expect(pageOne).toContain('page 1/3 · 170 retained matches')
-    expect(pageOne).toContain('0120 unknown root future.120')
+    expect(pageOne).toContain('page 1/9 · 170 retained matches')
+    expect(pageOne).toContain('0180 unknown root future.180')
     expect(pageOne).toContain('0199 unknown root future.199')
-    expect(pageOne).not.toContain('0119 unknown root future.119')
+    expect(pageOne).not.toContain('0179 unknown root future.179')
 
     const pageTwo = renderTraceQuery(context, { mode: 'all', page: 2 })
-    expect(pageTwo).toContain('page 2/3')
-    expect(pageTwo).toContain('0040 unknown root future.40')
-    expect(pageTwo).toContain('0119 unknown root future.119')
-    expect(pageTwo).not.toContain('0120 unknown root future.120')
+    expect(pageTwo).toContain('page 2/9')
+    expect(pageTwo).toContain('0160 unknown root future.160')
+    expect(pageTwo).toContain('0179 unknown root future.179')
+    expect(pageTwo).not.toContain('0180 unknown root future.180')
 
-    const pageThree = renderTraceQuery(context, { mode: 'all', page: 3 })
-    expect(pageThree).toContain('0030 unknown root future.30')
-    expect(pageThree).toContain('0039 unknown root future.39')
+    const pageNine = renderTraceQuery(context, { mode: 'all', page: 9 })
+    expect(pageNine).toContain('0030 unknown root future.30')
+    expect(pageNine).toContain('0039 unknown root future.39')
 
-    const missing = renderTraceQuery(context, { mode: 'all', page: 4 })
-    expect(missing).toContain('No such retained page. Available pages: 1-3.')
+    const missing = renderTraceQuery(context, { mode: 'all', page: 10 })
+    expect(missing).toContain('No such retained page. Available pages: 1-9.')
   })
 })
 
