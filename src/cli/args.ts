@@ -1,7 +1,7 @@
 import { DshcRuntimeError } from '../upstream/errors.js'
 
 export interface CliOptions {
-  command: 'auto' | 'run'
+  command: 'auto' | 'run' | 'doctor'
   prompt?: string
   workspace?: string
   provider?: string
@@ -30,8 +30,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const positional: string[] = []
   let index = 0
 
-  if (argv[0] === 'run') {
-    options.command = 'run'
+  if (argv[0] === 'run' || argv[0] === 'doctor') {
+    options.command = argv[0]
     index++
   }
 
@@ -139,6 +139,7 @@ Usage:
   dshc [options]                         Start the persistent interactive loop in a TTY
   dshc [options] <prompt>                Run one prompt and exit
   dshc run [options] <prompt>            Explicit one-shot mode
+  dshc doctor [options]                  Diagnose workspace/runtime readiness without a model prompt
   echo "prompt" | dshc [options]          Read one prompt from stdin and exit
   printf "one\\ntwo\\n/exit\\n" | dshc --interactive
 
@@ -152,10 +153,15 @@ Options:
       --request-timeout-ms <n>    Bound individual JSON-RPC requests
       --runtime-config <path>     Override runtime Cordis config
       --interactive               Force the persistent loop even when stdin is piped
-      --json                      Emit one machine-readable one-shot result object
+      --json                      Emit machine-readable one-shot/doctor output
       --debug                     Show compatibility and unknown-event diagnostics
   -h, --help                      Show help
   -v, --version                   Show version
+
+Doctor:
+  dshc doctor never issues session/prompt. It checks the current workspace, pinned DSH packages,
+  runtime config, initialize handshake, credential presence (never the value), TTY facts, shipped
+  sandbox/approval defaults, protocol limitations and local retention policy.
 
 Interactive commands:
   /help  /status  /session  /new  /clear  /exit
