@@ -8,6 +8,13 @@ on:
       - package.json
       - .npmrc
       - .github/workflows/lockfile-bootstrap.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - package.json
+      - .npmrc
+      - .github/workflows/lockfile-bootstrap.yml
   workflow_dispatch:
 
 permissions:
