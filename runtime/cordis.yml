@@ -2,14 +2,15 @@
 #
 # This is a complete stdio JSON-RPC Harness process composition aligned with
 # DeepSeek Harness 0.1.0-rc.8 `examples/jsonrpc-agent/cordis.yml` plus the
-# zero-config repository additions validated in M4.1.
-# Harness owns agent/tool/session semantics; dshc owns only the terminal front end.
-# stdout belongs exclusively to JSON-RPC: do not add console loggers or UI plugins.
+# repository workflow and security additions validated in M4.
+# Harness owns agent/tool/session/sandbox/approval semantics; dshc owns only the
+# terminal front end. stdout belongs exclusively to JSON-RPC.
 #
-# Deliberate compatibility delta from the upstream standalone reference:
-# the reference mounts POSIX-only dsh-bash-local unconditionally. dshc keeps
-# Windows blocking, so the shell provider + model-facing shell tool follow the
-# upstream base/profile platform rule: Bash on POSIX, PowerShell on Windows.
+# The default file-effect policy is workspace-write. It is intentionally not
+# danger-full-access: writes outside the session workspace must fail closed.
+# Approval policy remains `ask`, but SDK protocol 0.0.1 sends no server→client
+# approval requests. Without a Harness-side answerer, wider escalation therefore
+# resolves unavailable/rejected and the requested action must not execute.
 
 - id: sdk-jsonrpc-server
   name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
@@ -22,39 +23,52 @@
     thinking: enabled
     reasoningEffort: max
 
+# One shared DSH policy controls both shell and filesystem write authority.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.env.DSH_CWD ?? process.cwd()
+
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: ask
+
 # Managed process groups shared by platform shell providers and ripgrep search.
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
+# Sandboxed shell executors retain the same ctx.shell seam and model-facing tool
+# packages as M4.1. The platform selection remains Harness-owned.
 - id: bash
-  name: '@deepseek-ai/dsh-bash-local'
+  name: '@deepseek-ai/dsh-bash-sandbox'
   disabled: !!js process.platform === 'win32'
   config:
     cwd: !!js process.env.DSH_CWD ?? process.cwd()
     timeoutMs: 60000
 
 - id: pwsh
-  name: '@deepseek-ai/dsh-pwsh-local'
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
   disabled: !!js process.platform !== 'win32'
   config:
     cwd: !!js process.env.DSH_CWD ?? process.cwd()
     timeoutMs: 60000
 
-# Shared agent spine. M4.1 enables the same bounded workspace-context budget
-# used by the pinned upstream coding/headless compositions. Shell schemas remain
-# external so the visible command language can match the host platform.
+# Shared agent spine. The shell schemas remain external so the visible command
+# language matches the host platform while sandbox policy stays shared.
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
-    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent. Inspect the repository before changing it, make focused changes, and verify your work.'
+    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent. Inspect the repository before changing it, make focused changes, and verify your work. Respect the current DSH sandbox and approval policy.'
     workspaceContext:
       maxBytes: 65536
     toolBash: false
     toolJobs: false
 
-# tool-bash/tool-pwsh both require the shared trusted DSH_* environment registry.
-# The spine would normally own this together with its built-in bash tool, but
-# toolBash=false deliberately moves both shell consumers to the leaf composition.
 - id: shell-env
   name: '@deepseek-ai/dsh-shell-env'
 
@@ -102,10 +116,11 @@
   config:
     allowParallelInProgress: true
 
-# Repository filesystem capabilities. The observation policy keeps read-before-
-# overwrite/edit semantics inside Harness rather than implementing them in dshc.
-- id: fs-local
-  name: '@deepseek-ai/dsh-fs-local'
+# Sandboxed filesystem backend shares sandbox-policy with the shell. Reads stay
+# available in every upstream mode; write/edit are fenced to the resolved mode
+# and session workspace. The read-before-edit observation policy is orthogonal.
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-sandbox'
   config:
     cwd: !!js process.env.DSH_CWD ?? process.cwd()
 
@@ -115,9 +130,7 @@
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
 
-# `glob` / `grep` are provided by the pinned DSH search plugin and its packaged
-# ripgrep binary. It uses the same DSH_CWD-backed workdir as fs-local so search
-# results are directly follow-up-readable with the filesystem tools.
+# `glob` / `grep` are read-only repository discovery surfaces supplied by DSH.
 - id: tool-fs-search
   name: '@deepseek-ai/dsh-tool-fs-search'
   config:
