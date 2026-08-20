@@ -9,11 +9,13 @@ import {
   type TerminalViewContext,
   type TranscriptMutation,
 } from './api.js'
+import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { TerminalPluginHost } from './host.js'
 
 export function createDefaultTerminalHost(): TerminalPluginHost {
   const host = new TerminalPluginHost()
   host.register(corePlugin())
+  host.register(codingActivityPlugin())
   host.register(activityPlugin())
   return host
 }
@@ -137,8 +139,9 @@ function renderHelp(context: TerminalViewContext): string {
 }
 
 function renderCapabilities(context: TerminalViewContext): string {
-  const plugins = context.plugins.map(plugin => `- ${plugin.id}@${plugin.version}`).join('\n') || '- none'
-  const renderers = context.renderers.map(renderer => `- ${renderer.id} · ${renderer.pluginId} · priority ${renderer.priority}`).join('\n') || '- generic safe fallback only'
+  const plugins = context.plugins.map(plugin => `${plugin.id}@${plugin.version}`).join(', ') || 'none'
+  const renderers = context.renderers.map(renderer => `${renderer.id}@${renderer.pluginId}`).join(', ') || 'generic safe fallback only'
+  const defaultShell = process.platform === 'win32' ? 'pwsh' : 'bash'
   return [
     'Harness boundary',
     `- runtime: ${context.runtime.serverName}/${context.runtime.protocolVersion}`,
@@ -149,12 +152,11 @@ function renderCapabilities(context: TerminalViewContext): string {
     '- prompt cancel: unavailable',
     '- per-session close: unavailable',
     '',
-    'Active dshc terminal plugins',
-    plugins,
+    'Shipped default coding baseline: locally validated; not runtime discovery; overrides may differ',
+    `- tools: ${VALIDATED_DEFAULT_CODING_TOOLS.filter(tool => tool !== 'bash' && tool !== 'pwsh').join(', ')}, ${defaultShell}`,
     '',
-    'Specialized event renderers',
-    renderers,
-    '',
+    `Terminal plugins: ${plugins}`,
+    `Specialized renderers: ${renderers}`,
     `Commands: ${context.commands.map(command => `/${command.name}`).join(', ')}`,
   ].join('\n')
 }
