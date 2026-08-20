@@ -94,7 +94,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
     try {
       await waitFor(() => readOutput().includes('DeepSeek Harness Console'))
-      expect(input.isRaw).toBe(true)
+      await waitFor(() => input.isRaw)
       expect(readOutput()).toContain(ALT_SCREEN_ON)
 
       input.write('first product turn\r')
