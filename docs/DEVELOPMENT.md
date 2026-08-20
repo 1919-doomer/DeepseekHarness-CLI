@@ -56,7 +56,7 @@ Never import private Harness implementation objects into terminal/plugin modules
 - One runtime is initialized once and reused across interactive turns.
 - The selected session remains stable until `/new`.
 - `/new` selects a fresh session but cannot close the previous upstream session under protocol `0.0.1`.
-- Local slash commands are intercepted before the model boundary.
+- Local slash commands are intercepted before the model boundary; malformed local commands remain local errors.
 - `//text` sends a literal slash-prefixed prompt.
 - Ctrl+C closes the whole owned runtime while upstream lacks prompt cancellation.
 
@@ -71,15 +71,21 @@ Current registries:
 - views;
 - status segments.
 
-Registry conflicts fail loudly. Specialized renderers must have a safe generic fallback. Plugin code may alter presentation/local navigation only; it must not silently alter Harness model routing, tool semantics, approval/sandbox policy, persistence or subagent scheduling.
+Registration is transactional. Command/alias, view, renderer-id and status-id conflicts are rejected before any part of an incoming plugin mutates the host. Specialized renderers must have a safe generic fallback.
+
+Plugin callbacks are presentation boundaries. Command failures stay local; renderer match/render failures fall back to the generic normalized renderer; view/status failures degrade their own surface. A terminal-plugin exception must not abort an otherwise-valid Harness activity or be classified as an upstream runtime failure.
+
+Plugin code may alter presentation/local navigation only; it must not silently alter Harness model routing, tool semantics, approval/sandbox policy, persistence or subagent scheduling.
 
 Do not add arbitrary package discovery/loading in M3. Third-party extension work requires a reviewed isolation/security design first.
 
-## Local activity grouping
+## Local activity and session grouping
 
-The M3 transcript generates a local activity id around each `HarnessRuntime.run()` interval so repeated prompts in one Harness session remain distinct UI blocks.
+The M3 transcript generates a local activity id around each `HarnessRuntime.run()` interval so repeated prompts in one Harness session remain distinct UI groups.
 
-This is a presentation implementation detail, not an upstream id. Tests and diagnostics must not interpret it as protocol causality.
+This is a presentation implementation detail, not an upstream id. Tests and diagnostics must not interpret it as protocol causality. Because `subscribeSessionTree()` can interleave root and descendant sessions, `activityId` alone is not a unique transcript identity: assistant/tool blocks also carry session identity, and multiple committed assistant steps inside one activity receive distinct local segments.
+
+Root completion projection is scoped to the session explicitly submitted to `run()`. Descendant output remains observable but cannot overwrite root `finalResponse`, root activity or root turn-error state.
 
 ## Test strategy
 
@@ -87,7 +93,7 @@ Required CI remains credential-free.
 
 ### Unit tests
 
-Cover pure logic including argument/command parsing, plugin registration/conflicts, session selection, normalized projection, capability/trace formatting, same-session activity grouping, folding and terminal-control sanitization.
+Cover pure logic including argument/command parsing, malformed slash input, transactional plugin registration/conflicts, renderer fallback on plugin exceptions, session selection, root/descendant normalized projection, same-session activity grouping, multiple assistant steps per activity, cross-session call-id collisions, truthful current-root agent topology, folding and terminal-control sanitization.
 
 ### Injected terminal-product integration
 
@@ -96,16 +102,22 @@ Cover pure logic including argument/command parsing, plugin registration/conflic
 - Ink raw-mode ownership and cleanup;
 - alternate-screen entry/restore;
 - two prompts using one Harness session;
+- root/descendant assistant and tool output remains separately attributed;
+- multiple visible assistant steps from one activity are retained;
 - local Capability Explorer commands;
+- command/view/status plugin callback failures stay inside presentation;
 - resize handling;
 - clean `/exit`;
+- active-turn Ctrl+C returns 130, closes the whole runtime truthfully, and restores terminal state;
 - no hidden reasoning leakage.
 
-This test is part of normal `pnpm test`, so the Runtime matrix exercises it on Windows, macOS and Ubuntu instead of relying on Linux-only pseudo-terminal tooling.
+This test is part of normal `pnpm test`, so the Runtime matrix exercises it on Windows, macOS and Ubuntu instead of relying on Linux-only pseudo-terminal tooling. POSIX OS-signal injection remains separately covered where Node exposes those semantics.
 
 ### Fake-runtime subprocess integration
 
-The existing deterministic JSON-RPC subprocess suite continues to cover receipt ownership, ordering, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX active-turn SIGINT, timeout, malformed response, transport loss, crash, redaction and bounded shutdown.
+The deterministic JSON-RPC subprocess suite covers durable receipt ownership, pinned upstream event ordering, descendant-session traffic, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX active-turn SIGINT/SIGTERM, receipt-to-idle timeout semantics, malformed response, transport loss, crash, redaction and bounded shutdown.
+
+The fake runtime should model the pinned Harness ordering closely enough to catch frontend projection mistakes. In particular, an assembled `assistant/message` precedes tool execution for that step; later steps may produce additional assistant commits in the same run interval.
 
 ### Official-runtime smoke
 
@@ -113,10 +125,10 @@ The published Harness runtime is launched with the repository Cordis composition
 
 Required smoke paths:
 
-1. one-shot: launch -> initialize -> prompt -> events -> idle -> shutdown;
-2. persistent line mode: one `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown.
+1. one-shot: build `dist`, launch the actual `dist/cli/bin.js` -> initialize -> prompt -> events -> idle -> shutdown;
+2. persistent line mode: one built `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown.
 
-The M3 product itself is tested against the same `HarnessRuntime` contract through injected TTY streams, while the official-runtime smokes continue to validate the published upstream process boundary.
+The M3 product itself is tested against the same `HarnessRuntime` contract through injected TTY streams, while the official-runtime smokes validate the published upstream process boundary and the built distribution entrypoint rather than the TypeScript source runner.
 
 ## Cross-platform rules
 
@@ -129,18 +141,19 @@ Required matrix:
 - Ubuntu latest / Node 24 — blocking;
 - Ubuntu latest / Node 22.19.0 — blocking lower-bound coverage.
 
-Every Runtime matrix job must build the Ink/React product before running tests.
+Every Runtime matrix job must build the Ink/React product before running tests. `pnpm test:official-runtime` also builds first so the smoke command is valid outside CI.
 
 ## Terminal security and reliability
 
-Treat terminal-bound content as hostile. Model text, tool output, filenames, repository content and diagnostics may contain active control sequences.
+Treat terminal-bound content as hostile. Model text, tool output, filenames, repository content, diagnostics and plugin error messages may contain active control sequences.
 
 Release blockers include:
 
-- escape/control/bidi injection;
+- escape/control/bidi injection, including machine-readable JSON printed to a terminal;
 - provider credential leakage;
 - hidden state-changing tool activity;
 - UI behavior that weakens upstream approval/sandbox semantics;
+- descendant session output silently impersonating root output;
 - orphaned processes;
 - alternate-screen state not restored after failure;
 - unbounded practical output growth;
@@ -154,7 +167,7 @@ See root `SECURITY.md`.
 
 Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes dshc/upstream versions, runtime/config resolution, session ids, public event categories/counts, lifecycle transitions and process exit reason/code.
 
-Do not log secrets or hidden reasoning. `/trace` is a normalized observable timeline, not a chain-of-thought viewer.
+Do not log secrets or hidden reasoning. `/trace` is a normalized observable timeline, not a chain-of-thought viewer. `/agents` follows only publicly observed parent/child relationships reachable from the currently selected root; it does not relabel old-session descendants after `/new`.
 
 A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/plugin compatibility without printing secrets.
 
