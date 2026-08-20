@@ -1,6 +1,8 @@
+import { appendFileSync } from 'node:fs'
 import readline from 'node:readline'
 
 const mode = process.env.DSHC_FAKE_MODE ?? 'success'
+const logPath = process.env.DSHC_FAKE_LOG
 let nextMessageId = 1
 let closed = false
 
@@ -56,6 +58,13 @@ rl.on('line', (line) => {
   if (request.method === 'session/prompt') {
     const sessionId = request.params?.sessionId ?? 'main'
     const messageId = `msg-${nextMessageId++}`
+    if (logPath) {
+      appendFileSync(logPath, `${JSON.stringify({
+        sessionId,
+        messageId,
+        contentBlocks: request.params?.contentBlocks ?? [],
+      })}\n`, 'utf8')
+    }
 
     if (mode === 'early-exit') {
       process.stderr.write(`fatal provider failure: ${process.env.DEEPSEEK_API_KEY ?? 'no-secret'}\n`)
@@ -73,7 +82,7 @@ rl.on('line', (line) => {
       inserted: [{ id: messageId, role: 'user', content: request.params?.contentBlocks ?? [] }],
     })
     notify('session.status', { sessionId, status: 'running' })
-    sessionEvent(sessionId, 'turn/start', { turn: 1 })
+    sessionEvent(sessionId, 'turn/start', { turn: nextMessageId - 1 })
     sessionEvent(sessionId, 'user/message', {
       id: messageId,
       role: 'user',
@@ -83,54 +92,54 @@ rl.on('line', (line) => {
     if (mode === 'hang-activity') return
 
     sessionEvent(sessionId, 'assistant/chunk', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
       chunk: { type: 'text-delta', index: 0, text: 'hel' },
     })
     sessionEvent(sessionId, 'assistant/chunk', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
       chunk: { type: 'reasoning-delta', index: 1, text: 'private-reasoning-must-not-render' },
     })
     sessionEvent(sessionId, 'tool/call', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
-      callId: 'call-1',
+      callId: `call-${nextMessageId - 1}`,
       name: 'read',
       arguments: '{"path":"README.md"}',
     })
     sessionEvent(sessionId, 'tool/result', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
       message: {
         role: 'tool',
-        toolCallId: 'call-1',
+        toolCallId: `call-${nextMessageId - 1}`,
         content: [{ type: 'text', text: 'README content' }],
       },
     })
     notify('subagent.started', {
       parentSessionId: sessionId,
-      childSessionId: 'child-1',
+      childSessionId: `child-${nextMessageId - 1}`,
       providerName: 'spawn',
     })
     notify('subagent.finished', {
       parentSessionId: sessionId,
-      childSessionId: 'child-1',
+      childSessionId: `child-${nextMessageId - 1}`,
     })
     sessionEvent(sessionId, 'assistant/chunk', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
       chunk: { type: 'text-delta', index: 0, text: 'lo' },
     })
     sessionEvent(sessionId, 'assistant/message', {
-      turn: 1,
+      turn: nextMessageId - 1,
       step: 1,
       message: {
         role: 'assistant',
         content: [{ type: 'text', text: 'hello' }],
       },
     })
-    sessionEvent(sessionId, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    sessionEvent(sessionId, 'turn/end', { turn: nextMessageId - 1, reason: { kind: 'completed' } })
     notify('session.status', { sessionId, status: 'idle' })
     return
   }
