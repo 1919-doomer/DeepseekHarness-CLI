@@ -2,164 +2,138 @@
 
 GitHub is the project source of truth. Long-lived design lives in `docs/`; executable work and current status live in GitHub Issues; implementation changes should reference the smallest relevant Issue.
 
-## M1 toolchain
+## Validated toolchain
 
-Use the toolchain supported by the pinned DeepSeek Harness baseline unless an implementation problem justifies a documented change:
+Use the toolchain supported by the pinned DeepSeek Harness baseline unless a documented compatibility problem requires a change:
 
 - TypeScript / ESM;
-- Node `^22.19.0 || >=24.0.0` at the current upstream baseline;
-- pnpm `11.7.0` at the current upstream baseline;
-- official DeepSeek Harness SDK/runtime surfaces;
-- no full-screen TUI framework during M1;
-- tests based on Vitest or an equivalent deterministic Node test runner;
-- GitHub Actions with Windows as a blocking target.
+- Node `^22.19.0 || >=24.0.0`;
+- pnpm `11.7.0`;
+- DeepSeek Harness `0.1.0-rc.8` public SDK/runtime surfaces;
+- Vitest for deterministic unit/integration tests;
+- GitHub Actions with Windows, macOS, and Ubuntu blocking the supported runtime path.
 
-Exact dependencies must be locked. Avoid adding convenience packages unless they materially reduce complexity or cross-platform risk.
+Exact dependencies are locked. M1/M2 deliberately use Node's built-in readline/stream/process primitives rather than adding a full-screen TUI dependency. Rich TUI framework selection remains an M3 decision.
 
-## Planned source layout
+## Source layout
 
 ```text
 src/
-├─ cli/          # executable, args, one-shot commands
-├─ commands/     # local/capability-aware command registry
-├─ config/       # local config schema/load
+├─ cli/          # executable, mode routing, one-shot + persistent loop
+├─ commands/     # local/capability-aware commands
+├─ config/       # local configuration
 ├─ lifecycle/    # signals, shutdown, process ownership
-├─ session/      # normalized events/projection/reducers
-├─ terminal/     # plain renderer first; TUI/plugin host later
+├─ session/      # session selection, normalized events/projection/reducers
+├─ terminal/     # safe scrollback renderer; richer TUI later
 └─ upstream/     # all DSH SDK/runtime/version-specific adaptation
 
-runtime/         # public Cordis composition if required
-tests/           # unit, fixtures, fake-runtime, integration
+runtime/         # public Cordis composition
+tests/           # unit, fixtures, fake-runtime, official-runtime integration
 docs/            # compact long-lived documentation
 ```
 
-The dependency direction remains:
+Dependency direction:
 
 ```text
-terminal / commands / plugins
-            ↓
-    normalized projection
-            ↓
-      upstream adapter
-            ↓
- official DSH SDK/runtime
+terminal / commands / future plugins
+                 ↓
+       normalized session state
+                 ↓
+         upstream adapter
+                 ↓
+    official DSH SDK/runtime
 ```
 
-## Implementation order
+## Milestone sequence
 
-Do not start with visual TUI work.
+M1 proved the official runtime boundary. M2 proved persistent multi-turn terminal interaction on that boundary. The next implementation layer is M3: richer terminal presentation and first-party plugin seams extracted from behavior that now exists.
 
-1. scaffold TypeScript/ESM package and CI;
-2. launch the official JSON-RPC runtime;
-3. implement `initialize` and compatibility diagnostics;
-4. submit one prompt and consume ordered notifications;
-5. build normalized local event/projection types;
-6. render through a plain safe terminal renderer;
-7. implement bounded shutdown/process cleanup;
-8. add deterministic fake-runtime/fixture tests;
-9. establish cross-platform smoke gates;
-10. only then build the persistent interactive loop;
-11. extract stable terminal plugin seams from real behavior;
-12. choose/full-screen TUI implementation in M3.
+Do not move agent semantics into the terminal process and do not implement UI affordances for protocol capabilities that upstream does not expose.
 
-GitHub Issue #10 is the M1 master tracker; #2-#9 are its current executable tasks.
+## Current interaction invariants
+
+- A TTY invocation with no one-shot prompt enters the persistent loop.
+- Positional prompts, `run`, piped stdin, and `--json` preserve one-shot behavior.
+- `--interactive` forces line-by-line persistent input for scripts/tests.
+- One runtime is initialized once and reused across interactive turns.
+- The active session id remains stable until `/new`.
+- `/new` selects a fresh session id but cannot close the old upstream session under protocol `0.0.1`.
+- Local slash commands are intercepted before the model boundary.
+- Ctrl+C during an active turn closes the whole runtime; it is not prompt cancellation.
+- EOF is a normal interactive exit boundary.
 
 ## Test strategy
 
-Required CI must be credential-free.
+Required CI must remain credential-free.
 
 ### Unit tests
 
-Pure logic such as config validation, command parsing, normalized reducers, compatibility checks, output folding and terminal-control sanitization.
-
-### Protocol fixtures
-
-Synthetic newline-delimited JSON-RPC sequences covering success, errors, malformed frames, ordering, unknown notifications, timeouts and transport loss.
+Cover pure logic including argument/command parsing, session selection, normalized reducers, compatibility checks, output folding, and terminal-control sanitization.
 
 ### Fake-runtime integration
 
-Launch a deterministic subprocess that behaves like the current protocol so lifecycle/process tests run offline on every PR.
+A deterministic newline-delimited JSON-RPC subprocess exercises lifecycle and protocol behavior without API credentials. M2 coverage includes:
+
+- same-session reuse across multiple prompts;
+- `/new` session rotation without runtime restart;
+- local commands not reaching the model;
+- tool/subagent transcript visibility;
+- stream/commit de-duplication across interleaved activity;
+- EOF behavior;
+- active-turn POSIX SIGINT whole-runtime teardown;
+- timeout, malformed response, transport loss, crash, redaction, and bounded shutdown.
 
 ### Official-runtime smoke
 
-Use the pinned official Harness runtime to prove launch -> initialize -> events -> idle -> shutdown. Prefer a public deterministic/mock path where available. Live provider/API-key tests are optional trusted/manual workflows only.
+The published Harness runtime is launched with the repository Cordis composition. The DeepSeek adapter is routed to a local deterministic HTTP model stub so tests make no paid call and require no real key.
+
+Required smoke paths now include:
+
+1. M1 one-shot: launch -> initialize -> prompt -> events -> idle -> shutdown;
+2. M2 interactive: one `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> exit -> clean shutdown.
 
 ### Terminal/product tests
 
-From M2/M3 onward cover narrow/wide terminals, resize, Ctrl+C/EOF, large output, non-TTY output, Windows Terminal/ConPTY behavior, plugin fallback behavior and hostile control sequences.
-
-## Security engineering
-
-Treat the terminal boundary as hostile input. Model text, tool output, filenames, repository content and diagnostics may contain active control sequences.
-
-Release blockers include:
-
-- terminal escape/control injection;
-- API keys or sensitive environment values in normal logs/support bundles;
-- hidden or misleading state-changing tool activity;
-- UI behavior that silently weakens upstream approval/sandbox semantics;
-- orphaned runtime/child processes;
-- unbounded output buffers causing practical denial of service;
-- arbitrary third-party terminal plugin loading without a credible isolation model.
-
-`dshc` should not own API credentials for alpha. Prefer environment/upstream credential mechanisms and scrub diagnostics.
-
-Third-party plugins must not be described as sandboxed unless isolation is actually enforced. First-party/internal plugin seams can land earlier; community package loading is deferred.
-
-See root `SECURITY.md` for reporting policy.
+M3 should add narrow/wide terminal, resize, folding, interactive editing, Windows Terminal/ConPTY, and richer presentation coverage. Do not claim Windows Ctrl+C injection semantics are identical to POSIX signals; test host-specific behavior honestly.
 
 ## Cross-platform rules
 
-Windows is first-class from M1. Do not assume Unix-only signals, `/bin/sh`, POSIX paths/quoting or identical ANSI behavior.
+Windows is first-class. Do not assume `/bin/sh`, POSIX paths/quoting, Unix-only signals, or identical ANSI behavior.
 
-Required CI direction:
+Required matrix:
 
-- Windows latest — blocking;
-- Ubuntu latest — blocking;
-- macOS latest — blocking when the pinned upstream runtime supports the tested path.
+- Windows latest / Node 24 — blocking;
+- macOS latest / Node 24 — blocking;
+- Ubuntu latest / Node 24 — blocking;
+- Ubuntu latest / Node 22.19.0 — blocking lower-bound coverage.
 
-Keep repository text LF-normalized through `.gitattributes`/`.editorconfig` to avoid cross-platform churn.
+## Security engineering
+
+Treat terminal-bound content as hostile. Model text, tool output, filenames, repository content, and diagnostics may contain active control sequences.
+
+Release blockers include terminal escape/control injection, credential leakage, hidden state-changing tool activity, weakening of upstream approval/sandbox semantics, orphaned processes, unbounded practical output growth, or unsafe third-party plugin loading.
+
+`dshc` should not own provider credentials. Prefer upstream/environment credential mechanisms and scrub diagnostics.
+
+Third-party plugins must not be described as sandboxed unless isolation is actually enforced. Community package loading remains deferred beyond the first-party plugin plane.
+
+See root `SECURITY.md`.
 
 ## Diagnostics
 
-Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes:
+Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes dshc/upstream versions, runtime/config resolution, session ids, method/event counts, lifecycle transitions, and process exit reason/code. Do not log raw secrets or raw model/repository content by default.
 
-- dshc/upstream version;
-- runtime command/config path;
-- method names/ids;
-- session ids;
-- event counts/types;
-- lifecycle transitions;
-- process exit reason/code.
+A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities, and optional bridge/plugin compatibility without printing secrets.
 
-Do not log raw model/tool/repository content by default.
+## Pull requests and definition of done
 
-A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/plugin compatibility without printing secrets.
+A feature PR should state the Issue/milestone advanced, upstream contract relied on, user-visible behavior, tests run, compatibility/security implications, and documentation changes.
 
-## Pull requests and changes
-
-Prefer small issue-scoped changes. A feature PR should state:
-
-- Issue/milestone advanced;
-- upstream contract relied on;
-- user-visible behavior changed;
-- tests run;
-- compatibility/security implications;
-- docs changed when design/protocol behavior changed.
+A task is done when its Issue acceptance criteria are met, relevant tests pass, protocol/security/cross-platform implications are covered, long-lived docs match actual behavior, and no known blocker is hidden by a renderer or compatibility shim.
 
 Suggested commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`.
 
-## Definition of done
-
-A task is done when:
-
-- acceptance criteria in its GitHub Issue are met;
-- relevant tests pass;
-- protocol/security/cross-platform implications are covered;
-- long-lived docs are updated if the contract changed;
-- no known blocker is being hidden by a renderer or compatibility shim.
-
-## Release gates
+## Public-alpha release gates
 
 The first public alpha requires at minimum:
 
@@ -173,4 +147,4 @@ The first public alpha requires at minimum:
 - unofficial/community status clear in package/repository docs;
 - update/uninstall and diagnostics instructions.
 
-Roadmap prose does not duplicate live task status: use GitHub Issues for that.
+Roadmap prose does not duplicate live task status; use GitHub Issues for execution state.
