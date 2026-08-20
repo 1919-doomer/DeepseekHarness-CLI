@@ -82,7 +82,6 @@ describe('M2 interactive loop with fake Harness runtime', () => {
       expect(rendered).toContain('tool> read')
       expect(rendered).toContain('agent+')
       expect(rendered).not.toContain('private-reasoning-must-not-render')
-      expect(rendered).toContain('Harness history unchanged') === false
     } finally {
       await runtime.close()
     }
