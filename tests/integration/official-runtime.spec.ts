@@ -51,13 +51,15 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       expect(result.projection.activity).toBe('idle')
       expect(result.projection.lastTurnError).toBeUndefined()
       expect(modelRequests.length).toBeGreaterThanOrEqual(1)
-      expect(modelRequests[0]).toMatchObject({
+
+      const firstRequest = requiredFirstRequest(modelRequests)
+      expect(firstRequest).toMatchObject({
         model: 'deepseek-v4-flash',
         max_tokens: 128,
       })
 
-      const toolNames = modelToolNames(modelRequests[0])
-      expect(toolNames).toEqual(expect.arrayContaining(EXPECTED_CODING_TOOLS))
+      const toolNames = modelToolNames(firstRequest)
+      expect(toolNames).toEqual(expect.arrayContaining([...EXPECTED_CODING_TOOLS]))
       expect(toolNames).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
       expect(toolNames).not.toContain(process.platform === 'win32' ? 'bash' : 'pwsh')
     } finally {
@@ -93,7 +95,9 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       expect(result.stdout).toBe('assistant> m4-cli-ok\n')
       expect(result.stderr).toBe('')
       expect(modelRequests.length).toBeGreaterThanOrEqual(1)
-      expect(modelToolNames(modelRequests[0])).toEqual(expect.arrayContaining(EXPECTED_CODING_TOOLS))
+      expect(modelToolNames(requiredFirstRequest(modelRequests))).toEqual(
+        expect.arrayContaining([...EXPECTED_CODING_TOOLS]),
+      )
     } finally {
       await closeServer(stub.server)
     }
@@ -114,6 +118,12 @@ function modelEnvironment(baseUrl: string, root: string): NodeJS.ProcessEnv {
     DSH_HOME: join(root, '.dsh-home'),
     DSH_SESSION_ROOT: join(root, '.dsh-sessions'),
   }
+}
+
+function requiredFirstRequest(requests: Record<string, unknown>[]): Record<string, unknown> {
+  const first = requests[0]
+  if (first === undefined) throw new Error('model stub did not receive a provider request')
+  return first
 }
 
 function modelToolNames(request: Record<string, unknown>): string[] {
