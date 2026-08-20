@@ -26,70 +26,63 @@ scaffold
  -> cross-platform CI
 ```
 
-Tasks #2-#9 are closed. Required CI validates the official Harness runtime and actual `dshc` one-shot command without provider secrets.
+Required CI validates the official Harness runtime and actual one-shot `dshc` command without provider secrets.
 
 ## M2 — Interactive terminal loop — complete — #11
 
 Completed on 2026-08-20 through PR #44.
 
-M2 turns the validated vertical slice into a persistent terminal session while keeping the same public upstream contract:
+M2 added one persistent runtime/session loop, local commands, multi-turn transcript behavior, `/new`, truthful Ctrl+C/EOF semantics, and credential-free cross-platform runtime gates while retaining one-shot compatibility.
+
+## M3 — Terminal product + first-party plugin plane — complete — #12
+
+Completed on 2026-08-20 through PR #48.
+
+M3 turns the proven M1/M2 seams into the first structured terminal product without moving agent semantics out of Harness:
 
 ```text
-launch + initialize once
- -> persistent active session
- -> prompt / receipt / events / idle
- -> repeat on the same session
- -> local commands
- -> /new session without runtime restart
- -> EOF / signal / exit lifecycle
- -> clean shutdown
+TTY user
+ -> Ink 7 + React 19 terminal product
+ -> deterministic first-party terminal plugin host
+ -> normalized transcript / views / status
+ -> persistent Harness runtime + selected session
+ -> receipt / ordered events / idle
+ -> clean terminal/runtime teardown
 ```
 
 Delivered behavior:
 
-- TTY-default persistent prompt loop;
-- one Harness runtime reused across turns;
-- stable active session with `/new` rotation;
-- `/help`, `/status`, `/session`, `/new`, `/clear`, `/exit`;
-- assistant/tool/subagent scrollback;
-- stream/commit de-duplication across interleaved tool activity;
-- truthful Ctrl+C and EOF semantics under the current no-cancel/no-session-close protocol;
-- M1 one-shot, piped stdin, and JSON compatibility retained;
-- credential-free fake-runtime and official-runtime two-turn CI on Windows, macOS, and Ubuntu.
+- Ink structured TTY product while preserving the validated Node 22.19/24 baseline;
+- resize-aware transcript, prompt editor/history and adaptive status line;
+- first-party terminal plugin API v1 for commands, event renderers, views and status segments;
+- deterministic registry conflict handling and generic safe event fallback;
+- specialized tool/subagent rendering and visible large-output folding;
+- `/plugins` / `/capabilities` Capability Explorer with explicit partial/unavailable upstream inventory when protocol metadata is missing;
+- `/trace` normalized observable timeline without hidden-reasoning reconstruction;
+- `/agents` root/subagent topology from public events only;
+- local activity grouping that keeps repeated same-session turns distinct without pretending to create upstream causal ids;
+- exception-safe alternate-screen lifecycle and preserved whole-runtime Ctrl+C semantics;
+- one-shot, JSON, piped and M2 non-TTY scripted interaction retained;
+- credential-free product tests that drive the Ink layer with TTY-like streams on the blocking Windows/macOS/Ubuntu matrix;
+- published Harness one-shot and persistent runtime smokes retained.
 
-No full-screen TUI or general plugin framework was introduced in M2.
+M3 intentionally does **not** load arbitrary third-party Node plugins. The first-party plugin plane proves the API shape; isolation/security remains later work.
 
-## M3 — Terminal product + first-party plugin plane — next — #12
+Issue #35 continues into M4 for deeper trace/debugger hardening rather than being treated as fully closed by the initial M3 trace/topology slice.
 
-Build the polished terminal experience and formalize terminal extension seams from behavior proven in M1/M2.
+## M4 — Reliability, security and compatibility — next — #13
 
-Core goals:
+Make daily use dependable and prepare the terminal/plugin boundaries for alpha-quality scrutiny:
 
-- structured transcript/input/status UI;
-- terminal resize, output folding, and Windows Terminal support;
-- first-party registries for commands, tool/event renderers, views, and status segments where real behavior justifies them;
-- capability-driven UI activation;
-- Capability Explorer/plugin-aware help when public metadata permits;
-- agent/subagent activity view;
-- generic safe fallback for unknown tools/events;
-- choose the full-screen TUI framework only at M3 entry.
-
-Key Issues: #32 first-party plugin host, #33 Capability Explorer, #34 renderer registry, #35 trace/debugger.
-
-Third-party arbitrary package loading is **not** an M3 requirement.
-
-## M4 — Reliability, security and compatibility — #13
-
-Make daily use dependable:
-
-- compatibility/startup guards;
-- fake-runtime + official-runtime regression suite;
-- process cleanup and long-session/backpressure hardening;
-- structured secret-safe diagnostics;
-- terminal-injection/security review;
-- Session Debugger/trace hardening;
-- plugin boundary/security review;
-- Windows/POSIX lifecycle coverage.
+- compatibility/startup diagnostics and `dshc doctor` direction;
+- long-session memory/backpressure/output hardening;
+- deterministic process and terminal-state cleanup under failures;
+- structured secret-safe diagnostics/support data;
+- terminal-injection and alternate-screen security review;
+- Session Debugger/trace filtering, durations and failure inspection (#35 continuation);
+- first-party plugin boundary/API hardening and isolation research;
+- Windows/POSIX lifecycle coverage, including host-specific interrupt semantics;
+- upstream contract re-validation before alpha.
 
 Security gate: #18. Third-party plugin isolation research: #37.
 
@@ -127,15 +120,16 @@ Candidate work, promoted only when backed by a real user problem and supported u
 
 Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` must remain usable without it.
 
-## Feature priorities
+## Feature priorities after M3
 
-1. **Capability Explorer** — show what Harness is actually composed of.
-2. **Plugin-aware tool/event rendering** — custom capabilities become readable without core switch-statement growth.
-3. **Session Debugger / Trace** — execution observability from user-visible runtime/session metadata.
-4. **Agent topology** — root/descendant activity made legible.
-5. **Adaptive status/help/commands** — UI changes with active capabilities.
-6. **`dshc doctor`** — make developer-preview compatibility diagnosable.
-7. **Safe extension ecosystem** — only after plugin isolation/permissions are real.
+The highest-value next work is no longer visual polish for its own sake. Priority is:
+
+1. **Reliability under long sessions and failures.**
+2. **Security review of the terminal/plugin boundary.**
+3. **Session Debugger / Trace hardening.**
+4. **`dshc doctor` and compatibility diagnostics.**
+5. **Capability metadata improvements when supported upstream.**
+6. **Safe extension isolation before any community package loading.**
 
 ## Admission test for new features
 
