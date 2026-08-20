@@ -1,15 +1,26 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import type { TerminalPluginHost } from '../plugins/host.js'
 import type { TranscriptBlock, TranscriptMutation } from '../plugins/api.js'
+import {
+  MAX_RETAINED_TRANSCRIPT_BLOCKS,
+  MAX_RETAINED_TRANSCRIPT_FIELD_CHARS,
+} from '../retention.js'
 import { sanitizeTerminalText } from './sanitize.js'
+
+const TRANSCRIPT_HEAD_CHARS = Math.floor(MAX_RETAINED_TRANSCRIPT_FIELD_CHARS * 0.75)
+const TRANSCRIPT_TAIL_CHARS = MAX_RETAINED_TRANSCRIPT_FIELD_CHARS - TRANSCRIPT_HEAD_CHARS
 
 export interface TerminalTranscriptState {
   blocks: readonly TranscriptBlock[]
   unknownEventCount: number
+  /** Total distinct blocks created since the most recent local /clear. */
+  totalBlockCount: number
+  /** Older blocks evicted from local terminal retention. */
+  droppedBlockCount: number
 }
 
 export function initialTerminalTranscript(): TerminalTranscriptState {
-  return { blocks: [], unknownEventCount: 0 }
+  return { blocks: [], unknownEventCount: 0, totalBlockCount: 0, droppedBlockCount: 0 }
 }
 
 export function appendUserPrompt(
@@ -24,7 +35,7 @@ export function appendUserPrompt(
       id,
       kind: 'user',
       title: 'you',
-      text: sanitizeTerminalText(text),
+      text,
       sessionId,
     },
   }])
@@ -38,7 +49,7 @@ export function appendSystemMessage(
 ): TerminalTranscriptState {
   return applyMutations(state, [{
     kind: 'append',
-    block: { id, kind: 'system', title, text: sanitizeTerminalText(text) },
+    block: { id, kind: 'system', title, text },
   }])
 }
 
@@ -84,30 +95,51 @@ export function applyMutations(
 ): TerminalTranscriptState {
   if (mutations.length === 0) return state
   const blocks = [...state.blocks]
+  let totalBlockCount = state.totalBlockCount
+  let droppedBlockCount = state.droppedBlockCount
+
+  const appendBlock = (block: TranscriptBlock): void => {
+    blocks.push(sanitizeAndRetainTranscriptBlock(block))
+    totalBlockCount += 1
+    while (blocks.length > MAX_RETAINED_TRANSCRIPT_BLOCKS) {
+      blocks.shift()
+      droppedBlockCount += 1
+    }
+  }
+
   for (const mutation of mutations) {
     if (mutation.kind === 'append') {
-      // Transcript state is itself a trust boundary. A first-party renderer may
-      // forget to sanitize an untrusted event, and future exporters/debuggers
-      // may consume this state without going through Ink's final Text boundary.
-      // Store only inert text so no downstream transcript consumer can revive
-      // attacker-controlled terminal controls by accident.
-      const block = sanitizeTranscriptBlock(mutation.block)
+      // Transcript state is itself a trust + retention boundary. A first-party
+      // renderer may forget sanitization, and future debugger/exporter/replay
+      // consumers may bypass Ink. Store only inert, bounded local copies.
+      const block = sanitizeAndRetainTranscriptBlock(mutation.block)
       const existing = blocks.findIndex(current => current.id === block.id)
       if (existing >= 0) blocks[existing] = block
-      else blocks.push(block)
+      else appendBlock(mutation.block)
       continue
     }
 
     const index = blocks.findIndex(block => block.id === mutation.id)
     if (mutation.kind === 'append-text') {
-      const text = sanitizeTerminalText(mutation.text)
+      const addition = sanitizeTerminalText(mutation.text)
       if (index < 0) {
         if (mutation.fallback !== undefined) {
-          blocks.push(sanitizeTranscriptBlock({ ...mutation.fallback, text }))
+          const fallback = sanitizeAndRetainTranscriptBlock(mutation.fallback)
+          const retained = appendRetainedField(fallback.text, fallback.textDroppedChars ?? 0, addition)
+          appendBlock({
+            ...fallback,
+            text: retained.text,
+            ...(retained.droppedChars === 0 ? { textDroppedChars: undefined } : { textDroppedChars: retained.droppedChars }),
+          })
         }
       } else {
         const previous = blocks[index]!
-        blocks[index] = { ...previous, text: previous.text + text }
+        const retained = appendRetainedField(previous.text, previous.textDroppedChars ?? 0, addition)
+        blocks[index] = {
+          ...previous,
+          text: retained.text,
+          ...(retained.droppedChars === 0 ? { textDroppedChars: undefined } : { textDroppedChars: retained.droppedChars }),
+        }
       }
       continue
     }
@@ -117,32 +149,84 @@ export function applyMutations(
       blocks.splice(index, 1)
       continue
     }
-    blocks[index] = {
-      ...blocks[index]!,
-      ...sanitizeTranscriptPatch(mutation.patch),
-      id: mutation.id,
-    }
+    blocks[index] = applySanitizedRetainedPatch(blocks[index]!, mutation.patch)
   }
-  return { ...state, blocks }
+  return { ...state, blocks, totalBlockCount, droppedBlockCount }
 }
 
-function sanitizeTranscriptBlock(block: TranscriptBlock): TranscriptBlock {
+/** Render the bounded field with an explicit middle-eviction marker. */
+export function retainedTranscriptField(value: string, droppedChars = 0): string {
+  if (droppedChars <= 0) return value
+  const head = value.slice(0, TRANSCRIPT_HEAD_CHARS)
+  const tail = value.slice(-TRANSCRIPT_TAIL_CHARS)
+  return `${head}\n… ${droppedChars} chars evicted from local terminal retention; upstream content was processed in full …\n${tail}`
+}
+
+function sanitizeAndRetainTranscriptBlock(block: TranscriptBlock): TranscriptBlock {
+  const text = retainFreshField(sanitizeTerminalText(block.text))
+  const detail = block.detail === undefined
+    ? undefined
+    : retainFreshField(sanitizeTerminalText(block.detail))
   return {
     ...block,
     ...(block.title === undefined ? {} : { title: sanitizeTerminalText(block.title) }),
-    text: sanitizeTerminalText(block.text),
-    ...(block.detail === undefined ? {} : { detail: sanitizeTerminalText(block.detail) }),
+    text: text.text,
+    ...(text.droppedChars === 0 ? { textDroppedChars: undefined } : { textDroppedChars: text.droppedChars }),
+    ...(detail === undefined ? { detail: undefined, detailDroppedChars: undefined } : {
+      detail: detail.text,
+      ...(detail.droppedChars === 0 ? { detailDroppedChars: undefined } : { detailDroppedChars: detail.droppedChars }),
+    }),
   }
 }
 
-function sanitizeTranscriptPatch(
+function applySanitizedRetainedPatch(
+  block: TranscriptBlock,
   patch: Partial<Omit<TranscriptBlock, 'id'>>,
-): Partial<Omit<TranscriptBlock, 'id'>> {
-  return {
+): TranscriptBlock {
+  const result: TranscriptBlock = {
+    ...block,
     ...patch,
+    id: block.id,
     ...(patch.title === undefined ? {} : { title: sanitizeTerminalText(patch.title) }),
-    ...(patch.text === undefined ? {} : { text: sanitizeTerminalText(patch.text) }),
-    ...(patch.detail === undefined ? {} : { detail: sanitizeTerminalText(patch.detail) }),
+  }
+
+  if (patch.text !== undefined) {
+    const retained = retainFreshField(sanitizeTerminalText(patch.text))
+    result.text = retained.text
+    result.textDroppedChars = retained.droppedChars || undefined
+  }
+  if (patch.detail !== undefined) {
+    const retained = retainFreshField(sanitizeTerminalText(patch.detail))
+    result.detail = retained.text
+    result.detailDroppedChars = retained.droppedChars || undefined
+  }
+  return result
+}
+
+function retainFreshField(text: string): { text: string; droppedChars: number } {
+  if (text.length <= MAX_RETAINED_TRANSCRIPT_FIELD_CHARS) return { text, droppedChars: 0 }
+  const droppedChars = text.length - TRANSCRIPT_HEAD_CHARS - TRANSCRIPT_TAIL_CHARS
+  return {
+    text: text.slice(0, TRANSCRIPT_HEAD_CHARS) + text.slice(-TRANSCRIPT_TAIL_CHARS),
+    droppedChars,
+  }
+}
+
+function appendRetainedField(
+  current: string,
+  currentDroppedChars: number,
+  addition: string,
+): { text: string; droppedChars: number } {
+  if (currentDroppedChars === 0) return retainFreshField(current + addition)
+
+  const head = current.slice(0, TRANSCRIPT_HEAD_CHARS)
+  const previousTail = current.slice(-TRANSCRIPT_TAIL_CHARS)
+  const combinedTail = previousTail + addition
+  const tail = combinedTail.slice(-TRANSCRIPT_TAIL_CHARS)
+  const additionallyDropped = Math.max(0, combinedTail.length - TRANSCRIPT_TAIL_CHARS)
+  return {
+    text: head + tail,
+    droppedChars: currentDroppedChars + additionallyDropped,
   }
 }
 
@@ -153,7 +237,7 @@ function genericEventMutations(
 ): readonly TranscriptMutation[] {
   switch (event.kind) {
     case 'assistant-delta': {
-      const id = assistantBlockId(state, context.activityId, event.sessionId)
+      const id = assistantBlockId(state, context.activityId, event.sessionId, event.sequence)
       return [{
         kind: 'append-text',
         id,
@@ -170,14 +254,14 @@ function genericEventMutations(
       }]
     }
     case 'assistant-message': {
-      const id = assistantBlockId(state, context.activityId, event.sessionId)
+      const id = assistantBlockId(state, context.activityId, event.sessionId, event.sequence)
       return [{
         kind: 'append',
         block: {
           id,
           kind: 'assistant',
           title: scopedTitle('assistant', event.sessionId, context.rootSessionId),
-          text: sanitizeTerminalText(event.text),
+          text: event.text,
           state: 'success',
           sessionId: event.sessionId,
           activityId: context.activityId,
@@ -190,8 +274,8 @@ function genericEventMutations(
         block: {
           id: terminalBlockId('tool', context.activityId, event.sessionId, event.callId),
           kind: 'tool',
-          title: scopedTitle(sanitizeTerminalText(event.name), event.sessionId, context.rootSessionId),
-          text: sanitizeTerminalText(event.arguments),
+          title: scopedTitle(event.name, event.sessionId, context.rootSessionId),
+          text: event.arguments,
           state: 'running',
           foldable: true,
           sessionId: event.sessionId,
@@ -203,7 +287,7 @@ function genericEventMutations(
         kind: 'patch',
         id: terminalBlockId('tool', context.activityId, event.sessionId, event.callId),
         patch: {
-          detail: sanitizeTerminalText(event.text),
+          detail: event.text,
           state: event.isError ? 'error' : 'success',
           foldable: true,
         },
@@ -214,9 +298,9 @@ function genericEventMutations(
         block: {
           id: terminalBlockId('agent', context.activityId, event.parentSessionId, event.childSessionId),
           kind: 'agent',
-          title: event.provider === undefined ? 'subagent' : `subagent · ${sanitizeTerminalText(event.provider)}`,
-          text: sanitizeTerminalText(event.childSessionId),
-          detail: `parent ${sanitizeTerminalText(event.parentSessionId)}`,
+          title: event.provider === undefined ? 'subagent' : `subagent · ${event.provider}`,
+          text: event.childSessionId,
+          detail: `parent ${event.parentSessionId}`,
           state: 'running',
           sessionId: event.parentSessionId,
           activityId: context.activityId,
@@ -235,7 +319,7 @@ function genericEventMutations(
           id: terminalBlockId('error', context.activityId, event.sessionId, String(event.sequence)),
           kind: 'error',
           title: scopedTitle('turn error', event.sessionId, context.rootSessionId),
-          text: sanitizeTerminalText(event.message),
+          text: event.message,
           state: 'error',
           sessionId: event.sessionId,
           activityId: context.activityId,
@@ -248,7 +332,7 @@ function genericEventMutations(
           id: terminalBlockId('unknown', context.activityId, event.sessionId ?? '', String(event.sequence)),
           kind: 'debug',
           title: 'unknown event',
-          text: `${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`,
+          text: `${event.method}${event.type === undefined ? '' : `/${event.type}`}`,
           activityId: context.activityId,
         },
       }] : []
@@ -263,6 +347,7 @@ function assistantBlockId(
   state: TerminalTranscriptState,
   activityId: string,
   sessionId: string,
+  sequence: number,
 ): string {
   const running = [...state.blocks].reverse().find(block =>
     block.kind === 'assistant'
@@ -271,12 +356,9 @@ function assistantBlockId(
     && block.state === 'running',
   )
   if (running !== undefined) return running.id
-  const segment = state.blocks.filter(block =>
-    block.kind === 'assistant'
-    && block.activityId === activityId
-    && block.sessionId === sessionId,
-  ).length + 1
-  return terminalBlockId('assistant', activityId, sessionId, String(segment))
+  // Sequence is an observed local ordering number, not upstream causal identity.
+  // Using it as the local discriminator avoids id reuse after old blocks evict.
+  return terminalBlockId('assistant', activityId, sessionId, String(sequence))
 }
 
 function presentationFailureMutation(
@@ -291,7 +373,7 @@ function presentationFailureMutation(
       id: terminalBlockId('renderer-error', context.activityId, sessionId, String(event.sequence)),
       kind: 'error',
       title: 'terminal renderer error',
-      text: sanitizeTerminalText(errorMessage(error)),
+      text: errorMessage(error),
       state: 'error',
       sessionId,
       activityId: context.activityId,

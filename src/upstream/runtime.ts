@@ -7,6 +7,14 @@ import {
   type HarnessNotification,
 } from '@deepseek-ai/dsh-sdk-client'
 import {
+  appendRetainedTail,
+  initialRetainedTail,
+  MAX_RETAINED_ACTIVITY_EVENTS,
+  MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
+  retainHarnessNotification,
+  retainNormalizedEvent,
+} from '../retention.js'
+import {
   SessionProjector,
   isInboxReceipt,
   type NormalizedEvent,
@@ -63,8 +71,14 @@ export interface RunActivityResult {
   sessionId: string
   messageId: string
   finalResponse: string
+  /** Retained diagnostic tail; `eventCount` is the exact observed total. */
   events: NormalizedEvent[]
+  eventCount: number
+  droppedEventCount: number
+  /** Retained diagnostic tail; `notificationCount` is the exact observed total. */
   notifications: HarnessNotification[]
+  notificationCount: number
+  droppedNotificationCount: number
   projection: ProjectionState
 }
 
@@ -131,8 +145,8 @@ export class HarnessRuntime {
     )
     const subscription = client.subscribeSessionTree(sessionId)
     const projector = new SessionProjector(sessionId)
-    const events: NormalizedEvent[] = []
-    const notifications: HarnessNotification[] = []
+    let eventHistory = initialRetainedTail<NormalizedEvent>()
+    let notificationHistory = initialRetainedTail<HarnessNotification>()
 
     try {
       const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
@@ -150,11 +164,23 @@ export class HarnessRuntime {
           deadline = Date.now() + activityTimeoutMs
         }
 
-        notifications.push(notification)
+        // Protocol processing and projection always see the complete value.
+        // Retention happens only after callbacks/projector have consumed it, so
+        // local memory budgets can never backpressure or truncate Harness truth.
         options.onNotification?.(notification)
         const event = projector.ingest(notification)
-        events.push(event)
         options.onEvent?.(event, notification)
+
+        notificationHistory = appendRetainedTail(
+          notificationHistory,
+          retainHarnessNotification(notification),
+          MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
+        )
+        eventHistory = appendRetainedTail(
+          eventHistory,
+          retainNormalizedEvent(event),
+          MAX_RETAINED_ACTIVITY_EVENTS,
+        )
 
         if (
           notification.method === 'session.status'
@@ -169,8 +195,12 @@ export class HarnessRuntime {
         sessionId,
         messageId,
         finalResponse: projector.state.lastAssistantMessage,
-        events,
-        notifications,
+        events: [...eventHistory.items],
+        eventCount: eventHistory.total,
+        droppedEventCount: eventHistory.dropped,
+        notifications: [...notificationHistory.items],
+        notificationCount: notificationHistory.total,
+        droppedNotificationCount: notificationHistory.dropped,
         projection: projector.state,
       }
     } catch (error) {

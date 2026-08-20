@@ -39,8 +39,13 @@ export interface TranscriptBlock {
   id: string
   kind: TranscriptBlockKind
   title?: string
+  /** Bounded local display copy; exact upstream execution content is unchanged. */
   text: string
   detail?: string
+  /** Characters omitted from the middle of `text` by local retention. */
+  textDroppedChars?: number
+  /** Characters omitted from the middle of `detail` by local retention. */
+  detailDroppedChars?: number
   state?: 'running' | 'success' | 'error' | 'finished'
   foldable?: boolean
   sessionId?: string
@@ -74,11 +79,30 @@ export interface TerminalEventRendererSpec {
   render(event: NormalizedEvent, context: TerminalRenderContext): readonly TranscriptMutation[]
 }
 
+export interface TerminalAgentTopologyEntry {
+  childSessionId: string
+  parentSessionId: string
+  provider?: string
+  status: 'running' | 'finished'
+}
+
+export interface TerminalRetentionSummary {
+  totalEventCount: number
+  droppedEventCount: number
+  droppedTranscriptBlockCount: number
+  droppedTopologyEntryCount: number
+}
+
 export interface TerminalViewContext extends TerminalCommandContext {
   commands: readonly RegisteredCommandInfo[]
   renderers: readonly RegisteredRendererInfo[]
   plugins: readonly RegisteredPluginInfo[]
+  /** Bounded normalized event tail. Exact totals/eviction live in `retention`. */
   events: readonly NormalizedEvent[]
+  /** Optional to preserve API-v1 compatibility for external test/embedding code. */
+  retention?: TerminalRetentionSummary
+  /** Current selected-session topology projection, independent of trace eviction. */
+  agentTopology?: readonly TerminalAgentTopologyEntry[]
 }
 
 export interface TerminalViewSpec {
