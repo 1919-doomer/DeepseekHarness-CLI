@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const runtimeConfigUrl = new URL('../../runtime/cordis.yml', import.meta.url)
@@ -27,7 +26,7 @@ const REFERENCE_PLUGIN_IDS = [
 ] as const
 
 describe('M4 runtime composition', () => {
-  it('keeps the complete upstream JSON-RPC coding reference spine plus the explicit cross-platform shell delta', async () => {
+  it('keeps the upstream JSON-RPC spine plus M4 repository and platform-shell additions', async () => {
     const config = await readFile(runtimeConfigUrl, 'utf8')
     const entries = parsePluginEntries(config)
     const ids = new Set(entries.map(entry => entry.id))
@@ -40,10 +39,13 @@ describe('M4 runtime composition', () => {
       { id: 'shell-env', name: '@deepseek-ai/dsh-shell-env' },
       { id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash' },
       { id: 'tool-pwsh', name: '@deepseek-ai/dsh-tool-pwsh' },
+      { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search' },
     ]))
 
     expect(config).toContain("disabled: !!js process.platform === 'win32'")
     expect(config).toContain("disabled: !!js process.platform !== 'win32'")
+    expect(config).toContain('workspaceContext:\n      maxBytes: 65536')
+    expect(config).toContain('sampleOverCapGlobResults: false')
     expect(config).toContain('toolBash: false')
     expect(config).not.toContain("?? './.sessions'")
   })
@@ -67,6 +69,3 @@ function parsePluginEntries(config: string): Array<{ id: string; name: string }>
     name: match[2] ?? '',
   }))
 }
-
-// Keep the path evaluation explicit in compiled test environments.
-void fileURLToPath(runtimeConfigUrl)
