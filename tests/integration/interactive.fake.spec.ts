@@ -87,10 +87,12 @@ describe('M2 interactive loop with fake Harness runtime', () => {
       expect(records[2]?.sessionId).not.toBe('session-first')
 
       const rendered = capture.read()
-      expect(rendered.match(/assistant> hel/g)).toHaveLength(3)
-      expect(rendered.match(/assistant> lo/g)).toHaveLength(3)
-      expect(rendered).not.toContain('assistant(committed)> hello')
+      expect(rendered.match(/assistant> working/g)).toHaveLength(3)
+      expect(rendered.match(/assistant> hello/g)).toHaveLength(3)
+      expect(rendered.match(/assistant\[child-/g)).toHaveLength(3)
+      expect(rendered).not.toContain('assistant(committed)>')
       expect(rendered).toContain('tool> read')
+      expect(rendered).toContain('tool[child-')
       expect(rendered).toContain('agent+')
       expect(rendered).not.toContain('private-reasoning-must-not-render')
     } finally {
@@ -115,9 +117,10 @@ describe('M2 interactive loop with fake Harness runtime', () => {
       })
       expect(result).toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
       const rendered = capture.read()
-      expect(rendered).toContain('assistant> hel')
-      expect(rendered).toContain('assistant> lo')
-      expect(rendered).not.toContain('assistant(committed)> hello')
+      expect(rendered).toContain('assistant> working')
+      expect(rendered).toContain('assistant> hello')
+      expect(rendered).toContain('assistant[child-1]> child')
+      expect(rendered).not.toContain('assistant(committed)>')
     } finally {
       await runtime.close()
     }

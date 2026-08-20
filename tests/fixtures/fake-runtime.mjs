@@ -30,6 +30,140 @@ function sessionEvent(sessionId, type, data) {
   })
 }
 
+function emitReceiptAndStart(sessionId, messageId, contentBlocks, turn) {
+  sessionEvent(sessionId, 'agent/inbox/spliced', {
+    inserted: [{ id: messageId, role: 'user', content: contentBlocks }],
+  })
+  notify('session.status', { sessionId, status: 'running' })
+  sessionEvent(sessionId, 'turn/start', { turn })
+  sessionEvent(sessionId, 'user/message', {
+    id: messageId,
+    role: 'user',
+    content: contentBlocks,
+  })
+}
+
+function emitCompletedTurn(sessionId, turn) {
+  sessionEvent(sessionId, 'step/start', { turn, step: 1 })
+  sessionEvent(sessionId, 'assistant/chunk', {
+    turn,
+    step: 1,
+    chunk: { type: 'text-delta', index: 0, text: 'working' },
+  })
+  sessionEvent(sessionId, 'assistant/chunk', {
+    turn,
+    step: 1,
+    chunk: { type: 'reasoning-delta', index: 1, text: 'private-reasoning-must-not-render' },
+  })
+  sessionEvent(sessionId, 'assistant/message', {
+    turn,
+    step: 1,
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'working' },
+        { type: 'tool-call', id: `call-${turn}`, name: 'read', arguments: '{"path":"README.md"}' },
+      ],
+    },
+  })
+
+  sessionEvent(sessionId, 'tool/call', {
+    turn,
+    step: 1,
+    callId: `call-${turn}`,
+    name: 'read',
+    arguments: '{"path":"README.md"}',
+  })
+
+  const childSessionId = `child-${turn}`
+  notify('subagent.started', {
+    parentSessionId: sessionId,
+    childSessionId,
+    providerName: 'spawn',
+  })
+  notify('session.status', { sessionId: childSessionId, status: 'running' })
+  sessionEvent(childSessionId, 'assistant/chunk', {
+    turn: 1,
+    step: 1,
+    chunk: { type: 'text-delta', index: 0, text: 'child' },
+  })
+  sessionEvent(childSessionId, 'assistant/message', {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'child' }],
+    },
+  })
+  sessionEvent(childSessionId, 'tool/call', {
+    turn: 1,
+    step: 1,
+    callId: `call-${turn}`,
+    name: 'child-read',
+    arguments: '{}',
+  })
+  sessionEvent(childSessionId, 'tool/result', {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'tool',
+      toolCallId: `call-${turn}`,
+      content: [{ type: 'text', text: 'child result' }],
+    },
+  })
+  notify('session.status', { sessionId: childSessionId, status: 'idle' })
+  notify('subagent.finished', {
+    parentSessionId: sessionId,
+    childSessionId,
+  })
+
+  sessionEvent(sessionId, 'tool/result', {
+    turn,
+    step: 1,
+    message: {
+      role: 'tool',
+      toolCallId: `call-${turn}`,
+      content: [{ type: 'text', text: 'README content' }],
+    },
+  })
+  sessionEvent(sessionId, 'step/end', { turn, step: 1 })
+
+  sessionEvent(sessionId, 'step/start', { turn, step: 2 })
+  sessionEvent(sessionId, 'assistant/chunk', {
+    turn,
+    step: 2,
+    chunk: { type: 'text-delta', index: 0, text: 'hel' },
+  })
+  sessionEvent(sessionId, 'assistant/chunk', {
+    turn,
+    step: 2,
+    chunk: { type: 'text-delta', index: 1, text: 'lo' },
+  })
+  sessionEvent(sessionId, 'assistant/message', {
+    turn,
+    step: 2,
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hello' }],
+    },
+  })
+  sessionEvent(sessionId, 'step/end', { turn, step: 2 })
+  sessionEvent(sessionId, 'turn/end', { turn, reason: { kind: 'completed' } })
+  notify('session.status', { sessionId, status: 'idle' })
+}
+
+function emitTurn(sessionId, messageId, contentBlocks, turn) {
+  emitReceiptAndStart(sessionId, messageId, contentBlocks, turn)
+  if (mode === 'hang-activity') return
+
+  if (mode === 'slow-receipt-turn') {
+    setTimeout(() => emitCompletedTurn(sessionId, turn), 40)
+    return
+  }
+
+  emitCompletedTurn(sessionId, turn)
+}
+
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
 
 rl.on('line', (line) => {
@@ -58,11 +192,14 @@ rl.on('line', (line) => {
   if (request.method === 'session/prompt') {
     const sessionId = request.params?.sessionId ?? 'main'
     const messageId = `msg-${nextMessageId++}`
+    const turn = nextMessageId - 1
+    const contentBlocks = request.params?.contentBlocks ?? []
+
     if (logPath) {
       appendFileSync(logPath, `${JSON.stringify({
         sessionId,
         messageId,
-        contentBlocks: request.params?.contentBlocks ?? [],
+        contentBlocks,
       })}\n`, 'utf8')
     }
 
@@ -78,69 +215,12 @@ rl.on('line', (line) => {
     // Unrelated global traffic must not leak into subscribeSessionTree(sessionId).
     notify('session.status', { sessionId: 'unrelated-session', status: 'running' })
 
-    sessionEvent(sessionId, 'agent/inbox/spliced', {
-      inserted: [{ id: messageId, role: 'user', content: request.params?.contentBlocks ?? [] }],
-    })
-    notify('session.status', { sessionId, status: 'running' })
-    sessionEvent(sessionId, 'turn/start', { turn: nextMessageId - 1 })
-    sessionEvent(sessionId, 'user/message', {
-      id: messageId,
-      role: 'user',
-      content: request.params?.contentBlocks ?? [],
-    })
+    if (mode === 'slow-receipt-turn') {
+      setTimeout(() => emitTurn(sessionId, messageId, contentBlocks, turn), 60)
+      return
+    }
 
-    if (mode === 'hang-activity') return
-
-    sessionEvent(sessionId, 'assistant/chunk', {
-      turn: nextMessageId - 1,
-      step: 1,
-      chunk: { type: 'text-delta', index: 0, text: 'hel' },
-    })
-    sessionEvent(sessionId, 'assistant/chunk', {
-      turn: nextMessageId - 1,
-      step: 1,
-      chunk: { type: 'reasoning-delta', index: 1, text: 'private-reasoning-must-not-render' },
-    })
-    sessionEvent(sessionId, 'tool/call', {
-      turn: nextMessageId - 1,
-      step: 1,
-      callId: `call-${nextMessageId - 1}`,
-      name: 'read',
-      arguments: '{"path":"README.md"}',
-    })
-    sessionEvent(sessionId, 'tool/result', {
-      turn: nextMessageId - 1,
-      step: 1,
-      message: {
-        role: 'tool',
-        toolCallId: `call-${nextMessageId - 1}`,
-        content: [{ type: 'text', text: 'README content' }],
-      },
-    })
-    notify('subagent.started', {
-      parentSessionId: sessionId,
-      childSessionId: `child-${nextMessageId - 1}`,
-      providerName: 'spawn',
-    })
-    notify('subagent.finished', {
-      parentSessionId: sessionId,
-      childSessionId: `child-${nextMessageId - 1}`,
-    })
-    sessionEvent(sessionId, 'assistant/chunk', {
-      turn: nextMessageId - 1,
-      step: 1,
-      chunk: { type: 'text-delta', index: 0, text: 'lo' },
-    })
-    sessionEvent(sessionId, 'assistant/message', {
-      turn: nextMessageId - 1,
-      step: 1,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'hello' }],
-      },
-    })
-    sessionEvent(sessionId, 'turn/end', { turn: nextMessageId - 1, reason: { kind: 'completed' } })
-    notify('session.status', { sessionId, status: 'idle' })
+    emitTurn(sessionId, messageId, contentBlocks, turn)
     return
   }
 

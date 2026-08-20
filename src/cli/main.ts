@@ -1,6 +1,6 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
-import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { sanitizeTerminalText, stringifyTerminalSafeJson } from '../terminal/sanitize.js'
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
@@ -144,7 +144,7 @@ async function runOneShot(options: CliOptions, prompt: string): Promise<number> 
     renderer?.finish()
 
     if (options.json) {
-      process.stdout.write(`${JSON.stringify({
+      process.stdout.write(`${stringifyTerminalSafeJson({
         sessionId: result.sessionId,
         messageId: result.messageId,
         finalResponse: result.finalResponse,
