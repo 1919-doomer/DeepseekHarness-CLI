@@ -4,11 +4,13 @@ This document defines milestone intent. **GitHub Issues are the live execution t
 
 ## M0 — Development readiness — complete
 
-Product boundary, two-process architecture, protocol constraints, security posture, plugin direction and M1 execution backlog are locked well enough to implement. Historical preparation detail is intentionally kept in closed GitHub Issues rather than separate checklist documents.
+Product boundary, two-process architecture, protocol constraints, security posture, plugin direction, and executable milestone discipline were established before implementation.
 
 ## M1 — Runtime vertical slice — complete — #10
 
-Completed on 2026-08-20 and merged through PR #38. The validated path is:
+Completed on 2026-08-20 through PR #38.
+
+Validated path:
 
 ```text
 scaffold
@@ -24,32 +26,48 @@ scaffold
  -> cross-platform CI
 ```
 
-Tasks #2-#9 are closed. Required CI validates the official Harness runtime and the actual `dshc` one-shot command on Windows, macOS and Ubuntu without provider secrets.
+Tasks #2-#9 are closed. Required CI validates the official Harness runtime and actual `dshc` one-shot command without provider secrets.
 
-No full-screen TUI and no general plugin framework were introduced in M1.
+## M2 — Interactive terminal loop — complete — #11
 
-## M2 — Interactive terminal loop — next — #11
+Completed on 2026-08-20 through PR #44.
 
-Turn the validated vertical slice into a persistent multi-turn terminal application:
+M2 turns the validated vertical slice into a persistent terminal session while keeping the same public upstream contract:
 
-- prompt loop and session ownership;
-- streamed transcript and tool/subagent visibility;
-- local command framework;
+```text
+launch + initialize once
+ -> persistent active session
+ -> prompt / receipt / events / idle
+ -> repeat on the same session
+ -> local commands
+ -> /new session without runtime restart
+ -> EOF / signal / exit lifecycle
+ -> clean shutdown
+```
+
+Delivered behavior:
+
+- TTY-default persistent prompt loop;
+- one Harness runtime reused across turns;
+- stable active session with `/new` rotation;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/exit`;
-- explicit Ctrl+C/EOF semantics under current no-cancel limitations;
-- non-interactive mode retained.
+- assistant/tool/subagent scrollback;
+- stream/commit de-duplication across interleaved tool activity;
+- truthful Ctrl+C and EOF semantics under the current no-cancel/no-session-close protocol;
+- M1 one-shot, piped stdin, and JSON compatibility retained;
+- credential-free fake-runtime and official-runtime two-turn CI on Windows, macOS, and Ubuntu.
 
-M2 should reveal the real stable seams that M3 can make pluggable.
+No full-screen TUI or general plugin framework was introduced in M2.
 
-## M3 — Terminal product + first-party plugin plane — #12
+## M3 — Terminal product + first-party plugin plane — next — #12
 
-Build the polished terminal experience and formalize the terminal plugin host.
+Build the polished terminal experience and formalize terminal extension seams from behavior proven in M1/M2.
 
 Core goals:
 
 - structured transcript/input/status UI;
-- terminal resize/output folding and Windows Terminal support;
-- first-party registries for commands, tool/event renderers, views and status segments where real behavior justifies them;
+- terminal resize, output folding, and Windows Terminal support;
+- first-party registries for commands, tool/event renderers, views, and status segments where real behavior justifies them;
 - capability-driven UI activation;
 - Capability Explorer/plugin-aware help when public metadata permits;
 - agent/subagent activity view;
@@ -111,8 +129,6 @@ Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capa
 
 ## Feature priorities
 
-The strongest differentiators are not decorative TUI features. Priority is:
-
 1. **Capability Explorer** — show what Harness is actually composed of.
 2. **Plugin-aware tool/event rendering** — custom capabilities become readable without core switch-statement growth.
 3. **Session Debugger / Trace** — execution observability from user-visible runtime/session metadata.
@@ -123,15 +139,7 @@ The strongest differentiators are not decorative TUI features. Priority is:
 
 ## Admission test for new features
 
-Before creating an implementation Issue, ask:
-
-1. Does it expose or improve a real DSH capability?
-2. Does it improve observability, control or terminal workflow?
-3. Is it protocol-truthful?
-4. Does it belong to the terminal plane rather than the agent-runtime plane?
-5. Does it degrade safely when the capability is absent?
-6. Does it preserve Windows/cross-platform behavior?
-7. Is the security boundary understandable?
+Before creating an implementation Issue, ask whether the feature exposes or improves a real DSH capability, improves observability/control/terminal workflow, is protocol-truthful, belongs to the terminal plane, degrades safely when absent, preserves cross-platform behavior, and has an understandable security boundary.
 
 If most answers are no, it probably does not belong in `dshc`.
 
