@@ -72,6 +72,8 @@ The Ink choice preserves the validated Node `^22.19.0 || >=24.0.0` Harness basel
 
 Harness remains authoritative for durable sessions. M2/M3 reuse a stable session id across ordinary prompts; `/new` selects a fresh session without restarting the runtime. Because protocol `0.0.1` has no per-session close request, earlier sessions remain runtime-owned until shutdown.
 
+`subscribeSessionTree(root)` may deliver public events for the root session and its descendants. Root run state and final-response projection are therefore explicitly scoped to the submitted root session; descendant assistant/status/error events remain observable presentation data but cannot overwrite root completion state.
+
 `dshc` does not create a competing durable chat-history database.
 
 ## Event and transcript model
@@ -83,8 +85,11 @@ Durable-looking terminal blocks include committed assistant messages, tool call/
 Rules:
 
 - preserve observed notification order;
-- streaming converges to the committed assistant message without duplication;
+- streaming converges to the matching committed assistant message without duplication;
+- multiple assistant steps inside one activity remain distinct rather than overwriting earlier visible output;
 - multiple activities in one Harness session remain distinct in terminal scrollback;
+- root and descendant session output uses session-scoped identities and visible descendant attribution;
+- tool identity is at least `(sessionId, callId)` rather than `callId` alone;
 - tool/subagent activity remains inspectable;
 - unknown events degrade safely and remain diagnosable under debug mode;
 - large output may be folded, never silently discarded;
@@ -94,7 +99,7 @@ Rules:
 
 M3 creates a local `activityId` for each `HarnessRuntime.run()` interval so transcript blocks from repeated prompts in the same session do not overwrite one another.
 
-`activityId` is **presentation-only**. It is not an upstream message id, turn id, request id or causal identifier and must never be exposed as one.
+`activityId` is **presentation-only**. It is not an upstream message id, turn id, request id or causal identifier and must never be exposed as one. It is also not globally unique enough by itself for session-tree content: block identity combines activity with the relevant session and, where necessary, a local segment/discriminator.
 
 ## First-party terminal plugin plane
 
@@ -107,9 +112,11 @@ M3 formalizes terminal extension seams only after M1/M2 proved the behavior they
 - views;
 - status segments.
 
-Registration rules are deterministic: duplicate plugin ids, commands, aliases or views fail loudly; renderer/status ordering is explicit by priority and registration order.
+Registration is transactional: duplicate plugin ids, commands/aliases, views, renderer ids or status ids fail before any part of the incoming plugin mutates the host. Renderer/status ordering remains explicit by priority and registration order.
 
-Built-in plugins currently provide the core commands/views and specialized tool/subagent rendering. A generic sanitized event fallback remains available when no specialized renderer matches.
+Plugin callback faults are presentation faults, not Harness faults. Command, renderer, view and status callbacks are contained at their terminal boundary; renderer failure falls back to the generic sanitized projection, and a local plugin failure must not abort an otherwise-valid Harness activity.
+
+Built-in plugins currently provide the core commands/views and specialized tool/subagent rendering. A generic sanitized event fallback remains available when no specialized renderer matches or a specialized renderer fails.
 
 This is a **first-party/internal plugin plane**. M3 does not load arbitrary third-party Node packages.
 
@@ -144,7 +151,7 @@ A later optional DSH-side `dshc-bridge` may expose namespaced capability metadat
 
 M3 `/trace` is a normalized user-visible event timeline. It may report event kinds, ids already public in the event stream, lengths and lifecycle transitions. It must not reconstruct or reveal hidden reasoning.
 
-`/agents` derives root/descendant topology only from public normalized subagent events. Missing events produce an explicit partial view rather than inferred hidden state.
+`/agents` derives topology only from public normalized subagent events. The current view starts at the currently selected root session, follows only publicly observed reachable descendants, preserves observed parent/child nesting, and does not attach previous-session descendants to a new `/new` root. Missing or malformed relationships remain partial rather than being repaired with invented links.
 
 M4 may add filtering, duration analysis and stronger diagnostics without changing these truthfulness rules.
 
@@ -154,6 +161,7 @@ M4 may add filtering, duration analysis and stronger diagnostics without changin
 - `/clear` clears local presentation only;
 - `/new` changes the selected session only;
 - `/exit` closes the owned runtime cleanly;
+- malformed or failing local slash commands remain local terminal errors and do not reach the model;
 - Ctrl+C closes the whole runtime while upstream lacks prompt cancellation;
 - non-TTY/one-shot behavior remains supported;
 - narrow terminals preserve the newest useful activity rather than corrupting the input area;
@@ -179,6 +187,8 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 8. Preserve two plugin planes: Harness runtime plugins and dshc terminal plugins.
 9. Keep the terminal plugin API first-party until isolation/permissions are credible.
 10. Treat local activity ids as presentation grouping only.
+11. Treat session identity as part of transcript/projection identity whenever session-tree events can interleave.
+12. Contain terminal-plugin faults so presentation extensions cannot redefine runtime success/failure.
 
 ## Non-negotiable invariants
 
@@ -192,3 +202,5 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 8. Windows remains first-class and blocking.
 9. Terminal plugins cannot silently weaken Harness security semantics.
 10. Capabilities absent from the active runtime degrade explicitly rather than being faked.
+11. Descendant session events cannot silently impersonate root completion/output state.
+12. A terminal plugin exception cannot be reported as a Harness runtime failure unless the runtime itself failed.
