@@ -10,7 +10,7 @@ Use the toolchain supported by the pinned DeepSeek Harness baseline unless a doc
 - Node `^22.19.0 || >=24.0.0`;
 - pnpm `11.7.0`;
 - DeepSeek Harness `0.1.0-rc.8` public SDK/runtime surfaces;
-- Ink `7.1.1` + React `19.2.8` for the M3 TTY product;
+- Ink `7.1.1` + React `19.2.8` for the TTY product;
 - Vitest for deterministic unit/integration tests;
 - GitHub Actions with Windows, macOS, and Ubuntu blocking supported paths.
 
@@ -20,11 +20,11 @@ Exact dependencies are locked. Presentation dependencies must not force an unnec
 
 ```text
 src/
-├─ cli/          # executable, mode routing, one-shot + persistent entrypoints
+├─ cli/          # executable, mode routing, doctor, one-shot + persistent entrypoints
 ├─ commands/     # legacy/plain local command parsing where still needed
 ├─ config/       # local configuration
 ├─ lifecycle/    # signals, shutdown, process ownership
-├─ plugins/      # M3 first-party terminal plugin API, host and built-ins
+├─ plugins/      # first-party terminal plugin API, host and built-ins
 ├─ session/      # session selection, normalized events/projection/reducers
 ├─ terminal/     # plain renderer, transcript projection, Ink terminal product
 └─ upstream/     # all DSH SDK/runtime/version-specific adaptation
@@ -51,8 +51,10 @@ Never import private Harness implementation objects into terminal/plugin modules
 ## Mode contract
 
 - TTY invocation with no one-shot prompt enters the Ink terminal product.
-- Positional prompts, `run`, piped stdin and `--json` remain plain one-shot paths.
-- Non-TTY `--interactive` retains M2 line-by-line persistent input for scripts and deterministic automation.
+- Positional prompts, `run`, piped stdin and one-shot `--json` remain plain paths.
+- `doctor` is a dedicated preflight mode; it never creates a session or calls `session/prompt`.
+- `doctor --json` is machine-readable and uses the same terminal-safe JSON serializer as one-shot mode.
+- Non-TTY `--interactive` retains line-by-line persistent input for scripts and deterministic automation.
 - One runtime is initialized once and reused across interactive turns.
 - The selected session remains stable until `/new`.
 - `/new` selects a fresh session but cannot close the previous upstream session under protocol `0.0.1`.
@@ -61,7 +63,7 @@ Never import private Harness implementation objects into terminal/plugin modules
 - Ctrl+C closes the whole owned runtime while upstream lacks prompt cancellation.
 - SIGINT/SIGTERM ownership begins before runtime startup. A close request during workspace/version/launch/initialize work is terminal: startup must not later publish a live client or successful metadata, and repeated close calls remain idempotent.
 
-## M3 terminal plugin discipline
+## Terminal plugin discipline
 
 The terminal plugin API is versioned and first-party only.
 
@@ -78,11 +80,11 @@ Plugin callbacks are presentation boundaries. Command failures stay local; rende
 
 Plugin code may alter presentation/local navigation only; it must not silently alter Harness model routing, tool semantics, approval/sandbox policy, persistence or subagent scheduling.
 
-Do not add arbitrary package discovery/loading in M3. Third-party extension work requires a reviewed isolation/security design first.
+Do not add arbitrary package discovery/loading. Third-party extension work requires a reviewed isolation/security design first.
 
 ## Local activity and session grouping
 
-The M3 transcript generates a local activity id around each `HarnessRuntime.run()` interval so repeated prompts in one Harness session remain distinct UI groups.
+The transcript generates a local activity id around each `HarnessRuntime.run()` interval so repeated prompts in one Harness session remain distinct UI groups.
 
 This is a presentation implementation detail, not an upstream id. Tests and diagnostics must not interpret it as protocol causality. Because `subscribeSessionTree()` can interleave root and descendant sessions, `activityId` alone is not a unique transcript identity: assistant/tool blocks also carry session identity, and multiple committed assistant steps inside one activity receive distinct local segments.
 
@@ -94,7 +96,7 @@ Required CI remains credential-free.
 
 ### Unit tests
 
-Cover pure logic including argument/command parsing, malformed slash input, transactional plugin registration/conflicts, renderer fallback on plugin exceptions, session selection, root/descendant normalized projection, same-session activity grouping, multiple assistant steps per activity, cross-session call-id collisions, truthful current-root agent topology, folding and terminal-control sanitization.
+Cover pure logic including argument/command parsing, malformed slash input, doctor command parsing, transactional plugin registration/conflicts, renderer fallback on plugin exceptions, session selection, root/descendant normalized projection, same-session activity grouping, multiple assistant steps per activity, cross-session call-id collisions, truthful current-root agent topology, folding, retention arithmetic and terminal-control sanitization.
 
 ### Injected terminal-product integration
 
@@ -116,20 +118,23 @@ This test is part of normal `pnpm test`, so the Runtime matrix exercises it on W
 
 ### Fake-runtime subprocess integration
 
-The deterministic JSON-RPC subprocess suite covers durable receipt ownership, pinned upstream event ordering, descendant-session traffic, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX startup and active-turn SIGINT/SIGTERM, close-during-initialize ownership, receipt-to-idle timeout semantics, malformed response, transport loss, crash, redaction and bounded shutdown.
+The deterministic JSON-RPC subprocess suite covers durable receipt ownership, pinned upstream event ordering, descendant-session traffic, unrelated-session filtering, line-mode interaction, `/new`, EOF, POSIX startup and active-turn SIGINT/SIGTERM, close-during-initialize ownership, receipt-to-idle timeout semantics, malformed response, transport loss, crash, redaction and bounded shutdown.
 
-The fake runtime should model the pinned Harness ordering closely enough to catch frontend projection mistakes. In particular, an assembled `assistant/message` precedes tool execution for that step; later steps may produce additional assistant commits in the same run interval. Lifecycle fixtures may deliberately delay initialize so tests can prove that close cannot race startup into resurrecting an owned child.
+The doctor fake runtime is deliberately initialize-only. Doctor tests require successful paths to observe exactly `initialize` then `shutdown`, never `session/prompt`, and cover incompatible server/protocol identity, malformed initialize, missing workspace/config, runtime override labelling and credential-value non-leakage.
 
 ### Official-runtime smoke
 
-The published Harness runtime is launched with the repository Cordis composition. The DeepSeek adapter is routed to a local deterministic HTTP model stub, so required CI makes no paid provider call and needs no real key.
+The published Harness runtime is launched with the repository Cordis composition. Model-backed smokes route the DeepSeek adapter to a local deterministic HTTP stub, so required CI makes no paid provider call and needs no real key.
 
 Required smoke paths:
 
 1. one-shot: build `dist`, launch the actual `dist/cli/bin.js` -> initialize -> prompt -> events -> idle -> shutdown;
-2. persistent line mode: one built `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown.
+2. persistent line mode: one built `dshc --interactive` process -> two prompts on one named session -> expanded second provider history -> clean shutdown;
+3. repository workflow: cwd -> Harness read/edit/search/platform-shell -> final response;
+4. workspace sandbox: repository-local writes succeed while non-temp sibling writes and unavailable escalation fail closed;
+5. doctor: built `dist/cli/bin.js doctor --json` -> initialize -> shutdown with `DEEPSEEK_API_KEY` removed and a deliberately unreachable provider URL, proving no model request occurs.
 
-The M3 product itself is tested against the same `HarnessRuntime` contract through injected TTY streams, while the official-runtime smokes validate the published upstream process boundary and the built distribution entrypoint rather than the TypeScript source runner.
+The TTY product itself is tested against the same `HarnessRuntime` contract through injected streams; official smokes validate the published upstream process boundary and built distribution entrypoint rather than the TypeScript source runner.
 
 ## Cross-platform rules
 
@@ -142,7 +147,7 @@ Required matrix:
 - Ubuntu latest / Node 24 — blocking;
 - Ubuntu latest / Node 22.19.0 — blocking lower-bound coverage.
 
-Every Runtime matrix job must build the Ink/React product before running tests. `pnpm test:official-runtime` also builds first so the smoke command is valid outside CI.
+Every Runtime matrix job must build the Ink/React product before running tests. `pnpm test:official-runtime` also builds first so smoke commands are valid outside CI.
 
 ## Terminal security and reliability
 
@@ -166,11 +171,22 @@ See root `SECURITY.md`.
 
 ## Diagnostics
 
-Debug output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes dshc/upstream versions, runtime/config resolution, session ids, public event categories/counts, lifecycle transitions and process exit reason/code.
+Debug/doctor output must never corrupt Harness stdout JSON-RPC. Useful scrubbed metadata includes dshc/upstream versions, runtime/config resolution, session ids, public event categories/counts, lifecycle transitions and process exit reason/code.
+
+`dshc doctor` is the deterministic preflight surface. It reports PASS/WARN/FAIL/UNKNOWN findings for Node/workspace/runtime-config readiness, pinned DSH package versions, provider/model selection, DeepSeek credential presence, TTY/raw-mode facts, the public initialize handshake, server/protocol identity, shipped M4 coding/sandbox/approval defaults and dshc-local retention budgets.
+
+Doctor safety invariants:
+
+- never call `session/prompt`;
+- never print environment dumps;
+- credential checks report presence only — never value, length, prefix or derived fingerprint;
+- use the effective child environment semantics already owned by `runtime-launcher`;
+- runtime-config overrides are labelled as potentially different rather than inheriting shipped capability claims;
+- hard configuration/compatibility/transport/runtime failures are nonzero; absent credentials, non-TTY execution and unknown non-shipped provider credential contracts are warnings/unknowns;
+- every launched child is closed after initialize success or failure;
+- human text is terminal-sanitized and JSON uses the terminal-safe serializer.
 
 Do not log secrets or hidden reasoning. `/trace` is a normalized observable timeline, not a chain-of-thought viewer. `/agents` follows only publicly observed parent/child relationships reachable from the currently selected root; it does not relabel old-session descendants after `/new`.
-
-A later `dshc doctor` should diagnose runtime resolution, Node/pnpm compatibility, Harness/SDK versions, protocol handshake, provider configuration presence, terminal capabilities and optional bridge/plugin compatibility without printing secrets.
 
 ## Pull requests and definition of done
 
