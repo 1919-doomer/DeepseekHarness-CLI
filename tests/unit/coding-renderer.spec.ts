@@ -73,10 +73,13 @@ describe('M4.2 coding activity presentation', () => {
     const shell = state.blocks.find(block => block.id === terminalBlockId('tool', activity, 'root', 'shell-1'))
     expect(edit?.title).toContain('edit · src/evil\\x1b[31m.ts')
     expect(edit?.title).toContain('child-s')
-    expect(edit?.text).toContain('\\u202e')
-    expect(edit?.text).toContain('\\x1b]0;pwned\\x07')
+    expect(edit?.text).toContain('u202e')
+    expect(edit?.text).toContain('x1b]0;pwned')
+    expect(edit?.text).toContain('x07')
     expect(edit?.title).not.toContain('\u001b')
     expect(edit?.text).not.toContain('\u001b')
+    expect(edit?.text).not.toContain('\u0007')
+    expect(edit?.text).not.toContain('\u202e')
     expect(shell?.title).toContain('Verify\\x1b[31m change')
     expect(shell?.text).toContain('\\x1b[2J')
     expect(shell?.text).not.toContain('\u001b')
@@ -115,7 +118,7 @@ describe('M4.2 coding activity presentation', () => {
     })
   })
 
-  it('falls malformed known-tool calls and unknown tools back to the generic sanitized renderer', () => {
+  it('falls malformed or incomplete known-tool calls and unknown tools back to the generic sanitized renderer', () => {
     const host = createDefaultTerminalHost()
     let state = initialTerminalTranscript()
     state = reduceTerminalEvent(state, {
@@ -130,6 +133,14 @@ describe('M4.2 coding activity presentation', () => {
       sequence: 1,
       kind: 'tool-call',
       sessionId: 'root',
+      callId: 'future-edit-shape',
+      name: 'edit',
+      arguments: JSON.stringify({ file_path: 'src/app.ts', future_patch: 'opaque' }),
+    }, host, activity, 'root')
+    state = reduceTerminalEvent(state, {
+      sequence: 2,
+      kind: 'tool-call',
+      sessionId: 'root',
       callId: 'custom',
       name: 'custom_tool',
       arguments: '{"value":"x"}',
@@ -138,6 +149,10 @@ describe('M4.2 coding activity presentation', () => {
     expect(state.blocks.find(block => block.id.includes('bad-read'))).toMatchObject({
       title: 'tool · read',
       text: '{not-json\\x1b[31m',
+    })
+    expect(state.blocks.find(block => block.id.includes('future-edit-shape'))).toMatchObject({
+      title: 'tool · edit',
+      text: '{"file_path":"src/app.ts","future_patch":"opaque"}',
     })
     expect(state.blocks.find(block => block.id.includes('custom'))).toMatchObject({
       title: 'tool · custom_tool',
