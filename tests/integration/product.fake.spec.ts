@@ -84,7 +84,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     const readError = capture(error)
 
     const product = runTerminalProduct(runtime, {
-      input: input as unknown as NodeJS.ReadStream,
+      stdin: input as unknown as NodeJS.ReadStream,
       stdout: output as unknown as NodeJS.WriteStream,
       stderr: error as unknown as NodeJS.WriteStream,
       interactive: true,
