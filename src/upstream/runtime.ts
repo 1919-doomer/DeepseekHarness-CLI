@@ -23,7 +23,7 @@ import {
   DshcRuntimeError,
   classifyRuntimeError,
 } from './errors.js'
-import { resolveRuntimeLaunch } from './runtime-launcher.js'
+import { effectiveRuntimeEnvironment, resolveRuntimeLaunch } from './runtime-launcher.js'
 
 export interface HarnessRuntimeOptions {
   workspace?: string
@@ -31,6 +31,7 @@ export interface HarnessRuntimeOptions {
   model?: string
   maxTokens?: number
   configPath?: string
+  /** Incremental environment patch for the default Harness child launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
   activityTimeoutMs?: number
@@ -80,6 +81,7 @@ export class HarnessRuntime {
   private startTask: Promise<HarnessRuntimeMetadata> | undefined
   private closeTask: Promise<void> | undefined
   private lifecycle: RuntimeLifecycleState = 'idle'
+  private diagnosticEnv: NodeJS.ProcessEnv
 
   constructor(private readonly options: HarnessRuntimeOptions = {}) {
     this.workspace = resolve(options.workspace ?? process.cwd())
@@ -87,6 +89,14 @@ export class HarnessRuntime {
     this.model = options.model ?? 'deepseek-v4-flash'
     this.maxTokens = validateMaxTokens(options.maxTokens)
     this.defaultActivityTimeoutMs = positiveTimeout(options.activityTimeoutMs, 10 * 60_000, 'activityTimeoutMs')
+    // Capture the environment semantics that startup intends to give the child.
+    // Once launch resolution completes this is replaced by a snapshot of the
+    // exact resolved launch env, so child diagnostics and redaction cannot drift.
+    this.diagnosticEnv = { ...effectiveRuntimeEnvironment({
+      workspace: this.workspace,
+      env: options.env,
+      override: options.launchOverride,
+    }) }
   }
 
   get metadata(): HarnessRuntimeMetadata | undefined {
@@ -164,7 +174,7 @@ export class HarnessRuntime {
         projection: projector.state,
       }
     } catch (error) {
-      throw classifyRuntimeError(error, this.options.env ?? process.env)
+      throw classifyRuntimeError(error, this.diagnosticEnv)
     } finally {
       subscription.close()
     }
@@ -208,6 +218,10 @@ export class HarnessRuntime {
       })
       this.assertStartupStillOwned()
 
+      // HarnessClient launches with `launch.env` when provided and otherwise
+      // inherits `process.env`. Snapshot that exact effective environment before
+      // start so stderr/transport errors are scrubbed against what the child saw.
+      this.diagnosticEnv = { ...(launch.env ?? process.env) }
       client = new HarnessClient(launch)
       this.client = client
       client.start()
@@ -251,7 +265,7 @@ export class HarnessRuntime {
         this.lifecycle = 'idle'
         this.startTask = undefined
       }
-      throw classifyRuntimeError(error, this.options.env ?? process.env)
+      throw classifyRuntimeError(error, this.diagnosticEnv)
     }
   }
 
@@ -291,7 +305,7 @@ export class HarnessRuntime {
     }
 
     if (firstFailure !== undefined) {
-      throw classifyRuntimeError(firstFailure, this.options.env ?? process.env)
+      throw classifyRuntimeError(firstFailure, this.diagnosticEnv)
     }
   }
 
