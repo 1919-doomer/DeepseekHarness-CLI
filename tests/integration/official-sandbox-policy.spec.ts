@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,7 +22,12 @@ afterEach(async () => {
 
 describe('M4.3 published Harness workspace sandbox', () => {
   it('allows repository work but denies outside writes and unavailable escalation', async () => {
-    const parent = await mkdtemp(join(tmpdir(), 'dshc-m4-sandbox-'))
+    // workspace-write intentionally grants the platform temp roots in addition
+    // to the repository. Put this fixture under the checked-out repository so
+    // its sibling escape targets are outside BOTH the session workspace and
+    // `/tmp` / os.tmpdir(); otherwise the test would be asserting against an
+    // upstream-documented writable root rather than an actual policy escape.
+    const parent = await mkdtemp(join(process.cwd(), '.dshc-m4-sandbox-'))
     tempRoots.push(parent)
     const repository = join(parent, 'repo')
     const stateRoot = join(parent, 'state')
