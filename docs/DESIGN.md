@@ -12,58 +12,24 @@ The central boundary is:
 
 ## Product position
 
-`dshc` is an unofficial terminal-native interactive frontend for the official DeepSeek Harness runtime. It is not a second agent harness and not a raw DeepSeek API chat client.
+`dshc` is an unofficial terminal-native frontend for the official DeepSeek Harness runtime. It is not a second agent harness and not a raw DeepSeek API chat client.
 
-It exists because the maintained upstream surfaces currently include a Web UI, ACP, a stdio JSON-RPC SDK runtime and one-shot headless execution, but no maintained persistent interactive terminal frontend.
+The product is deliberately event-native and protocol-truthful:
 
-The primary user is a developer who wants to work from a shell/editor terminal, keep a Harness session alive across multiple prompts, and understand tools, sessions, subagents and runtime activity without reading raw JSON-RPC.
-
-### What makes it different
-
-- **DSH-native:** integration is through the official Harness SDK/runtime boundary, not a model API wrapper.
-- **Event-native:** terminal state is projected from Harness session/runtime events rather than only final assistant text.
-- **Harness concepts stay visible:** sessions, tools, subagents, jobs and runtime state are first-class UI concepts when supported.
-- **Protocol-truthful:** the UI never claims cancellation, prompt/result causality or capabilities that the wire does not provide.
-- **Observability-first:** a user should be able to understand what the Harness is doing without opening a browser or inspecting protocol frames.
-- **Thin frontend:** models, tools, skills, approvals, sandboxing, persistence, subagents and the agent loop remain upstream-owned.
-- **Cross-platform from the start:** Windows is a blocking target, not a later port.
-
-The project becomes pointless if it degrades into a cosmetic Codex/Claude-Code clone, a wrapper around `dsh --profile headless`, or a second independent agent ecosystem.
-
-## Scope
-
-Through public alpha, `dshc` should provide:
-
-- runtime launch/connection through supported public Harness interfaces;
-- persistent multi-turn terminal interaction;
-- event-native transcript and streaming;
-- readable tool/subagent/runtime state;
-- local terminal commands and capability-aware help;
-- deterministic shutdown and actionable failures;
-- compatibility diagnostics;
-- terminal control-sequence sanitization and secret-safe diagnostics;
-- Windows, Linux and macOS support where the pinned upstream runtime supports them.
-
-Before alpha it should not build:
-
-- a replacement agent loop or tool/model/provider system;
-- an authoritative parallel chat-history database;
-- a custom API-key vault;
-- an unsupported remote daemon protocol;
-- speculative prompt cancellation;
-- a plugin marketplace;
-- a browser UI.
+- integration goes through the supported Harness SDK/runtime boundary;
+- sessions, tools and subagents remain visible terminal concepts;
+- the UI never invents cancellation, causal ids or capabilities absent from the wire;
+- models, tools, skills, approvals, sandboxing, persistence, subagents and the agent loop remain upstream-owned;
+- Windows is a blocking target rather than a later port.
 
 ## Process architecture
 
-The default architecture uses two processes:
-
 ```text
 Terminal process: dshc
-  input / commands
-  normalized session projection
-  terminal plugin host
-  renderers / views / diagnostics
+  CLI mode selection
+  persistent terminal product
+  first-party terminal plugin host
+  normalized transcript / trace / topology
   lifecycle controller
           │
           │ stdio JSON-RPC
@@ -76,175 +42,153 @@ Harness process: official DSH runtime
   subagents / jobs / workflows
 ```
 
-Why:
-
-1. it follows the public upstream SDK boundary;
-2. upstream-specific churn is isolated behind `src/upstream/`;
-3. Harness stdout remains protocol-only;
-4. runtime crashes and teardown are separated from terminal rendering;
-5. the terminal can be replaced without moving agent behavior out of Harness.
-
 The dependency direction is:
 
 ```text
-terminal UI / commands / plugins
-            ↓
-normalized session projection
-            ↓
-      upstream adapter
-            ↓
- official SDK / runtime
+terminal product / commands / plugins
+                 ↓
+       normalized projection
+                 ↓
+          upstream adapter
+                 ↓
+       official SDK / runtime
 ```
 
-Terminal modules must not import private Harness implementation objects.
+All Harness/version-specific adaptation stays behind `src/upstream/`. Terminal modules consume local normalized types and must not import private Harness implementation objects.
 
-## Runtime and local state
+## Terminal modes
 
-`dshc` owns its runtime subprocess and must start, initialize and stop it deterministically. Version/package/config details belong only in `src/upstream/`.
+M3 has two presentation paths with the same runtime contract.
 
-Harness remains authoritative for durable sessions. `dshc` may store small UI preferences or recently used session ids, but it must not create a competing session history store. API credentials remain outside `dshc` unless a future credential design is explicitly reviewed.
+**TTY product mode** uses Ink 7 + React 19 for a structured transcript, prompt editor, views and adaptive status line.
+
+**Plain mode** remains the required path for one-shot commands, piped stdin, JSON output, deterministic scripted `--interactive` use and fallback/non-TTY environments.
+
+The Ink choice preserves the validated Node `^22.19.0 || >=24.0.0` Harness baseline. A TUI framework must not force an unrelated runtime upgrade merely for presentation.
+
+## Runtime and session ownership
+
+`dshc` owns one Harness subprocess per terminal process and starts, initializes and closes it deterministically.
+
+Harness remains authoritative for durable sessions. M2/M3 reuse a stable session id across ordinary prompts; `/new` selects a fresh session without restarting the runtime. Because protocol `0.0.1` has no per-session close request, earlier sessions remain runtime-owned until shutdown.
+
+`dshc` does not create a competing durable chat-history database.
 
 ## Event and transcript model
 
-The transcript is a projection, not the source of truth.
+The transcript is a terminal projection, not the source of truth.
 
-Two state classes are required:
-
-**Durable:** user messages, committed assistant messages, tool calls/results, errors and subagent lifecycle summaries.
-
-**Ephemeral:** assistant streaming chunks, elapsed time, activity text, active tools/subagents and temporary status.
+Durable-looking terminal blocks include committed assistant messages, tool call/result summaries, errors and subagent lifecycle summaries. Ephemeral state includes assistant deltas, running status and active tool/subagent presentation.
 
 Rules:
 
-- preserve meaningful upstream order;
-- streaming chunks converge to committed assistant output without duplication;
-- root and descendant session activity remain distinguishable;
-- unknown events degrade safely and remain diagnosable;
-- `session.status` drives whole-agent running/idle state where available;
-- visual grouping must not invent unsupported causal relationships.
+- preserve observed notification order;
+- streaming converges to the committed assistant message without duplication;
+- multiple activities in one Harness session remain distinct in terminal scrollback;
+- tool/subagent activity remains inspectable;
+- unknown events degrade safely and remain diagnosable under debug mode;
+- large output may be folded, never silently discarded;
+- visual grouping must not claim unsupported protocol causality.
 
-Minimum local lifecycle:
+### Local activity ids
 
-```text
-starting -> initializing -> idle -> running -> idle -> shutting-down -> closed
-```
+M3 creates a local `activityId` for each `HarnessRuntime.run()` interval so transcript blocks from repeated prompts in the same session do not overwrite one another.
 
-Failures should distinguish configuration, transport, protocol, runtime and observable model/tool failures when the upstream contract permits it.
+`activityId` is **presentation-only**. It is not an upstream message id, turn id, request id or causal identifier and must never be exposed as one.
+
+## First-party terminal plugin plane
+
+M3 formalizes terminal extension seams only after M1/M2 proved the behavior they need to represent.
+
+`TerminalPluginHost` API v1 supports deterministic registries for:
+
+- local commands;
+- event/tool renderers;
+- views;
+- status segments.
+
+Registration rules are deterministic: duplicate plugin ids, commands, aliases or views fail loudly; renderer/status ordering is explicit by priority and registration order.
+
+Built-in plugins currently provide the core commands/views and specialized tool/subagent rendering. A generic sanitized event fallback remains available when no specialized renderer matches.
+
+This is a **first-party/internal plugin plane**. M3 does not load arbitrary third-party Node packages.
+
+## Two plugin planes
+
+### Harness runtime plugins
+
+Harness decides what the agent can do: models, tools, skills, persistence, approval, sandbox, subagents, jobs, workflows and other runtime capabilities.
+
+### dshc terminal plugins
+
+`dshc` decides how supported capabilities are presented and interacted with in the terminal.
+
+A terminal plugin may improve display or local navigation. It must not silently change model routing, tool semantics, approval policy, sandbox policy, persistence or subagent scheduling.
+
+## Capability-driven UI
+
+The product should expose verified capabilities rather than a static dashboard.
+
+M3 `/plugins` (`/capabilities`) shows:
+
+- verified runtime/server/protocol/provider/model/workspace metadata;
+- active dshc terminal plugins and specialized renderers;
+- local commands;
+- explicit absence of prompt cancel and per-session close.
+
+Protocol `0.0.1` does not expose an authoritative runtime plugin inventory, so M3 labels that information partial/unavailable rather than guessing.
+
+A later optional DSH-side `dshc-bridge` may expose namespaced capability metadata, but base `dshc` must remain useful without it.
+
+## Trace and agent topology
+
+M3 `/trace` is a normalized user-visible event timeline. It may report event kinds, ids already public in the event stream, lengths and lifecycle transitions. It must not reconstruct or reveal hidden reasoning.
+
+`/agents` derives root/descendant topology only from public normalized subagent events. Missing events produce an explicit partial view rather than inferred hidden state.
+
+M4 may add filtering, duration analysis and stronger diagnostics without changing these truthfulness rules.
 
 ## Terminal UX invariants
 
 - submitted prompts are enqueue operations, not guaranteed one-request/one-response RPCs;
-- `/clear` clears local presentation only, never upstream history silently;
-- state-changing tool activity remains inspectable;
-- large output may be folded, not silently lost;
+- `/clear` clears local presentation only;
+- `/new` changes the selected session only;
+- `/exit` closes the owned runtime cleanly;
+- Ctrl+C closes the whole runtime while upstream lacks prompt cancellation;
+- non-TTY/one-shot behavior remains supported;
+- narrow terminals preserve the newest useful activity rather than corrupting the input area;
+- alternate-screen teardown must be exception-safe;
 - correctness cannot depend on color or icon-only meaning;
-- non-TTY/one-shot output remains possible;
-- Ctrl+C must not claim prompt cancellation while upstream has no prompt-cancel contract;
-- destructive runtime termination is explicit;
-- untrusted model/tool/repository text is sanitized before reaching the terminal.
-
-## Two plugin planes
-
-### Runtime plugin plane — DeepSeek Harness
-
-Harness already treats major capabilities as composable seams: models, tools, skills, sessions, persistence, approval, sandbox, subagents, jobs, workflows, web, LSP, commands, projections, storage and more.
-
-`dshc` must reuse those capabilities rather than reimplement them.
-
-### Terminal plugin plane — dshc
-
-`dshc` makes terminal experience composable. Stable seams should emerge from real M1/M2 behavior, then be formalized in M3.
-
-Candidate terminal plugin registries:
-
-- commands;
-- tool renderers;
-- event renderers;
-- views/panels;
-- status-line segments;
-- key bindings;
-- notifications;
-- exporters and diagnostics;
-- capability-aware UI adapters.
-
-A dshc plugin may change how a Harness capability is displayed or interacted with. It must not change model routing, tool semantics, approval policy, sandbox policy or subagent scheduling behind the user's back.
-
-## Capability-driven UI
-
-The long-term UI should be a function of the active Harness composition rather than a fixed dashboard.
-
-Examples:
-
-- subagents available -> agent tree becomes available;
-- jobs available -> `/jobs` and a jobs status segment can appear;
-- plan mode available -> plan view can appear;
-- custom tool available -> matching renderer can improve presentation;
-- unknown capability -> generic safe fallback remains usable.
-
-A future Capability Explorer (`/plugins` or `/capabilities`) should show what the active runtime exposes and which terminal adapters are active, but only from public/verified metadata.
-
-## Optional `dshc-bridge`
-
-If the base SDK does not expose enough capability metadata, a later optional Cordis plugin may run inside Harness and expose namespaced, versioned, read-mostly metadata for the terminal.
-
-Possible uses:
-
-- capability/plugin manifest;
-- feature negotiation;
-- human-command metadata;
-- session/query metadata;
-- plugin-owned display hints.
-
-The bridge must remain optional. Base `dshc` must work without it, and it must not weaken approval/sandbox/security policy or require a Harness fork.
+- all untrusted model/tool/repository text is sanitized before terminal rendering.
 
 ## Third-party plugin security
 
-First-party terminal plugin seams may ship before arbitrary third-party package loading.
-
 Loading an untrusted Node package in-process effectively grants filesystem, environment, network and process access. A decorative permission manifest is not a security boundary.
 
-A public community plugin SDK therefore requires a credible isolation design, likely involving a separate process/worker plus capability-based RPC, secret redaction, crash containment and API-version negotiation.
-
-## First-party feature direction
-
-High-value features that fit the design:
-
-- Capability Explorer and plugin-aware help;
-- plugin-aware tool/event rendering with safe fallback;
-- Session Debugger / trace timeline;
-- live agent topology/subagent tree;
-- background jobs monitor when supported;
-- adaptive status line;
-- change review/diff view backed by repository/tool evidence;
-- session browser using Harness persistence/query capabilities;
-- `dshc doctor` compatibility diagnostics;
-- export/support bundles with secret redaction;
-- terminal profiles such as minimal/coding/research/observer that alter presentation, not Harness permissions.
+A future public plugin SDK therefore requires a credible isolation model, likely separate-process/worker execution plus capability-based RPC, secret redaction, crash containment and API-version negotiation. Until then, the plugin host is first-party only.
 
 ## Architectural decisions
 
-The following decisions are considered part of this document rather than maintained as separate ADR files during pre-alpha:
-
-1. use an out-of-process official Harness runtime;
-2. keep terminal rendering separate from upstream adaptation;
-3. use `dshc` as the working binary name because upstream owns `dsh`;
-4. GitHub is the project source of truth; Issues track executable work;
-5. defer full-screen TUI framework choice until runtime and interaction semantics are proven;
-6. treat terminal rendering as a security boundary;
-7. align M1 toolchain with the pinned upstream Harness baseline;
-8. preserve two plugin planes: Harness runtime plugins and dshc terminal plugins.
-
-Any future reversal that materially affects multiple modules should update this document in the same PR and explain the reason in the linked GitHub Issue/PR.
+1. Use an out-of-process official Harness runtime.
+2. Keep upstream adaptation separate from terminal rendering.
+3. Keep `dshc` as the working binary name because upstream owns `dsh`.
+4. GitHub Issues track executable work; long-lived contracts stay in the compact docs set.
+5. Use Ink 7 + React 19 for the M3 TTY product while retaining the plain fallback.
+6. Treat terminal rendering as a security boundary.
+7. Keep the toolchain aligned with the pinned Harness baseline.
+8. Preserve two plugin planes: Harness runtime plugins and dshc terminal plugins.
+9. Keep the terminal plugin API first-party until isolation/permissions are credible.
+10. Treat local activity ids as presentation grouping only.
 
 ## Non-negotiable invariants
 
 1. `dshc` does not fork or replace the Harness agent loop.
 2. Harness stdout is protocol-only when using stdio JSON-RPC.
-3. renderer/plugin code consumes normalized local types, not private Harness objects.
-4. upstream-specific code stays behind `src/upstream/`.
-5. protocol truth wins over UX convenience.
-6. user-visible state-changing tool activity remains inspectable.
-7. terminal control-sequence sanitization is a release blocker.
-8. Windows remains a first-class target.
-9. terminal plugins cannot silently weaken Harness security semantics.
-10. capabilities absent from the active runtime degrade explicitly rather than being faked.
+3. Renderer/plugin code consumes normalized local types, not private Harness objects.
+4. Upstream-specific code stays behind `src/upstream/`.
+5. Protocol truth wins over UX convenience.
+6. User-visible state-changing tool activity remains inspectable.
+7. Terminal control-sequence sanitization is a release blocker.
+8. Windows remains first-class and blocking.
+9. Terminal plugins cannot silently weaken Harness security semantics.
+10. Capabilities absent from the active runtime degrade explicitly rather than being faked.

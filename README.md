@@ -2,7 +2,7 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: pre-alpha. M1 runtime integration and M2 persistent terminal interaction are implemented and cross-platform validated. M3 terminal product work is next. Not published to npm yet.**
+**Status: pre-alpha. M1 runtime integration, M2 persistent interaction, and M3 terminal product/first-party plugin plane are implemented and cross-platform validated. M4 reliability/security hardening is next. Not published to npm yet.**
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
@@ -10,38 +10,40 @@
 
 DeepSeek Harness is a plugin-first agent runtime. `dshc` is its terminal control plane, not a second agent harness.
 
-> **Harness owns agent semantics; `dshc` owns terminal interaction, observability and presentation.**
+> **Harness owns agent semantics; `dshc` owns terminal interaction, projection, observability and presentation.**
 
-`dshc` talks to the official Harness SDK/runtime, consumes structured session events, and keeps models, tools, skills, approval, sandboxing, sessions, subagents and the agent loop upstream-owned.
+`dshc` uses the official Harness SDK/runtime boundary and keeps models, tools, skills, approval, sandboxing, persistence, sessions, subagents and the agent loop upstream-owned.
 
 ## What works now
 
-M1 proved the supported runtime boundary. M2 keeps that same official runtime alive across multiple terminal turns:
+M3 turns the M2 persistent loop into a structured terminal product while preserving the same public Harness contract:
 
 ```text
-start dshc
- -> launch published dsh-jsonrpc-agent
- -> initialize once
- -> keep one active Harness session
- -> prompt / receipt / ordered events / idle
- -> prompt again on the same session
- -> optional /new session without runtime restart
- -> clean shutdown
+TTY user
+ -> Ink terminal product
+ -> first-party terminal plugin host
+ -> normalized transcript / views / status
+ -> one persistent Harness runtime
+ -> stable session across prompts
+ -> receipt / ordered events / idle
+ -> optional /new session
+ -> clean terminal + runtime teardown
 ```
 
 Current capabilities:
 
-- persistent multi-turn terminal loop in a TTY;
-- one Harness runtime reused for the whole `dshc` process;
-- stable active session across turns;
-- `/new` selects a fresh session without restarting Harness;
-- `/help`, `/status`, `/session`, `/new`, `/clear`, `/exit`;
-- streaming assistant transcript plus tool/subagent activity;
-- committed-output de-duplication even when tool activity breaks an assistant display line;
-- safe fallback/debug handling for unknown events;
-- terminal control/bidi sanitization and secret-redacted child diagnostics;
-- explicit EOF and signal semantics;
-- M1 one-shot, piped stdin and JSON modes retained.
+- Ink 7 + React 19 structured TTY product on the existing Node 22.19/24 baseline;
+- persistent multi-turn conversation with one Harness runtime and stable active session;
+- resize-aware transcript, prompt editor, history navigation and adaptive status line;
+- `Enter` to submit, `↑/↓` for prompt history, `Ctrl+J` for a newline;
+- `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
+- first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
+- specialized tool/subagent presentation plus a safe generic event fallback;
+- large tool/output folding with explicit disclosure instead of silent loss;
+- Capability Explorer that reports verified runtime metadata and clearly marks unavailable runtime-plugin inventory;
+- normalized trace and agent topology derived only from public observable events;
+- terminal control/bidi sanitization, secret-redacted diagnostics and exception-safe alternate-screen cleanup;
+- M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
 
 ## Source usage
 
@@ -51,58 +53,35 @@ corepack prepare pnpm@11.7.0 --activate
 pnpm install --frozen-lockfile
 
 # Configure the normal DeepSeek Harness provider environment first.
-# No positional prompt in a TTY => persistent interactive mode.
+# No positional prompt in a TTY => M3 terminal product.
 pnpm dev
 ```
 
-Example interaction:
+Inside the TTY product:
 
 ```text
-DeepSeek Harness Console 0.0.0-dev · interactive M2
-runtime deepseek-harness-sdk-runtime/0.0.1 · deepseek-v4-flash
-session session-... · /help for commands
-
-dshc[...]> inspect this repository
-assistant> ...
-
-dshc[...]> now explain the previous result
-assistant> ...
-
-dshc[...]> /status
-status> runtime=ready ...
-
-dshc[...]> /new
-session> new session-...
-
-dshc[...]> /exit
-```
-
-Interactive commands:
-
-```text
-/help       show commands
-/status     runtime/model/workspace/session/turn status
-/session    show the current Harness session id
-/new        select a fresh Harness session without restarting the runtime
-/clear      clear local terminal presentation only; Harness history is unchanged
-/exit       close the Harness runtime and exit
+/help          capability-aware command help
+/status        runtime/model/workspace/session status
+/session       active Harness session
+/new           select a fresh session without restarting Harness
+/clear         clear local presentation only
+/plugins       Capability Explorer
+/capabilities  alias of /plugins
+/trace         normalized observable event timeline
+/agents        root/subagent topology from public events
+/exit          close the owned Harness runtime and exit
 ```
 
 Use `//...` to send a literal model prompt beginning with `/`.
 
-### One-shot compatibility
+### One-shot and scripted compatibility
 
-M1-style execution remains available:
+The non-TTY/plain paths remain intentionally independent of Ink:
 
 ```bash
 pnpm dev -- "inspect this repository"
 pnpm dev -- run "inspect this repository"
 echo "summarize the project" | pnpm dev -- --json
-```
-
-`--interactive` forces the persistent line-by-line loop even when stdin is piped, which is also useful for deterministic scripting/tests:
-
-```bash
 printf "first prompt\nsecond prompt\n/exit\n" | pnpm dev -- --interactive
 ```
 
@@ -126,26 +105,34 @@ Useful options:
 
 The validated baseline remains DeepSeek Harness `0.1.0-rc.8`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.
 
-The public protocol still has no per-prompt cancel and no per-session close request. Therefore:
+M3 adds no new wire method. The public protocol still has no per-prompt cancel, no per-session close, and no authoritative full runtime-plugin inventory. Therefore:
 
-- `session/prompt` is treated as an enqueue receipt, not an exact assistant-result RPC;
-- an active turn is observed from its matching durable receipt through root `idle`;
-- `/new` changes the locally selected active session but does not close the previous upstream session;
-- Ctrl+C during an active turn closes the owned Harness runtime; `dshc` does not claim that a single prompt was cancelled;
-- EOF while idle, or after already-read work completes, exits cleanly.
+- `session/prompt` remains an enqueue receipt, not an exact assistant-result RPC;
+- activity is observed from the matching durable receipt through root `idle`;
+- `/new` changes only the locally selected session;
+- Ctrl+C closes the whole owned runtime rather than pretending one prompt was cancelled;
+- `/plugins` labels the Harness runtime plugin inventory partial/unavailable instead of guessing it;
+- `/trace` never reconstructs or exposes hidden reasoning;
+- M3 local `activityId` values group terminal blocks only and are not upstream message/turn/causal ids.
 
 See [Protocol and upstream compatibility](docs/PROTOCOL.md).
 
+## First-party terminal plugins
+
+M3 formalizes the terminal plane after M1/M2 proved the required seams. Built-in commands, event renderers, views and status segments register through one deterministic `TerminalPluginHost`.
+
+This is deliberately **not** a public arbitrary-package plugin ecosystem yet. Loading untrusted Node packages in-process would grant broad machine access; third-party loading remains deferred until M4/M6 security/isolation work can establish a real boundary.
+
 ## Validation
 
-Required CI is credential-free and blocks on:
+Required CI is credential-free and blocking on:
 
 - Windows latest / Node 24;
 - macOS latest / Node 24;
 - Ubuntu latest / Node 24;
 - Ubuntu latest / Node 22.19.0.
 
-The gate includes lint, strict typecheck, unit tests, fake-runtime subprocess tests, active-turn SIGINT coverage on POSIX, build, the M1 official-runtime one-shot smoke, and an actual two-turn `dshc --interactive` subprocess through the published Harness runtime using a local deterministic model stub.
+Every runtime job builds the Ink/React product. The normal test gate drives the actual Ink product using injected TTY-like streams, covering raw-mode ownership, two same-session turns, Capability Explorer, resize, alternate-screen restoration and clean exit. Existing fake-runtime lifecycle tests and official published-Harness one-shot/two-turn smokes remain in place; official model traffic is routed to a local deterministic stub.
 
 ## Architecture
 
@@ -154,11 +141,12 @@ Terminal user
     │
     ▼
  dshc
- ├─ one-shot / interactive CLI
- ├─ local command layer
+ ├─ CLI mode routing
+ ├─ Ink TTY product / plain fallback
+ ├─ first-party terminal plugin host
+ ├─ normalized transcript / trace / topology
  ├─ session selection / lifecycle
- ├─ normalized event projection
- └─ safe scrollback renderer
+ └─ terminal security boundary
     │
     │ stdio JSON-RPC
     ▼
@@ -170,12 +158,11 @@ Terminal user
  └─ agent loop
 ```
 
-All upstream/version-specific behavior stays under `src/upstream/`. M3 can now build a richer terminal product and first-party terminal plugin plane on top of seams proven by M1/M2 rather than guessing them in advance.
+All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M3** — polished terminal product + first-party terminal plugin plane, Capability Explorer, renderer registry and trace/debug views;
-- **M4** — compatibility, security and reliability hardening;
+- **M4** — reliability, compatibility, security and long-session hardening;
 - **M5** — public alpha;
 - **M6** — safe community extension ecosystem and advanced capability views.
 

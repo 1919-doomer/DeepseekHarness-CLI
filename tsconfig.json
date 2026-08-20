@@ -15,7 +15,8 @@
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
     "declaration": false,
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx"]
 }
