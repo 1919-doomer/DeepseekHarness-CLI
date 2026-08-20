@@ -48,6 +48,7 @@ export interface TranscriptBlock {
 
 export type TranscriptMutation =
   | { kind: 'append'; block: TranscriptBlock }
+  | { kind: 'append-text'; id: string; text: string; fallback?: TranscriptBlock }
   | { kind: 'patch'; id: string; patch: Partial<Omit<TranscriptBlock, 'id'>> }
   | { kind: 'remove'; id: string }
 
@@ -66,6 +67,7 @@ export interface TerminalViewContext extends TerminalCommandContext {
   commands: readonly RegisteredCommandInfo[]
   renderers: readonly RegisteredRendererInfo[]
   plugins: readonly RegisteredPluginInfo[]
+  events: readonly NormalizedEvent[]
 }
 
 export interface TerminalViewSpec {
