@@ -57,6 +57,8 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.7.0 --activate
       - run: pnpm install --frozen-lockfile
+      - name: Build terminal product
+        run: pnpm build
       - name: Fake-runtime protocol and lifecycle tests
         run: pnpm test
       - name: Official DSH runtime keyless smoke
