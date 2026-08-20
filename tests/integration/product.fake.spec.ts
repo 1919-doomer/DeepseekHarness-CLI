@@ -89,14 +89,15 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     })
 
     try {
-      await waitFor(() => readOutput().includes('DeepSeek Harness Console'))
-      await waitFor(() => input.isRaw)
+      await waitFor(() => readOutput().includes('DeepSeek Harness Console'), 5_000, 'product shell render')
+      await waitFor(() => input.isRaw, 5_000, 'raw-mode ownership')
       expect(input.referenced).toBe(true)
       expect(readOutput()).toContain(ALT_SCREEN_ON)
 
       await submitLine(input, 'first product turn')
-      await waitFor(async () => (await promptRecords(logPath)).length === 1)
-      await waitFor(() => readOutput().includes('hello'))
+      await waitFor(async () => (await promptRecords(logPath)).length === 1, 5_000, 'first prompt receipt')
+      await waitFor(() => readOutput().includes('hello'), 5_000, 'first assistant output')
+      await waitForTurn(readOutput, 1)
       expect(readOutput()).toContain('working')
       expect(readOutput()).toContain('child')
       expect(readOutput()).toContain('child-read')
@@ -104,13 +105,13 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(readOutput()).toContain('README content')
 
       await submitLine(input, 'second product turn')
-      await waitFor(async () => (await promptRecords(logPath)).length === 2)
-      await waitFor(() => readOutput().includes('turns:2'))
+      await waitFor(async () => (await promptRecords(logPath)).length === 2, 5_000, 'second prompt receipt')
+      await waitForTurn(readOutput, 2)
       const records = await promptRecords(logPath)
       expect(records.map(record => record.sessionId)).toEqual(['m3-product-session', 'm3-product-session'])
 
       await submitLine(input, '/plugins')
-      await waitFor(() => readOutput().includes('Capability Explorer'))
+      await waitFor(() => readOutput().includes('Capability Explorer'), 5_000, 'Capability Explorer view')
       expect(readOutput()).toContain('partial/unavailable on SDK protocol 0.0.1')
       expect(readOutput()).toContain('prompt cancel: unavailable')
       expect(readOutput()).toContain('dshc.core@1.0.0')
@@ -125,7 +126,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await submitLine(input, '/exit')
       const result = await product
       expect(result).toEqual({ exitCode: 0, interrupted: false, totalTurns: 2, sessionId: 'm3-product-session' })
-      await waitFor(() => !input.isRaw)
+      await waitFor(() => !input.isRaw, 5_000, 'raw-mode release')
       expect(input.referenced).toBe(false)
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
       expect(readOutput()).not.toContain('private-reasoning-must-not-render')
@@ -156,7 +157,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     })
 
     try {
-      await waitFor(() => input.isRaw)
+      await waitFor(() => input.isRaw, 5_000, 'Unicode editor raw-mode ownership')
 
       // Astral emoji backspace must remove the whole grapheme, not one surrogate.
       input.write('😀')
@@ -164,8 +165,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       input.write('\u007f')
       await delay(20)
       await submitLine(input, 'after-delete')
-      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      await waitFor(async () => (await promptRecords(logPath)).length === 1, 5_000, 'Unicode turn 1 receipt')
       expect(promptText((await promptRecords(logPath))[0]!)).toBe('after-delete')
+      await waitForTurn(readOutput, 1)
 
       // Walk left across B and emoji, right across the emoji, then insert.
       input.write('A😀B')
@@ -173,8 +175,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       input.write('\u001B[D\u001B[D\u001B[C')
       await delay(20)
       await submitLine(input, 'X')
-      await waitFor(async () => (await promptRecords(logPath)).length === 2)
+      await waitFor(async () => (await promptRecords(logPath)).length === 2, 5_000, 'Unicode turn 2 receipt')
       expect(promptText((await promptRecords(logPath))[1]!)).toBe('A😀XB')
+      await waitForTurn(readOutput, 2)
 
       // A multi-code-point ZWJ family must delete as one editing unit.
       input.write('👨‍👩‍👧‍👦')
@@ -182,8 +185,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       input.write('\u007f')
       await delay(20)
       await submitLine(input, 'family-deleted')
-      await waitFor(async () => (await promptRecords(logPath)).length === 3)
+      await waitFor(async () => (await promptRecords(logPath)).length === 3, 5_000, 'Unicode turn 3 receipt')
       expect(promptText((await promptRecords(logPath))[2]!)).toBe('family-deleted')
+      await waitForTurn(readOutput, 3)
 
       // Combining grapheme is also one backspace unit.
       input.write('e\u0301')
@@ -191,16 +195,17 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       input.write('\u007f')
       await delay(20)
       await submitLine(input, 'combining-deleted')
-      await waitFor(async () => (await promptRecords(logPath)).length === 4)
+      await waitFor(async () => (await promptRecords(logPath)).length === 4, 5_000, 'Unicode turn 4 receipt')
       expect(promptText((await promptRecords(logPath))[3]!)).toBe('combining-deleted')
+      await waitForTurn(readOutput, 4)
 
       const mixed = '中文abc😀👍🏽'
       await submitLine(input, mixed)
-      await waitFor(async () => (await promptRecords(logPath)).length === 5)
+      await waitFor(async () => (await promptRecords(logPath)).length === 5, 5_000, 'Unicode turn 5 receipt')
       expect(promptText((await promptRecords(logPath))[4]!)).toBe(mixed)
       expect((await promptRecords(logPath)).every(record => !hasLoneSurrogate(promptText(record)))).toBe(true)
+      await waitForTurn(readOutput, 5)
 
-      await waitFor(() => readOutput().includes('hello'))
       await submitLine(input, '/exit')
       await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 5 })
     } finally {
@@ -373,13 +378,21 @@ function hasLoneSurrogate(value: string): boolean {
   return false
 }
 
-async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+async function waitForTurn(readOutput: () => string, turn: number): Promise<void> {
+  await waitFor(() => readOutput().includes(`turns:${turn}`), 5_000, `turn ${turn} completion`)
+}
+
+async function waitFor(
+  condition: () => boolean | Promise<boolean>,
+  timeoutMs = 5_000,
+  label = 'terminal product state',
+): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await condition()) return
     await delay(20)
   }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for terminal product state.`)
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}.`)
 }
 
 async function delay(ms: number): Promise<void> {
