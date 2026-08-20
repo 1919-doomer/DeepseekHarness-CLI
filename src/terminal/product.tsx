@@ -49,8 +49,12 @@ export async function runTerminalProduct(
 ): Promise<TerminalProductResult> {
   const metadata = await runtime.start()
   const host = options.host ?? createDefaultTerminalHost()
+  const initialSessionId = options.initialSessionId ?? createSessionId()
   const alternate = options.useAlternateScreen ?? true
-  if (alternate) process.stdout.write(ALT_SCREEN_ON)
+  let alternateEntered = false
+  let instance: ReturnType<typeof render> | undefined
+  let latest = { totalTurns: 0, sessionId: initialSessionId }
+  let signalClosing = false
 
   let finishResolve!: (result: FinishResult) => void
   const finished = new Promise<FinishResult>(resolve => { finishResolve = resolve })
@@ -61,36 +65,51 @@ export async function runTerminalProduct(
     finishResolve(result)
   }
 
-  const instance = render(
-    <TerminalProductApp
-      runtime={runtime}
-      metadata={metadata}
-      host={host}
-      debug={options.debug ?? false}
-      initialSessionId={options.initialSessionId}
-      onFinish={finish}
-    />,
-    { exitOnCtrlC: false, patchConsole: false },
-  )
-
-  const onTerm = (): void => {
+  const closeForSignal = (exitCode: number): void => {
+    if (signalClosing) return
+    signalClosing = true
     void runtime.close().finally(() => finish({
-      exitCode: 143,
+      exitCode,
       interrupted: true,
-      totalTurns: 0,
-      sessionId: options.initialSessionId ?? 'unknown',
+      totalTurns: latest.totalTurns,
+      sessionId: latest.sessionId,
     }))
   }
-  process.once('SIGTERM', onTerm)
+  const onInt = (): void => closeForSignal(130)
+  const onTerm = (): void => closeForSignal(143)
 
   try {
+    if (alternate) {
+      process.stdout.write(ALT_SCREEN_ON)
+      alternateEntered = true
+    }
+    process.once('SIGINT', onInt)
+    process.once('SIGTERM', onTerm)
+
+    instance = render(
+      <TerminalProductApp
+        runtime={runtime}
+        metadata={metadata}
+        host={host}
+        debug={options.debug ?? false}
+        initialSessionId={initialSessionId}
+        onProgress={(totalTurns, sessionId) => { latest = { totalTurns, sessionId } }}
+        onFinish={finish}
+      />,
+      { exitOnCtrlC: false, patchConsole: false },
+    )
+
     const result = await finished
-    instance.unmount()
-    await instance.waitUntilExit().catch(() => undefined)
+    const current = instance
+    instance = undefined
+    current.unmount()
+    await current.waitUntilExit().catch(() => undefined)
     return result
   } finally {
+    process.off('SIGINT', onInt)
     process.off('SIGTERM', onTerm)
-    if (alternate) process.stdout.write(ALT_SCREEN_OFF)
+    instance?.unmount()
+    if (alternateEntered) process.stdout.write(ALT_SCREEN_OFF)
   }
 }
 
@@ -99,7 +118,8 @@ interface AppProps {
   metadata: HarnessRuntimeMetadata
   host: TerminalPluginHost
   debug: boolean
-  initialSessionId?: string
+  initialSessionId: string
+  onProgress(totalTurns: number, sessionId: string): void
   onFinish(result: FinishResult): void
 }
 
@@ -107,7 +127,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const { exit } = useApp()
   const { stdout } = useStdout()
   const [size, setSize] = useState(() => ({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 }))
-  const [sessionId, setSessionId] = useState(props.initialSessionId ?? createSessionId())
+  const [sessionId, setSessionId] = useState(props.initialSessionId)
   const [generation, setGeneration] = useState(1)
   const [sessionTurns, setSessionTurns] = useState(0)
   const [totalTurns, setTotalTurns] = useState(0)
@@ -126,6 +146,10 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   sessionRef.current = sessionId
   totalTurnsRef.current = totalTurns
+
+  useEffect(() => {
+    props.onProgress(totalTurns, sessionId)
+  }, [props, sessionId, totalTurns])
 
   useEffect(() => {
     const onResize = (): void => setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
