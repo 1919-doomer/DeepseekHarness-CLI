@@ -49,6 +49,12 @@
     toolBash: false
     toolJobs: false
 
+# tool-bash/tool-pwsh both require the shared trusted DSH_* environment registry.
+# The spine would normally own this together with its built-in bash tool, but
+# toolBash=false deliberately moves both shell consumers to the leaf composition.
+- id: shell-env
+  name: '@deepseek-ai/dsh-shell-env'
+
 - id: tool-bash
   name: '@deepseek-ai/dsh-tool-bash'
   disabled: !!js process.platform === 'win32'
