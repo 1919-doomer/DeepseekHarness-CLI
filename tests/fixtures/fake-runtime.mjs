@@ -3,8 +3,14 @@ import readline from 'node:readline'
 
 const mode = process.env.DSHC_FAKE_MODE ?? 'success'
 const logPath = process.env.DSHC_FAKE_LOG
+const lifecycleLogPath = process.env.DSHC_FAKE_LIFECYCLE_LOG
 let nextMessageId = 1
 let closed = false
+
+function logLifecycle(event) {
+  if (!lifecycleLogPath) return
+  appendFileSync(lifecycleLogPath, `${JSON.stringify({ event, pid: process.pid })}\n`, 'utf8')
+}
 
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
@@ -176,16 +182,26 @@ rl.on('line', (line) => {
   }
 
   if (request.method === 'initialize') {
+    logLifecycle('initialize-request')
     if (mode === 'malformed-initialize') {
       response(request.id, {})
       return
     }
-    response(request.id, {
-      serverInfo: {
-        name: 'deepseek-harness-sdk-runtime',
-        version: mode === 'bad-version' ? '0.0.2' : '0.0.1',
-      },
-    })
+    const reply = () => {
+      if (closed) return
+      response(request.id, {
+        serverInfo: {
+          name: 'deepseek-harness-sdk-runtime',
+          version: mode === 'bad-version' ? '0.0.2' : '0.0.1',
+        },
+      })
+      logLifecycle('initialize-response')
+    }
+    if (mode === 'slow-initialize') {
+      setTimeout(reply, 300)
+      return
+    }
+    reply()
     return
   }
 
@@ -225,6 +241,7 @@ rl.on('line', (line) => {
   }
 
   if (request.method === 'shutdown') {
+    logLifecycle('shutdown-request')
     if (mode === 'hang-shutdown') return
     response(request.id, {})
     closed = true
@@ -233,6 +250,7 @@ rl.on('line', (line) => {
 })
 
 rl.on('close', () => {
+  logLifecycle('process-exit')
   if (!closed && mode === 'early-exit') {
     process.exit(7)
     return
@@ -240,4 +258,7 @@ rl.on('close', () => {
   process.exit(0)
 })
 
-process.on('SIGTERM', () => process.exit(0))
+process.on('SIGTERM', () => {
+  logLifecycle('sigterm')
+  process.exit(0)
+})

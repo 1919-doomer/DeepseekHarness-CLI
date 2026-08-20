@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -115,6 +115,31 @@ describe('HarnessRuntime fake-process integration', () => {
     }
   })
 
+  it('does not resurrect a child when close races a pending start', async () => {
+    const root = await workspace()
+    const lifecycleLog = join(root, 'lifecycle.jsonl')
+    const runtime = runtimeFor(root, 'slow-initialize', { DSHC_FAKE_LIFECYCLE_LOG: lifecycleLog })
+
+    const start = runtime.start()
+    await waitFor(async () => (await lifecycleEvents(lifecycleLog)).includes('initialize-request'))
+
+    const firstClose = runtime.close()
+    const secondClose = runtime.close()
+    expect(secondClose).toBe(firstClose)
+
+    await expect(firstClose).resolves.toBeUndefined()
+    await expect(start).rejects.toBeInstanceOf(Error)
+    expect(runtime.metadata).toBeUndefined()
+    await expect(runtime.start()).rejects.toMatchObject({ code: 'runtime' })
+    await expect(runtime.close()).resolves.toBeUndefined()
+
+    await waitFor(async () => (await lifecycleEvents(lifecycleLog)).includes('process-exit'))
+    const events = await lifecycleEvents(lifecycleLog)
+    expect(events).toContain('initialize-request')
+    expect(events).toContain('process-exit')
+    expect(events.filter(event => event === 'process-exit')).toHaveLength(1)
+  })
+
   it('fails loudly on an unsupported runtime protocol identity', async () => {
     const root = await workspace()
     const runtime = runtimeFor(root, 'bad-version')
@@ -174,3 +199,24 @@ describe('HarnessRuntime fake-process integration', () => {
     await expect(runtime.close()).resolves.toBeUndefined()
   })
 })
+
+async function lifecycleEvents(path: string): Promise<string[]> {
+  try {
+    const text = await readFile(path, 'utf8')
+    return text.trim().length === 0
+      ? []
+      : text.trim().split('\n').map(line => (JSON.parse(line) as { event: string }).event)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error(`condition was not met within ${timeoutMs}ms`)
+}

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,38 @@ const posixIt = process.platform === 'win32' ? it.skip : it
 
 describe('interactive signal lifecycle', () => {
   for (const [signal, exitCode] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+    posixIt(`${signal} during startup closes the owned child and exits ${exitCode}`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'dshc-m2-startup-signal-'))
+      tempRoots.push(root)
+      const lifecycleLog = join(root, 'lifecycle.jsonl')
+      const child = spawn(process.execPath, ['--import', 'tsx/esm', fixturePath], {
+        env: {
+          ...process.env,
+          DSHC_SIGNAL_WORKSPACE: root,
+          DSHC_SIGNAL_MODE: 'slow-initialize',
+          DSHC_FAKE_LIFECYCLE_LOG: lifecycleLog,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+
+      let stderr = ''
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', chunk => { stderr += String(chunk) })
+
+      try {
+        await waitFor(async () => (await lifecycleEvents(lifecycleLog)).includes('initialize-request'), 5_000)
+        expect(child.kill(signal)).toBe(true)
+
+        const exit = await childExit(child)
+        expect(exit).toEqual({ code: exitCode, signal: null })
+        expect(stderr).toContain(`${signal} during startup`)
+        await waitFor(async () => (await lifecycleEvents(lifecycleLog)).includes('process-exit'), 5_000)
+        expect((await lifecycleEvents(lifecycleLog)).filter(event => event === 'process-exit')).toHaveLength(1)
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      }
+    }, 15_000)
+
     posixIt(`${signal} during an active turn closes the whole runtime and exits ${exitCode}`, async () => {
       const root = await mkdtemp(join(tmpdir(), 'dshc-m2-signal-'))
       tempRoots.push(root)
@@ -39,10 +71,7 @@ describe('interactive signal lifecycle', () => {
         await waitFor(() => stdout.includes('user> wait for signal'), 5_000)
         expect(child.kill(signal)).toBe(true)
 
-        const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-          child.once('error', reject)
-          child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }))
-        })
+        const exit = await childExit(child)
         expect(exit).toEqual({ code: exitCode, signal: null })
         expect(stderr).toContain('closes the entire Harness runtime')
         expect(stderr).toContain('no prompt-level cancel')
@@ -54,10 +83,29 @@ describe('interactive signal lifecycle', () => {
   }
 })
 
-async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+async function childExit(child: ReturnType<typeof spawn>): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+  })
+}
+
+async function lifecycleEvents(path: string): Promise<string[]> {
+  try {
+    const text = await readFile(path, 'utf8')
+    return text.trim().length === 0
+      ? []
+      : text.trim().split('\n').map(line => (JSON.parse(line) as { event: string }).event)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (predicate()) return
+    if (await predicate()) return
     await new Promise(resolve => setTimeout(resolve, 20))
   }
   throw new Error(`condition was not met within ${timeoutMs}ms`)

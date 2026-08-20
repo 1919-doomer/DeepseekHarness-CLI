@@ -26,7 +26,7 @@ export interface InteractiveLoopResult {
   session: InteractiveSessionSnapshot
 }
 
-type InteractivePhase = 'input' | 'running'
+type InteractivePhase = 'starting' | 'input' | 'running'
 
 export async function runInteractiveLoop(
   runtime: HarnessRuntime,
@@ -42,23 +42,29 @@ export async function runInteractiveLoop(
     debugUnknownEvents: options.debug,
     rootSessionId: state.sessionId,
   })
-  const metadata = await runtime.start()
-  const rl = createInterface({ input, output, terminal, crlfDelay: Infinity })
-  let phase: InteractivePhase = 'input'
-  let totalTurns = 0
 
+  let phase: InteractivePhase = 'starting'
+  let totalTurns = 0
+  let metadata: HarnessRuntimeMetadata | undefined
+  let rl: ReturnType<typeof createInterface> | undefined
+
+  // Signal ownership begins before runtime.start(). Otherwise SIGINT/SIGTERM in
+  // workspace/version/launch/initialize startup can terminate the parent while
+  // an owned Harness child is being created outside the bounded close path.
   const signals = options.installSignals === false
     ? inertSignalController()
     : installSignalHandlers(runtime, {
       onSignal: (signal) => {
-        if (phase === 'running') {
+        if (phase === 'running' && metadata !== undefined) {
           errorOutput.write(
             `\ndshc: ${signal} closes the entire Harness runtime; DeepSeek Harness ${metadata.protocolVersion} has no prompt-level cancel.\n`,
           )
+        } else if (phase === 'starting') {
+          errorOutput.write(`\ndshc: ${signal} during startup; closing the Harness runtime.\n`)
         } else {
           errorOutput.write(`\ndshc: ${signal}; closing the Harness runtime.\n`)
         }
-        rl.close()
+        rl?.close()
       },
       onCloseError: (error) => {
         if (options.debug) {
@@ -67,11 +73,21 @@ export async function runInteractiveLoop(
       },
     })
 
-  writeBanner(output, metadata, state.sessionId)
-  rl.setPrompt(promptFor(state.sessionId))
-  if (terminal) rl.prompt()
-
   try {
+    try {
+      metadata = await runtime.start()
+    } catch (error) {
+      if (signals.interrupted) return interruptedResult(signals, totalTurns, state)
+      throw error
+    }
+    if (signals.interrupted) return interruptedResult(signals, totalTurns, state)
+
+    rl = createInterface({ input, output, terminal, crlfDelay: Infinity })
+    phase = 'input'
+    writeBanner(output, metadata, state.sessionId)
+    rl.setPrompt(promptFor(state.sessionId))
+    if (terminal) rl.prompt()
+
     for await (const rawLine of rl) {
       if (signals.interrupted) break
       const action = parseInteractiveInput(rawLine)
@@ -120,15 +136,28 @@ export async function runInteractiveLoop(
 
       promptAgain(rl, terminal, state.sessionId)
     }
+
+    return {
+      exitCode: signals.exitCode ?? 0,
+      interrupted: signals.interrupted,
+      totalTurns,
+      session: state.snapshot(),
+    }
   } finally {
     renderer.finish()
-    rl.close()
+    rl?.close()
     signals.dispose()
   }
+}
 
+function interruptedResult(
+  signals: SignalController,
+  totalTurns: number,
+  state: InteractiveSessionState,
+): InteractiveLoopResult {
   return {
-    exitCode: signals.exitCode ?? 0,
-    interrupted: signals.interrupted,
+    exitCode: signals.exitCode ?? 130,
+    interrupted: true,
     totalTurns,
     session: state.snapshot(),
   }
