@@ -180,9 +180,9 @@ describe('M4.2 coding activity presentation', () => {
     }) ?? ''
 
     expect(capabilities).toContain('runtime plugin inventory: partial/unavailable')
-    expect(capabilities).toContain('Shipped dshc default coding baseline')
+    expect(capabilities).toContain('Shipped default coding baseline')
     expect(capabilities).toContain('not runtime discovery')
-    expect(capabilities).toContain('runtime-config overrides may differ')
+    expect(capabilities).toContain('overrides may differ')
     expect(capabilities).toContain('read, write, edit, glob, grep')
     expect(capabilities).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
     expect(host.listRenderers()[0]).toMatchObject({ id: 'coding-tool-call', priority: 120, pluginId: 'dshc.coding' })
