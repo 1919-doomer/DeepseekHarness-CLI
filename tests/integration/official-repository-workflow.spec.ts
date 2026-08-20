@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer, type Server, type ServerResponse } from 'node:http'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,10 +29,10 @@ describe('M4.1 published Harness repository workflow', () => {
     tempRoots.push(parent)
     const repository = join(parent, 'repo')
     const stateRoot = join(parent, 'state')
-    await import('node:fs/promises').then(({ mkdir }) => Promise.all([
+    await Promise.all([
       mkdir(repository, { recursive: true }),
       mkdir(stateRoot, { recursive: true }),
-    ]))
+    ])
     await writeFile(join(repository, FILE_NAME), BEFORE, 'utf8')
 
     const shellStep: ToolStep = process.platform === 'win32'
@@ -54,10 +54,7 @@ describe('M4.1 published Harness repository workflow', () => {
         }
 
     const steps: ToolStep[] = [
-      {
-        name: 'read',
-        arguments: { file_path: FILE_NAME },
-      },
+      { name: 'read', arguments: { file_path: FILE_NAME } },
       {
         name: 'edit',
         arguments: {
@@ -112,10 +109,11 @@ describe('M4.1 published Harness repository workflow', () => {
       ]))
       expect(firstToolNames).not.toContain(process.platform === 'win32' ? 'bash' : 'pwsh')
 
-      // State is explicitly redirected for hermetic CI. The repository itself
-      // must contain only user/project files, not dshc-owned persistence.
-      await expect(readFile(join(repository, '.sessions'), 'utf8')).rejects.toBeDefined()
-      await expect(readFile(join(repository, '.dsh'), 'utf8')).rejects.toBeDefined()
+      // Runtime state is redirected only to keep CI hermetic. The CLI itself
+      // received no --workspace: cwd must be the repository and persistence
+      // must not appear inside it.
+      await expect(stat(join(repository, '.sessions'))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(join(repository, '.dsh'))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await closeServer(stub.server)
     }
@@ -190,7 +188,7 @@ async function startToolSequenceServer(
   return { server, baseUrl: `http://127.0.0.1:${address.port}` }
 }
 
-function respondWithToolCall(response: import('node:http').ServerResponse, id: string, name: string, args: string): void {
+function respondWithToolCall(response: ServerResponse, id: string, name: string, args: string): void {
   const midpoint = Math.max(1, Math.floor(args.length / 2))
   openSse(response)
   writeSse(response, {
@@ -218,7 +216,7 @@ function respondWithToolCall(response: import('node:http').ServerResponse, id: s
   response.end('data: [DONE]\n\n')
 }
 
-function respondWithText(response: import('node:http').ServerResponse, text: string): void {
+function respondWithText(response: ServerResponse, text: string): void {
   openSse(response)
   writeSse(response, { choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }] })
   writeSse(response, terminalChunk('stop'))
@@ -232,7 +230,7 @@ function terminalChunk(reason: string): unknown {
   }
 }
 
-function openSse(response: import('node:http').ServerResponse): void {
+function openSse(response: ServerResponse): void {
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache',
@@ -241,7 +239,7 @@ function openSse(response: import('node:http').ServerResponse): void {
   response.flushHeaders()
 }
 
-function writeSse(response: import('node:http').ServerResponse, payload: unknown): void {
+function writeSse(response: ServerResponse, payload: unknown): void {
   response.write(`data: ${JSON.stringify(payload)}\n\n`)
 }
 
