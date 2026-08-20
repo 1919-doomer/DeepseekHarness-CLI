@@ -69,7 +69,19 @@ export function applyMutations(
       else blocks.push(mutation.block)
       continue
     }
+
     const index = blocks.findIndex(block => block.id === mutation.id)
+    if (mutation.kind === 'append-text') {
+      const text = sanitizeTerminalText(mutation.text)
+      if (index < 0) {
+        if (mutation.fallback !== undefined) blocks.push({ ...mutation.fallback, text })
+      } else {
+        const previous = blocks[index]!
+        blocks[index] = { ...previous, text: previous.text + text }
+      }
+      continue
+    }
+
     if (index < 0) continue
     if (mutation.kind === 'remove') {
       blocks.splice(index, 1)
@@ -84,12 +96,14 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
   switch (event.kind) {
     case 'assistant-delta':
       return [{
-        kind: 'append',
-        block: {
+        kind: 'append-text',
+        id: assistantStreamId(event.sessionId),
+        text: event.text,
+        fallback: {
           id: assistantStreamId(event.sessionId),
           kind: 'assistant',
           title: 'assistant',
-          text: sanitizeTerminalText(event.text),
+          text: '',
           state: 'running',
           sessionId: event.sessionId,
         },
@@ -112,7 +126,7 @@ function genericEventMutations(event: NormalizedEvent, debug: boolean): readonly
         block: {
           id: `tool-${event.callId}`,
           kind: 'tool',
-          title: event.name,
+          title: sanitizeTerminalText(event.name),
           text: sanitizeTerminalText(event.arguments),
           state: 'running',
           foldable: true,
