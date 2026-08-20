@@ -34,10 +34,13 @@
     "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.8",
     "@deepseek-ai/dsh-sdk-client": "0.1.0-rc.8",
     "@deepseek-ai/dsh-sdk-jsonrpc-demo": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.0-rc.8"
+    "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.0-rc.8",
+    "ink": "7.1.1",
+    "react": "19.2.8"
   },
   "devDependencies": {
     "@types/node": "22.20.0",
+    "@types/react": "19.2.18",
     "oxlint": "1.76.0",
     "tsx": "4.22.4",
     "typescript": "6.0.3",
