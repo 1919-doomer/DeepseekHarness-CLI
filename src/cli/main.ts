@@ -1,5 +1,6 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
+import { runTerminalProduct } from '../terminal/product.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
@@ -28,9 +29,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0
   }
 
-  if (shouldRunInteractive(options)) {
-    return runInteractiveMode(options)
-  }
+  if (shouldRunInteractive(options)) return runInteractiveMode(options)
 
   let prompt = options.prompt
   if (prompt === undefined && !process.stdin.isTTY) {
@@ -42,7 +41,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
   }
   if (prompt === undefined || prompt.trim().length === 0) {
-    process.stderr.write('dshc: a prompt is required in one-shot mode. Use `dshc` without `run` to start the interactive loop.\n')
+    process.stderr.write('dshc: a prompt is required in one-shot mode. Use `dshc` without `run` to start the interactive terminal product.\n')
     return 1
   }
 
@@ -87,11 +86,19 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
   let exitCode = 0
 
   try {
-    const result = await runInteractiveLoop(runtime, {
-      initialSessionId: options.sessionId,
-      debug: options.debug,
-    })
-    exitCode = result.exitCode
+    if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
+      const result = await runTerminalProduct(runtime, {
+        initialSessionId: options.sessionId,
+        debug: options.debug,
+      })
+      exitCode = result.exitCode
+    } else {
+      const result = await runInteractiveLoop(runtime, {
+        initialSessionId: options.sessionId,
+        debug: options.debug,
+      })
+      exitCode = result.exitCode
+    }
   } catch (error) {
     primaryFailure = true
     writeError(error)
@@ -190,9 +197,7 @@ async function readPromptFromStdin(): Promise<string> {
   for await (const chunk of process.stdin) {
     const text = String(chunk)
     bytes += Buffer.byteLength(text)
-    if (bytes > MAX_STDIN_BYTES) {
-      throw new Error(`stdin prompt exceeds ${MAX_STDIN_BYTES} bytes`)
-    }
+    if (bytes > MAX_STDIN_BYTES) throw new Error(`stdin prompt exceeds ${MAX_STDIN_BYTES} bytes`)
     input += text
   }
   return input.trimEnd()
