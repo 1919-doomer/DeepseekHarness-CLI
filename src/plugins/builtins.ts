@@ -139,8 +139,8 @@ function renderHelp(context: TerminalViewContext): string {
 }
 
 function renderCapabilities(context: TerminalViewContext): string {
-  const plugins = context.plugins.map(plugin => `- ${plugin.id}@${plugin.version}`).join('\n') || '- none'
-  const renderers = context.renderers.map(renderer => `- ${renderer.id} · ${renderer.pluginId} · priority ${renderer.priority}`).join('\n') || '- generic safe fallback only'
+  const plugins = context.plugins.map(plugin => `${plugin.id}@${plugin.version}`).join(', ') || 'none'
+  const renderers = context.renderers.map(renderer => `${renderer.id}@${renderer.pluginId}`).join(', ') || 'generic safe fallback only'
   const defaultShell = process.platform === 'win32' ? 'pwsh' : 'bash'
   return [
     'Harness boundary',
@@ -152,17 +152,11 @@ function renderCapabilities(context: TerminalViewContext): string {
     '- prompt cancel: unavailable',
     '- per-session close: unavailable',
     '',
-    'Shipped dshc default coding baseline',
-    '- source: locally validated default composition; this is not runtime discovery',
-    '- runtime-config overrides may differ and are not inferred as active capabilities',
+    'Shipped default coding baseline: locally validated; not runtime discovery; overrides may differ',
     `- tools: ${VALIDATED_DEFAULT_CODING_TOOLS.filter(tool => tool !== 'bash' && tool !== 'pwsh').join(', ')}, ${defaultShell}`,
     '',
-    'Active dshc terminal plugins',
-    plugins,
-    '',
-    'Specialized event renderers',
-    renderers,
-    '',
+    `Terminal plugins: ${plugins}`,
+    `Specialized renderers: ${renderers}`,
     `Commands: ${context.commands.map(command => `/${command.name}`).join(', ')}`,
   ].join('\n')
 }
