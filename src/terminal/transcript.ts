@@ -86,9 +86,15 @@ export function applyMutations(
   const blocks = [...state.blocks]
   for (const mutation of mutations) {
     if (mutation.kind === 'append') {
-      const existing = blocks.findIndex(block => block.id === mutation.block.id)
-      if (existing >= 0) blocks[existing] = mutation.block
-      else blocks.push(mutation.block)
+      // Transcript state is itself a trust boundary. A first-party renderer may
+      // forget to sanitize an untrusted event, and future exporters/debuggers
+      // may consume this state without going through Ink's final Text boundary.
+      // Store only inert text so no downstream transcript consumer can revive
+      // attacker-controlled terminal controls by accident.
+      const block = sanitizeTranscriptBlock(mutation.block)
+      const existing = blocks.findIndex(current => current.id === block.id)
+      if (existing >= 0) blocks[existing] = block
+      else blocks.push(block)
       continue
     }
 
@@ -96,7 +102,9 @@ export function applyMutations(
     if (mutation.kind === 'append-text') {
       const text = sanitizeTerminalText(mutation.text)
       if (index < 0) {
-        if (mutation.fallback !== undefined) blocks.push({ ...mutation.fallback, text })
+        if (mutation.fallback !== undefined) {
+          blocks.push(sanitizeTranscriptBlock({ ...mutation.fallback, text }))
+        }
       } else {
         const previous = blocks[index]!
         blocks[index] = { ...previous, text: previous.text + text }
@@ -109,9 +117,33 @@ export function applyMutations(
       blocks.splice(index, 1)
       continue
     }
-    blocks[index] = { ...blocks[index]!, ...mutation.patch, id: mutation.id }
+    blocks[index] = {
+      ...blocks[index]!,
+      ...sanitizeTranscriptPatch(mutation.patch),
+      id: mutation.id,
+    }
   }
   return { ...state, blocks }
+}
+
+function sanitizeTranscriptBlock(block: TranscriptBlock): TranscriptBlock {
+  return {
+    ...block,
+    ...(block.title === undefined ? {} : { title: sanitizeTerminalText(block.title) }),
+    text: sanitizeTerminalText(block.text),
+    ...(block.detail === undefined ? {} : { detail: sanitizeTerminalText(block.detail) }),
+  }
+}
+
+function sanitizeTranscriptPatch(
+  patch: Partial<Omit<TranscriptBlock, 'id'>>,
+): Partial<Omit<TranscriptBlock, 'id'>> {
+  return {
+    ...patch,
+    ...(patch.title === undefined ? {} : { title: sanitizeTerminalText(patch.title) }),
+    ...(patch.text === undefined ? {} : { text: sanitizeTerminalText(patch.text) }),
+    ...(patch.detail === undefined ? {} : { detail: sanitizeTerminalText(patch.detail) }),
+  }
 }
 
 function genericEventMutations(
