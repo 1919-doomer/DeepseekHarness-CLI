@@ -13,6 +13,16 @@ import {
 import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { TerminalPluginHost } from './host.js'
 
+const TRACE_PAGE_SIZE = 80
+
+export type TraceQueryMode = 'all' | 'errors' | 'tools' | 'agents' | 'unknown' | 'session' | 'find'
+
+export interface TraceQuery {
+  mode: TraceQueryMode
+  page: number
+  value?: string
+}
+
 export function createDefaultTerminalHost(): TerminalPluginHost {
   const host = new TerminalPluginHost()
   host.register(corePlugin())
@@ -22,6 +32,7 @@ export function createDefaultTerminalHost(): TerminalPluginHost {
 }
 
 function corePlugin(): TerminalPluginSpec {
+  let traceQuery: TraceQuery = { mode: 'all', page: 1 }
   return {
     id: 'dshc.core',
     version: '1.0.0',
@@ -33,14 +44,21 @@ function corePlugin(): TerminalPluginSpec {
       { name: 'new', summary: 'Select a fresh Harness session without restarting the runtime', execute: () => ({ kind: 'new-session' }) },
       { name: 'clear', summary: 'Clear local presentation only; Harness history is unchanged', execute: () => ({ kind: 'clear' }) },
       { name: 'plugins', aliases: ['capabilities'], summary: 'Inspect verified runtime metadata and active terminal adapters', execute: () => ({ kind: 'view', viewId: 'capabilities' }) },
-      { name: 'trace', summary: 'Open the bounded normalized event timeline; hidden reasoning is never reconstructed', execute: () => ({ kind: 'view', viewId: 'trace' }) },
+      {
+        name: 'trace',
+        summary: 'Query the bounded normalized event debugger; use /trace help for filters and paging',
+        execute: (_context, args) => {
+          traceQuery = parseTraceQuery(args)
+          return { kind: 'view', viewId: 'trace' }
+        },
+      },
       { name: 'agents', summary: 'Show current root/descendant topology projected from public events', execute: () => ({ kind: 'view', viewId: 'agents' }) },
       { name: 'exit', aliases: ['quit'], summary: 'Close the owned Harness runtime and exit', execute: () => ({ kind: 'exit' }) },
     ],
     views: [
       { id: 'help', title: 'Help', render: renderHelp },
       { id: 'capabilities', title: 'Capability Explorer', render: renderCapabilities },
-      { id: 'trace', title: 'Session Trace', render: renderTrace },
+      { id: 'trace', title: 'Session Trace', render: context => renderTraceQuery(context, traceQuery) },
       { id: 'agents', title: 'Agent Topology', render: renderAgents },
     ],
     statusSegments: [
@@ -136,7 +154,7 @@ function renderHelp(context: TerminalViewContext): string {
     const aliases = command.aliases.length === 0 ? '' : ` (${command.aliases.map(alias => `/${alias}`).join(', ')})`
     return `/${command.name}${aliases}\n  ${command.summary}`
   })
-  return `Commands exposed by the active terminal plugin host:\n\n${rows.join('\n\n')}\n\nUse //text to send a literal prompt beginning with /.`
+  return `Commands exposed by the active terminal plugin host:\n\n${rows.join('\n\n')}\n\nTrace debugger:\n  /trace [all|errors|tools|agents|unknown] [--page N]\n  /trace session <id> [--page N]\n  /trace find <text> [--page N]\n\nUse //text to send a literal prompt beginning with /.`
 }
 
 function renderCapabilities(context: TerminalViewContext): string {
@@ -162,27 +180,137 @@ function renderCapabilities(context: TerminalViewContext): string {
   ].join('\n')
 }
 
-function renderTrace(context: TerminalViewContext): string {
-  const retention = context.retention
-  if (context.events.length === 0) {
-    return retention !== undefined && retention.droppedEventCount > 0
-      ? `No retained normalized events. ${retention.droppedEventCount} older events were evicted from local trace retention.`
-      : 'No normalized runtime events have been observed in this terminal process yet.'
+export function parseTraceQuery(args: readonly string[]): TraceQuery {
+  const tokens = [...args]
+  let page = 1
+  const pageIndex = tokens.indexOf('--page')
+  if (pageIndex >= 0) {
+    if (tokens.indexOf('--page', pageIndex + 1) >= 0) throw new Error('/trace accepts only one --page option')
+    const raw = tokens[pageIndex + 1]
+    if (raw === undefined || !/^\d+$/.test(raw) || Number(raw) <= 0 || !Number.isSafeInteger(Number(raw))) {
+      throw new Error('/trace --page requires a positive safe integer')
+    }
+    page = Number(raw)
+    tokens.splice(pageIndex, 2)
   }
 
-  const visible = context.events.slice(-120)
-  const absoluteStart = retention === undefined
-    ? context.events.length - visible.length
-    : retention.totalEventCount - visible.length
-  const lines = visible.map((event, index) => formatTraceEvent(event, absoluteStart + index))
-  const notes: string[] = []
-  if (retention !== undefined && retention.droppedEventCount > 0) {
-    notes.push(`retention: ${retention.droppedEventCount} older normalized events evicted locally; total observed ${retention.totalEventCount}`)
+  if (tokens.length === 0) return { mode: 'all', page }
+  const mode = tokens[0]!.toLowerCase()
+  if (mode === 'help') throw new Error('usage: /trace [all|errors|tools|agents|unknown|session <id>|find <text>] [--page N]')
+  if (mode === 'all' || mode === 'errors' || mode === 'tools' || mode === 'agents' || mode === 'unknown') {
+    if (tokens.length !== 1) throw new Error(`/trace ${mode} does not accept extra arguments`)
+    return { mode, page }
   }
-  if (context.events.length > visible.length) {
-    notes.push(`view: showing newest ${visible.length} of ${context.events.length} retained events`)
+  if (mode === 'session') {
+    if (tokens.length !== 2 || tokens[1]!.length === 0) throw new Error('/trace session requires exactly one session id')
+    return { mode: 'session', page, value: sanitizeTerminalText(tokens[1]!) }
   }
-  return notes.length === 0 ? lines.join('\n') : `${notes.join('\n')}\n\n${lines.join('\n')}`
+  if (mode === 'find') {
+    const value = sanitizeTerminalText(tokens.slice(1).join(' ').trim())
+    if (value.length === 0) throw new Error('/trace find requires search text')
+    return { mode: 'find', page, value }
+  }
+  throw new Error('usage: /trace [all|errors|tools|agents|unknown|session <id>|find <text>] [--page N]')
+}
+
+export function renderTraceQuery(context: TerminalViewContext, query: TraceQuery): string {
+  const retention = context.retention
+  const retainedStart = retention === undefined
+    ? 0
+    : Math.max(0, retention.totalEventCount - context.events.length)
+  const entries = context.events.map((event, index) => ({ event, absoluteIndex: retainedStart + index }))
+  const matches = entries.filter(entry => matchesTraceQuery(entry.event, entry.absoluteIndex, query))
+  const totalPages = Math.max(1, Math.ceil(matches.length / TRACE_PAGE_SIZE))
+  const pageEnd = Math.max(0, matches.length - (query.page - 1) * TRACE_PAGE_SIZE)
+  const pageStart = Math.max(0, pageEnd - TRACE_PAGE_SIZE)
+  const visible = query.page > totalPages ? [] : matches.slice(pageStart, pageEnd)
+
+  const notes = [
+    `query: ${traceQueryLabel(query)} · page ${query.page}/${totalPages} · ${matches.length} retained matches`,
+    retention === undefined
+      ? `scope: ${context.events.length} retained normalized events; retention metadata unavailable`
+      : `scope: retained ${context.events.length}/${retention.totalEventCount} normalized events; ${retention.droppedEventCount} older evicted locally`,
+  ]
+  if ((retention?.droppedEventCount ?? 0) > 0) {
+    notes.push('scope note: filters/search cannot inspect events already evicted from local retention')
+  }
+  if (query.mode === 'errors') notes.push(failureSummary(matches.map(entry => entry.event)))
+  if (query.mode === 'unknown') notes.push(unknownSummary(matches.map(entry => entry.event)))
+
+  if (visible.length === 0) {
+    notes.push(query.page > totalPages
+      ? `No such retained page. Available pages: 1-${totalPages}.`
+      : 'No retained normalized events match this query.')
+    return notes.join('\n')
+  }
+
+  return `${notes.join('\n')}\n\n${visible.map(entry => formatTraceEvent(entry.event, entry.absoluteIndex)).join('\n')}`
+}
+
+function matchesTraceQuery(event: NormalizedEvent, absoluteIndex: number, query: TraceQuery): boolean {
+  switch (query.mode) {
+    case 'all': return true
+    case 'errors': return event.kind === 'turn-error' || (event.kind === 'tool-result' && event.isError)
+    case 'tools': return event.kind === 'tool-call' || event.kind === 'tool-result'
+    case 'agents': return event.kind === 'subagent-started' || event.kind === 'subagent-finished'
+    case 'unknown': return event.kind === 'unknown'
+    case 'session': return query.value !== undefined && eventSessionIds(event).includes(query.value)
+    case 'find': {
+      const needle = query.value?.toLocaleLowerCase() ?? ''
+      return needle.length > 0 && formatTraceEvent(event, absoluteIndex).toLocaleLowerCase().includes(needle)
+    }
+  }
+}
+
+function eventSessionIds(event: NormalizedEvent): readonly string[] {
+  switch (event.kind) {
+    case 'session-status':
+    case 'user-message':
+    case 'assistant-delta':
+    case 'assistant-message':
+    case 'tool-call':
+    case 'tool-result':
+    case 'turn-error':
+      return [event.sessionId]
+    case 'subagent-started':
+    case 'subagent-finished':
+      return [event.parentSessionId, event.childSessionId]
+    case 'internal':
+    case 'unknown':
+      return event.sessionId === undefined ? [] : [event.sessionId]
+  }
+}
+
+function traceQueryLabel(query: TraceQuery): string {
+  if (query.mode === 'session') return `session ${sanitizeTerminalText(query.value ?? '')}`
+  if (query.mode === 'find') return `find ${JSON.stringify(sanitizeTerminalText(query.value ?? ''))}`
+  return query.mode
+}
+
+function failureSummary(events: readonly NormalizedEvent[]): string {
+  let turnErrors = 0
+  let toolErrors = 0
+  for (const event of events) {
+    if (event.kind === 'turn-error') turnErrors += 1
+    if (event.kind === 'tool-result' && event.isError) toolErrors += 1
+  }
+  return `failure summary: ${turnErrors} upstream turn-error · ${toolErrors} tool-result error; local transport/protocol/configuration failures are not relabelled as trace events`
+}
+
+function unknownSummary(events: readonly NormalizedEvent[]): string {
+  const counts = new Map<string, number>()
+  for (const event of events) {
+    if (event.kind !== 'unknown') continue
+    const key = `${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  if (counts.size === 0) return 'unknown summary: none in retained query scope'
+  const rows = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 8)
+    .map(([key, count]) => `${key} ×${count}`)
+  const extra = counts.size > rows.length ? ` · +${counts.size - rows.length} more signatures` : ''
+  return `unknown summary: ${rows.join(' · ')}${extra}; meanings are not inferred`
 }
 
 export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.sequence): string {
@@ -193,7 +321,9 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
     case 'assistant-delta': return `${prefix} assistant.stream ${short(event.sessionId)} +${event.text.length} retained chars`
     case 'assistant-message': return `${prefix} assistant.commit ${short(event.sessionId)} ${event.text.length} retained chars`
     case 'tool-call': return `${prefix} tool.call ${short(event.sessionId)} ${sanitizeTerminalText(event.name)} ${short(event.callId)}`
-    case 'tool-result': return `${prefix} tool.${event.isError ? 'error' : 'result'} ${short(event.sessionId)} ${short(event.callId)} ${event.text.length} retained chars`
+    case 'tool-result': return event.isError
+      ? `${prefix} tool.error ${short(event.sessionId)} ${short(event.callId)} ${preview(event.text)}`
+      : `${prefix} tool.result ${short(event.sessionId)} ${short(event.callId)} ${event.text.length} retained chars`
     case 'subagent-started': return `${prefix} agent.start ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'subagent-finished': return `${prefix} agent.finish ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'turn-error': return `${prefix} turn.error ${short(event.sessionId)} ${preview(event.message)}`
