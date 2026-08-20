@@ -68,12 +68,13 @@ export async function runTerminalProduct(
   const closeForSignal = (exitCode: number): void => {
     if (signalClosing) return
     signalClosing = true
-    void runtime.close().finally(() => finish({
+    finish({
       exitCode,
       interrupted: true,
       totalTurns: latest.totalTurns,
       sessionId: latest.sessionId,
-    }))
+    })
+    void runtime.close().catch(() => undefined)
   }
   const onInt = (): void => closeForSignal(130)
   const onTerm = (): void => closeForSignal(143)
@@ -140,6 +141,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [history, setHistory] = useState<readonly string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number | undefined>()
   const runningRef = useRef(false)
+  const interruptingRef = useRef(false)
   const totalTurnsRef = useRef(0)
   const sessionRef = useRef(sessionId)
   const idRef = useRef(0)
@@ -149,7 +151,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   useEffect(() => {
     props.onProgress(totalTurns, sessionId)
-  }, [props, sessionId, totalTurns])
+  }, [props.onProgress, sessionId, totalTurns])
 
   useEffect(() => {
     const onResize = (): void => setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
@@ -185,6 +187,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   }, [exit, props])
 
   const interrupt = useCallback((): void => {
+    if (interruptingRef.current) return
+    interruptingRef.current = true
     if (runningRef.current) {
       setTranscript(state => appendSystemMessage(
         state,
@@ -283,6 +287,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         ))
       }
     } catch (error) {
+      if (interruptingRef.current) return
       const failure = classifyRuntimeError(error)
       setPhase('failed')
       setTranscript(state => appendSystemMessage(state, failure.message, `runtime error · ${failure.code}`, nextId('runtime-error')))
