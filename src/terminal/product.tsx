@@ -24,6 +24,18 @@ import {
   type TerminalTranscriptState,
 } from './transcript.js'
 import { sanitizeTerminalText } from './sanitize.js'
+import {
+  cropTerminalText,
+  deleteGraphemeBefore,
+  graphemeAt,
+  graphemeCount,
+  insertAtGrapheme,
+  prefixByCells,
+  sliceByGrapheme,
+  suffixByCells,
+  terminalCellWidth,
+  wrappedTerminalRows,
+} from './text-metrics.js'
 
 const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
@@ -152,6 +164,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [transcript, setTranscript] = useState<TerminalTranscriptState>(initialTerminalTranscript)
   const [events, setEvents] = useState<readonly NormalizedEvent[]>([])
   const [input, setInput] = useState('')
+  // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
   const [history, setHistory] = useState<readonly string[]>([])
@@ -370,8 +383,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
     if (key.backspace || key.delete) {
       if (cursor === 0) return
-      setInput(value => value.slice(0, cursor - 1) + value.slice(cursor))
-      setCursor(value => Math.max(0, value - 1))
+      const edited = deleteGraphemeBefore(input, cursor)
+      setInput(edited.value)
+      setCursor(edited.cursor)
       return
     }
     if (key.leftArrow) {
@@ -379,7 +393,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return
     }
     if (key.rightArrow) {
-      setCursor(value => Math.min(input.length, value + 1))
+      setCursor(value => Math.min(graphemeCount(input), value + 1))
       return
     }
     if (key.upArrow && history.length > 0) {
@@ -387,7 +401,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       const value = history[next] ?? ''
       setHistoryIndex(next)
       setInput(value)
-      setCursor(value.length)
+      setCursor(graphemeCount(value))
       return
     }
     if (key.downArrow && historyIndex !== undefined) {
@@ -400,7 +414,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         const value = history[next] ?? ''
         setHistoryIndex(next)
         setInput(value)
-        setCursor(value.length)
+        setCursor(graphemeCount(value))
       }
       return
     }
@@ -413,8 +427,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   })
 
   function insertInput(text: string): void {
-    setInput(value => value.slice(0, cursor) + text + value.slice(cursor))
-    setCursor(value => value + text.length)
+    const edited = insertAtGrapheme(input, cursor, text)
+    setInput(edited.value)
+    setCursor(edited.cursor)
   }
 
   const status = useMemo(() => {
@@ -429,7 +444,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
   const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
   const bodyRows = Math.max(4, size.rows - 7)
-  const visibleBlocks = currentView === undefined ? takeVisibleBlocks(transcript.blocks, bodyRows) : []
+  const visibleBlocks = currentView === undefined
+    ? takeVisibleBlocks(transcript.blocks, bodyRows, Math.max(20, size.columns))
+    : []
 
   return (
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
@@ -446,7 +463,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       </Box>
 
       <Box borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
-        <Text>{crop(status, Math.max(10, size.columns - 4))}</Text>
+        <Text>{cropTerminalText(status, Math.max(10, size.columns - 4))}</Text>
       </Box>
 
       <Box flexDirection="column" paddingX={1}>
@@ -498,20 +515,28 @@ function ViewPanel({ title, text }: { title: string; text: string }): React.Reac
   )
 }
 
-export function takeVisibleBlocks(blocks: readonly TranscriptBlock[], rows: number): readonly TranscriptBlock[] {
+export function takeVisibleBlocks(
+  blocks: readonly TranscriptBlock[],
+  rows: number,
+  width = 72,
+): readonly TranscriptBlock[] {
   const result: TranscriptBlock[] = []
   let budget = rows
   for (let index = blocks.length - 1; index >= 0 && budget > 0; index--) {
     const block = blocks[index]!
     result.unshift(block)
-    budget -= estimateRows(block)
+    budget -= estimateRows(block, width)
   }
   return result
 }
 
-function estimateRows(block: TranscriptBlock): number {
-  const content = Math.min(DEFAULT_FOLD_LIMIT, block.text.length + (block.detail?.length ?? 0))
-  return 2 + Math.max(1, Math.ceil(content / 72))
+function estimateRows(block: TranscriptBlock, width: number): number {
+  const contentWidth = Math.max(10, width - 2)
+  const text = foldTerminalText(block.text, block.foldable === true, contentWidth)
+  const detail = block.detail === undefined ? '' : foldTerminalText(block.detail, true, contentWidth)
+  const textRows = block.text.length === 0 ? 0 : wrappedTerminalRows(text, contentWidth)
+  const detailRows = detail.length === 0 ? 0 : wrappedTerminalRows(detail, contentWidth)
+  return 2 + Math.max(1, textRows + detailRows)
 }
 
 export function foldTerminalText(
@@ -521,18 +546,22 @@ export function foldTerminalText(
   limit = DEFAULT_FOLD_LIMIT,
 ): string {
   const safe = sanitizeTerminalText(text)
-  if (!foldable || safe.length <= limit) return safe
+  const displayUnits = Math.max(terminalCellWidth(safe), graphemeCount(safe))
+  if (!foldable || displayUnits <= limit) return safe
   const head = Math.max(240, Math.min(limit - 160, Math.max(20, width) * 8))
   const tail = Math.min(120, Math.max(40, Math.floor(limit / 5)))
-  const hidden = Math.max(0, safe.length - head - tail)
-  return `${safe.slice(0, head)}\n… ${hidden} characters folded; content retained in this terminal process …\n${safe.slice(-tail)}`
+  const headText = prefixByCells(safe, head)
+  const tailText = suffixByCells(safe, tail)
+  const hidden = Math.max(0, graphemeCount(safe) - graphemeCount(headText) - graphemeCount(tailText))
+  return `${headText}\n… ${hidden} characters folded; content retained in this terminal process …\n${tailText}`
 }
 
 function renderEditor(value: string, cursor: number, disabled: boolean): string {
   if (disabled) return '…'
-  const before = sanitizeTerminalText(value.slice(0, cursor))
-  const current = value[cursor] === undefined ? ' ' : sanitizeTerminalText(value[cursor]!)
-  const after = sanitizeTerminalText(value.slice(cursor + (value[cursor] === undefined ? 0 : 1)))
+  const before = sanitizeTerminalText(sliceByGrapheme(value, 0, cursor))
+  const currentGrapheme = graphemeAt(value, cursor)
+  const current = currentGrapheme === undefined ? ' ' : sanitizeTerminalText(currentGrapheme)
+  const after = sanitizeTerminalText(sliceByGrapheme(value, cursor + (currentGrapheme === undefined ? 0 : 1)))
   return `❯ ${before}▌${current}${after}`
 }
 
@@ -557,10 +586,4 @@ function renderStatusSegmentSafely(
 
 function pluginErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function crop(value: string, width: number): string {
-  if (value.length <= width) return value
-  if (width <= 3) return value.slice(0, width)
-  return `${value.slice(0, width - 1)}…`
 }
