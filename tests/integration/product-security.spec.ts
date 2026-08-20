@@ -31,7 +31,10 @@ class TestInput extends PassThrough {
 
 class TestOutput extends PassThrough {
   isTTY = true
-  columns = 100
+  // The hostile status fixture is deliberately verbose after escaping. Keep
+  // enough columns that the ordinary `turns:N` completion segment remains
+  // observable too; this test is about injection, not narrow-layout cropping.
+  columns = 220
   rows = 30
   getColorDepth(): number { return 8 }
   hasColors(): boolean { return true }
