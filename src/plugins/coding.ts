@@ -32,14 +32,19 @@ export function codingActivityPlugin(): TerminalPluginSpec {
     eventRenderers: [{
       id: 'coding-tool-call',
       priority: 120,
-      // Require parseable object arguments in match(). Malformed known-tool
-      // events therefore fall through to the existing generic safe renderer.
-      match: event => event.kind === 'tool-call'
-        && SPECIALIZED_TOOLS.has(event.name)
-        && parseArguments(event.arguments) !== undefined,
+      // A specialized renderer owns an event only when it can fully explain
+      // the observed arguments. Malformed or future argument shapes therefore
+      // continue to the generic safe tool renderer instead of disappearing.
+      match: isSpecializableCodingCall,
       render: (event, context) => codingToolMutations(event, context),
     }],
   }
+}
+
+function isSpecializableCodingCall(event: NormalizedEvent): boolean {
+  if (event.kind !== 'tool-call' || !SPECIALIZED_TOOLS.has(event.name)) return false
+  const args = parseArguments(event.arguments)
+  return args !== undefined && presentCodingCall(event.name, args) !== undefined
 }
 
 function codingToolMutations(event: NormalizedEvent, context: TerminalRenderContext): readonly TranscriptMutation[] {
