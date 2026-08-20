@@ -87,11 +87,30 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
 
   try {
     if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
-      const result = await runTerminalProduct(runtime, {
-        initialSessionId: options.sessionId,
-        debug: options.debug,
+      // Ink installs its richer product-level SIGINT/SIGTERM handlers after it
+      // has runtime metadata. This outer owner exists solely to cover the
+      // startup interval as well; once Ink is active both handlers may call the
+      // idempotent runtime.close(), but only the product decides its UI result.
+      const startupSignals = installSignalHandlers(runtime, {
+        onCloseError: (error) => {
+          if (options.debug) process.stderr.write(`dshc: startup signal cleanup: ${safeErrorMessage(error)}\n`)
+        },
       })
-      exitCode = result.exitCode
+      try {
+        const result = await runTerminalProduct(runtime, {
+          initialSessionId: options.sessionId,
+          debug: options.debug,
+        })
+        exitCode = result.exitCode
+      } catch (error) {
+        if (startupSignals.interrupted) {
+          exitCode = startupSignals.exitCode ?? 130
+        } else {
+          throw error
+        }
+      } finally {
+        startupSignals.dispose()
+      }
     } else {
       const result = await runInteractiveLoop(runtime, {
         initialSessionId: options.sessionId,
