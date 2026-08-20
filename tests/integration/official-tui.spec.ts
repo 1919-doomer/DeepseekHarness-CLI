@@ -42,20 +42,19 @@ describe('M3 official DeepSeek Harness TTY product', () => {
     const address = modelServer.address()
     if (address === null || typeof address === 'string') throw new Error('mock model server did not bind a TCP port')
 
-    const command = [
+    const dshcCommand = [
       process.execPath,
       '--import', 'tsx/esm', cliPath,
       '--workspace', root,
       '--session', 'm3-official-session',
       '--max-tokens', '128',
     ].map(shellQuote).join(' ')
+    const command = `stty rows 28 cols 96 raw -echo; exec ${dshcCommand}`
 
     const child = spawn('script', ['-q', '-e', '-f', '-c', command, '/dev/null'], {
       env: {
         ...process.env,
         TERM: 'xterm-256color',
-        COLUMNS: '96',
-        LINES: '28',
         DEEPSEEK_API_KEY: 'dshc-m3-smoke-no-real-call',
         DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}`,
       },
@@ -70,9 +69,6 @@ describe('M3 official DeepSeek Harness TTY product', () => {
     child.stderr.on('data', chunk => { stderr += String(chunk) })
 
     try {
-      // `script(1)` can delay forwarding Ink's first paint when its own stdout is
-      // a pipe. Alternate-screen entry is emitted immediately by dshc and proves
-      // that the real TTY product path was selected.
       await waitFor(() => stdout.includes(ALT_SCREEN_ON), 10_000, () => stdout)
 
       child.stdin.write('first tui turn\r')
