@@ -31,7 +31,7 @@ function capture(stream: PassThrough): () => string {
 }
 
 describe('M4 bounded terminal process history', () => {
-  it('bounds trace retention, preserves topology beyond trace eviction, and resets topology on /new', async () => {
+  it('queries bounded trace history, preserves topology beyond eviction, and resets topology on /new', async () => {
     const rootSessionId = 'retention-root'
     const childSessionId = 'early-child-retained-outside-trace'
     const events = noisyActivity(rootSessionId, childSessionId)
@@ -57,16 +57,31 @@ describe('M4 bounded terminal process history', () => {
       await waitFor(() => readOutput().includes('turns:1'), 10_000, 'noisy turn completion')
 
       const dropped = events.length - MAX_RETAINED_TERMINAL_EVENTS
-      expect(dropped).toBeGreaterThan(0)
+      expect(dropped).toBe(54)
 
-      await submitLine(input, '/trace')
+      await submitLine(input, '/trace unknown --page 2')
       await waitFor(
-        () => readOutput().includes(`retention: ${dropped} older normalized events evicted locally; total observed ${events.length}`),
+        () => lastView(readOutput(), 'Session Trace').includes('query: unknown · page 2/26 · 2047 retained matches'),
         5_000,
-        'trace eviction disclosure',
+        'filtered trace page',
       )
+      const unknownPage = lastView(readOutput(), 'Session Trace')
+      expect(unknownPage).toContain(`scope: retained 2048/${events.length} normalized events; ${dropped} older evicted locally`)
+      expect(unknownPage).toContain('scope note: filters/search cannot inspect events already evicted from local retention')
+      expect(unknownPage).toContain('1941 unknown retention-root future.notification.1941/retention-noise')
+      expect(unknownPage).toContain('2020 unknown retention-root future.notification.2020/retention-noise')
       // The first child event is older than the retained trace tail.
-      expect(readOutput()).not.toContain('0000 agent.start')
+      expect(unknownPage).not.toContain('0000 agent.start')
+
+      input.write('q')
+      await delay(30)
+      await submitLine(input, '/trace find future.notification.100')
+      await waitFor(
+        () => lastView(readOutput(), 'Session Trace').includes('query: find "future.notification.100" · page 1/1 · 1 retained matches'),
+        5_000,
+        'trace search',
+      )
+      expect(lastView(readOutput(), 'Session Trace')).toContain('0100 unknown retention-root future.notification.100/retention-noise')
 
       input.write('q')
       await delay(30)
