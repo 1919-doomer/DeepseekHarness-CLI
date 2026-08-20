@@ -25,7 +25,7 @@ import { sanitizeTerminalText } from './sanitize.js'
 
 const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
-const FOLD_LIMIT = 1_200
+export const DEFAULT_FOLD_LIMIT = 1_200
 
 export interface TerminalProductOptions {
   debug?: boolean
@@ -233,6 +233,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
 
     const prompt = raw.startsWith('//') ? raw.slice(1) : raw
+    const activityId = nextId('activity')
     setHistory(items => [...items.slice(-99), prompt])
     setTranscript(state => appendUserPrompt(state, sessionId, prompt, nextId('user')))
     setPhase('running')
@@ -243,7 +244,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         sessionId,
         onEvent: event => {
           setEvents(items => [...items, event])
-          setTranscript(state => reduceTerminalEvent(state, event, props.host, props.debug))
+          setTranscript(state => reduceTerminalEvent(state, event, props.host, activityId, props.debug))
         },
       })
       setSessionTurns(value => value + 1)
@@ -395,8 +396,8 @@ function TranscriptBlockView({ block, width }: { block: TranscriptBlock; width: 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold={block.kind === 'user' || block.kind === 'assistant'}>{marker} {title}{state}</Text>
-      {block.text.length > 0 && <Text wrap="wrap">{foldText(block.text, block.foldable === true, width)}</Text>}
-      {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldText(block.detail, true, width)}</Text>}
+      {block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, width)}</Text>}
+      {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, width)}</Text>}
     </Box>
   )
 }
@@ -410,7 +411,7 @@ function ViewPanel({ title, text }: { title: string; text: string }): React.Reac
   )
 }
 
-function takeVisibleBlocks(blocks: readonly TranscriptBlock[], rows: number): readonly TranscriptBlock[] {
+export function takeVisibleBlocks(blocks: readonly TranscriptBlock[], rows: number): readonly TranscriptBlock[] {
   const result: TranscriptBlock[] = []
   let budget = rows
   for (let index = blocks.length - 1; index >= 0 && budget > 0; index--) {
@@ -422,15 +423,20 @@ function takeVisibleBlocks(blocks: readonly TranscriptBlock[], rows: number): re
 }
 
 function estimateRows(block: TranscriptBlock): number {
-  const content = Math.min(FOLD_LIMIT, block.text.length + (block.detail?.length ?? 0))
+  const content = Math.min(DEFAULT_FOLD_LIMIT, block.text.length + (block.detail?.length ?? 0))
   return 2 + Math.max(1, Math.ceil(content / 72))
 }
 
-function foldText(text: string, foldable: boolean, width: number): string {
+export function foldTerminalText(
+  text: string,
+  foldable: boolean,
+  width: number,
+  limit = DEFAULT_FOLD_LIMIT,
+): string {
   const safe = sanitizeTerminalText(text)
-  if (!foldable || safe.length <= FOLD_LIMIT) return safe
-  const head = Math.max(240, Math.min(FOLD_LIMIT - 160, width * 8))
-  const tail = 120
+  if (!foldable || safe.length <= limit) return safe
+  const head = Math.max(240, Math.min(limit - 160, Math.max(20, width) * 8))
+  const tail = Math.min(120, Math.max(40, Math.floor(limit / 5)))
   const hidden = Math.max(0, safe.length - head - tail)
   return `${safe.slice(0, head)}\n… ${hidden} characters folded; content retained in this terminal process …\n${safe.slice(-tail)}`
 }
