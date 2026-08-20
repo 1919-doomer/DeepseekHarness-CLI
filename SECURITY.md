@@ -24,6 +24,8 @@ For non-sensitive bugs, use normal GitHub Issues.
 
 - Untrusted model/tool/repository text must be sanitized before terminal rendering.
 - API keys and full environments must not be included in default logs.
+- Runtime diagnostics must redact exact sensitive environment values against the environment actually supplied to the Harness child. `HarnessRuntimeOptions.env` is an incremental patch for the default launch; an explicit `launchOverride.env` is authoritative, while an override without `env` inherits `process.env`.
+- Diagnostic redaction and child launch environment semantics must not diverge: callers must never need to duplicate the full parent environment merely to preserve credential scrubbing.
 - State-changing tool activity must remain visible to the user.
 - The TUI must not silently override upstream approval decisions.
 - Harness stdout is reserved for JSON-RPC when using the SDK runtime.
