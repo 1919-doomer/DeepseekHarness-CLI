@@ -13,7 +13,7 @@ export interface PlainRendererOptions {
 export class PlainRenderer {
   private readonly output: TextSink
   private readonly debugUnknownEvents: boolean
-  private assistantStreaming = false
+  private assistantLineOpen = false
   private streamedAssistantText = ''
 
   constructor(options: PlainRendererOptions = {}) {
@@ -24,10 +24,9 @@ export class PlainRenderer {
   render(event: NormalizedEvent): void {
     switch (event.kind) {
       case 'assistant-delta':
-        if (!this.assistantStreaming) {
+        if (!this.assistantLineOpen) {
           this.output.write('assistant> ')
-          this.assistantStreaming = true
-          this.streamedAssistantText = ''
+          this.assistantLineOpen = true
         }
         this.streamedAssistantText += event.text
         this.output.write(sanitizeTerminalText(event.text))
@@ -38,43 +37,43 @@ export class PlainRenderer {
         return
 
       case 'tool-call':
-        this.endStreamingLine()
+        this.closeAssistantLine()
         this.output.write(
           `tool> ${sanitizeTerminalText(event.name)} (${sanitizeTerminalText(event.callId)}) ${sanitizeTerminalText(event.arguments)}\n`,
         )
         return
 
       case 'tool-result':
-        this.endStreamingLine()
+        this.closeAssistantLine()
         this.output.write(
           `tool${event.isError ? '!' : '<'} ${sanitizeTerminalText(event.callId)} ${sanitizeTerminalText(event.text)}\n`,
         )
         return
 
       case 'subagent-started':
-        this.endStreamingLine()
+        this.closeAssistantLine()
         this.output.write(
           `agent+ ${sanitizeTerminalText(event.childSessionId)} <- ${sanitizeTerminalText(event.parentSessionId)}${event.provider === undefined ? '' : ` [${sanitizeTerminalText(event.provider)}]`}\n`,
         )
         return
 
       case 'subagent-finished':
-        this.endStreamingLine()
+        this.closeAssistantLine()
         this.output.write(`agent- ${sanitizeTerminalText(event.childSessionId)}\n`)
         return
 
       case 'turn-error':
-        this.endStreamingLine()
+        this.closeAssistantLine()
         this.output.write(`error> ${sanitizeTerminalText(event.message)}\n`)
         return
 
       case 'session-status':
-        if (event.status === 'idle') this.endStreamingLine()
+        if (event.status === 'idle') this.closeAssistantLine()
         return
 
       case 'unknown':
         if (this.debugUnknownEvents) {
-          this.endStreamingLine()
+          this.closeAssistantLine()
           const type = event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`
           this.output.write(`debug> unknown ${sanitizeTerminalText(event.method)}${type}\n`)
         }
@@ -87,31 +86,38 @@ export class PlainRenderer {
   }
 
   finish(): void {
-    this.endStreamingLine()
+    this.closeAssistantLine()
+    this.streamedAssistantText = ''
   }
 
   private renderCommittedAssistant(text: string): void {
-    if (!this.assistantStreaming) {
+    if (this.streamedAssistantText.length === 0) {
+      this.closeAssistantLine()
       this.output.write(`assistant> ${sanitizeTerminalText(text)}\n`)
       return
     }
 
     if (text === this.streamedAssistantText) {
-      this.output.write('\n')
+      this.closeAssistantLine()
     } else if (text.startsWith(this.streamedAssistantText)) {
-      this.output.write(`${sanitizeTerminalText(text.slice(this.streamedAssistantText.length))}\n`)
+      const suffix = sanitizeTerminalText(text.slice(this.streamedAssistantText.length))
+      if (this.assistantLineOpen) {
+        this.output.write(`${suffix}\n`)
+        this.assistantLineOpen = false
+      } else if (suffix.length > 0) {
+        this.output.write(`assistant> ${suffix}\n`)
+      }
     } else {
-      this.output.write(`\nassistant(committed)> ${sanitizeTerminalText(text)}\n`)
+      this.closeAssistantLine()
+      this.output.write(`assistant(committed)> ${sanitizeTerminalText(text)}\n`)
     }
 
-    this.assistantStreaming = false
     this.streamedAssistantText = ''
   }
 
-  private endStreamingLine(): void {
-    if (!this.assistantStreaming) return
+  private closeAssistantLine(): void {
+    if (!this.assistantLineOpen) return
     this.output.write('\n')
-    this.assistantStreaming = false
-    this.streamedAssistantText = ''
+    this.assistantLineOpen = false
   }
 }

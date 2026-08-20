@@ -1,6 +1,7 @@
 import { DshcRuntimeError } from '../upstream/errors.js'
 
 export interface CliOptions {
+  command: 'auto' | 'run'
   prompt?: string
   workspace?: string
   provider?: string
@@ -10,6 +11,7 @@ export interface CliOptions {
   activityTimeoutMs?: number
   requestTimeoutMs?: number
   runtimeConfig?: string
+  interactive: boolean
   json: boolean
   debug: boolean
   help: boolean
@@ -18,6 +20,8 @@ export interface CliOptions {
 
 export function parseCliArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
+    command: 'auto',
+    interactive: false,
     json: false,
     debug: false,
     help: false,
@@ -26,7 +30,10 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const positional: string[] = []
   let index = 0
 
-  if (argv[0] === 'run') index++
+  if (argv[0] === 'run') {
+    options.command = 'run'
+    index++
+  }
 
   while (index < argv.length) {
     const arg = argv[index]
@@ -41,6 +48,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
     if (arg === '--version' || arg === '-v') {
       options.version = true
+      index++
+      continue
+    }
+    if (arg === '--interactive') {
+      options.interactive = true
       index++
       continue
     }
@@ -121,25 +133,32 @@ function positiveInteger(raw: string, flag: string): number {
   return value
 }
 
-export const HELP_TEXT = `DeepSeek Harness Console (M1 one-shot mode)
+export const HELP_TEXT = `DeepSeek Harness Console
 
 Usage:
-  dshc [run] [options] <prompt>
-  echo "prompt" | dshc [options]
+  dshc [options]                         Start the persistent interactive loop in a TTY
+  dshc [options] <prompt>                Run one prompt and exit
+  dshc run [options] <prompt>            Explicit one-shot mode
+  echo "prompt" | dshc [options]          Read one prompt from stdin and exit
+  printf "one\\ntwo\\n/exit\\n" | dshc --interactive
 
 Options:
   -C, --workspace <path>          Workspace (default: current directory)
       --provider <id>             Harness provider (default: deepseek-official)
       --model <id>                Harness model (default: deepseek-v4-flash)
-      --session <id>              Explicit session id
+      --session <id>              Initial/one-shot session id
       --max-tokens <n>            Positive output-token cap
       --activity-timeout-ms <n>   Bound receipt-to-idle collection
       --request-timeout-ms <n>    Bound individual JSON-RPC requests
       --runtime-config <path>     Override runtime Cordis config
-      --json                      Emit one machine-readable result object
+      --interactive               Force the persistent loop even when stdin is piped
+      --json                      Emit one machine-readable one-shot result object
       --debug                     Show compatibility and unknown-event diagnostics
   -h, --help                      Show help
   -v, --version                   Show version
 
-M1 is intentionally one-shot. Persistent multi-turn interaction belongs to M2.
+Interactive commands:
+  /help  /status  /session  /new  /clear  /exit
+
+DeepSeek Harness protocol 0.0.1 exposes no prompt-level cancel or session-close request.
 `

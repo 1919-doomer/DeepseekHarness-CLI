@@ -27,6 +27,18 @@ describe('PlainRenderer', () => {
     expect(output).toBe('assistant> hello\n')
   })
 
+  it('preserves streamed-prefix accounting when tool activity breaks the display line', () => {
+    const output = render([
+      { sequence: 0, kind: 'assistant-delta', sessionId: 's', text: 'hel' },
+      { sequence: 1, kind: 'tool-call', sessionId: 's', callId: 'c1', name: 'read', arguments: '{}' },
+      { sequence: 2, kind: 'tool-result', sessionId: 's', callId: 'c1', text: 'ok', isError: false },
+      { sequence: 3, kind: 'assistant-delta', sessionId: 's', text: 'lo' },
+      { sequence: 4, kind: 'assistant-message', sessionId: 's', text: 'hello' },
+    ])
+    expect(output).toBe('assistant> hel\ntool> read (c1) {}\ntool< c1 ok\nassistant> lo\n')
+    expect(output).not.toContain('assistant(committed)>')
+  })
+
   it('sanitizes untrusted tool and assistant content', () => {
     const output = render([
       { sequence: 0, kind: 'tool-call', sessionId: 's', callId: 'c1', name: 'read\u001b[31m', arguments: '{}' },

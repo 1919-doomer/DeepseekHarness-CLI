@@ -1,7 +1,7 @@
-# M1 runtime composition for dshc.
+# dshc runtime composition.
 #
-# This deliberately keeps the agent surface small while proving the official
-# stdio JSON-RPC boundary. stdout belongs exclusively to JSON-RPC: do not add
+# The terminal process owns interaction while this published Harness runtime
+# owns agent semantics. stdout belongs exclusively to JSON-RPC: do not add
 # console loggers or terminal UI plugins here.
 
 - id: sdk-jsonrpc-server

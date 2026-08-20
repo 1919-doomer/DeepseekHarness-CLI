@@ -1,17 +1,19 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
-import { classifyRuntimeError } from '../upstream/errors.js'
+import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
-import { HELP_TEXT, parseCliArgs } from './args.js'
+import { HELP_TEXT, parseCliArgs, type CliOptions } from './args.js'
+import { runInteractiveLoop } from './interactive.js'
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
-  let options
+  let options: CliOptions
   try {
     options = parseCliArgs(argv)
+    validateModeOptions(options)
   } catch (error) {
     writeError(error)
     return 1
@@ -26,6 +28,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0
   }
 
+  if (shouldRunInteractive(options)) {
+    return runInteractiveMode(options)
+  }
+
   let prompt = options.prompt
   if (prompt === undefined && !process.stdin.isTTY) {
     try {
@@ -36,11 +42,35 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
   }
   if (prompt === undefined || prompt.trim().length === 0) {
-    process.stderr.write('dshc: a prompt is required in M1 one-shot mode. Use --help for usage.\n')
+    process.stderr.write('dshc: a prompt is required in one-shot mode. Use `dshc` without `run` to start the interactive loop.\n')
     return 1
   }
 
-  const runtime = new HarnessRuntime({
+  return runOneShot(options, prompt)
+}
+
+function shouldRunInteractive(options: CliOptions): boolean {
+  if (options.command === 'run' || options.json) return false
+  if (options.interactive) return true
+  if (options.prompt !== undefined) return false
+  return process.stdin.isTTY === true
+}
+
+function validateModeOptions(options: CliOptions): void {
+  if (!options.interactive) return
+  if (options.command === 'run') {
+    throw new DshcRuntimeError('`run` and `--interactive` select conflicting modes.', 'configuration')
+  }
+  if (options.prompt !== undefined) {
+    throw new DshcRuntimeError('`--interactive` cannot be combined with a positional one-shot prompt.', 'configuration')
+  }
+  if (options.json) {
+    throw new DshcRuntimeError('`--json` is a one-shot output mode and cannot be combined with `--interactive`.', 'configuration')
+  }
+}
+
+function createRuntime(options: CliOptions): HarnessRuntime {
+  return new HarnessRuntime({
     workspace: options.workspace,
     provider: options.provider,
     model: options.model,
@@ -49,6 +79,41 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     activityTimeoutMs: options.activityTimeoutMs,
     requestTimeoutMs: options.requestTimeoutMs,
   })
+}
+
+async function runInteractiveMode(options: CliOptions): Promise<number> {
+  const runtime = createRuntime(options)
+  let primaryFailure = false
+  let exitCode = 0
+
+  try {
+    const result = await runInteractiveLoop(runtime, {
+      initialSessionId: options.sessionId,
+      debug: options.debug,
+    })
+    exitCode = result.exitCode
+  } catch (error) {
+    primaryFailure = true
+    writeError(error)
+    exitCode = 1
+  } finally {
+    try {
+      await runtime.close()
+    } catch (error) {
+      if (!primaryFailure && exitCode === 0) {
+        writeError(error)
+        exitCode = 1
+      } else if (options.debug) {
+        process.stderr.write(`dshc: cleanup: ${safeErrorMessage(error)}\n`)
+      }
+    }
+  }
+
+  return exitCode
+}
+
+async function runOneShot(options: CliOptions, prompt: string): Promise<number> {
+  const runtime = createRuntime(options)
   const renderer = options.json ? undefined : new PlainRenderer({ debugUnknownEvents: options.debug })
   const signals = installSignalHandlers(runtime, {
     onSignal: (signal) => {
