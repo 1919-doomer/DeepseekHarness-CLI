@@ -2,7 +2,7 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：pre-alpha。M1 runtime integration、M2 持续多轮交互与 M3 终端产品层/first-party plugin plane 均已实现并通过跨平台验证；下一阶段是 M4 可靠性、安全与兼容性强化。尚未发布到 npm。**
+**当前状态：pre-alpha。M1-M3 已完成。M4 的 coding baseline、零配置仓库工作流、workspace sandbox、终端安全门禁与长会话有界 retention 已实现；兼容性诊断与 debugger 强化仍在进行。尚未发布到 npm。**
 
 [English](README.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
@@ -16,34 +16,32 @@ DeepSeek Harness 是插件优先的 Agent Runtime。`dshc` 是它的终端控制
 
 ## 现在已经能做什么
 
-M3 在不改变 Harness 协议语义的前提下，把 M2 的持续 prompt loop 提升成结构化终端产品：
+M4 默认路径已经从最小 demo composition 升级为 Harness-native coding runtime：
 
 ```text
-TTY 用户
- -> Ink terminal product
- -> first-party terminal plugin host
- -> normalized transcript / views / status
- -> 一个持续存在的 Harness runtime
- -> 多轮默认复用同一 session
- -> receipt / ordered events / idle
- -> 可选 /new 切换 session
- -> 干净恢复终端并关闭 runtime
+cd repository
+ -> dshc
+ -> Harness filesystem / search / platform shell / subagents / todo
+ -> workspace-write sandbox + ask approval policy
+ -> Ink terminal product / plain compatibility paths
+ -> bounded local transcript + trace retention
+ -> clean runtime teardown
 ```
 
 当前能力包括：
 
-- Ink 7 + React 19 结构化 TTY 界面，同时保留已验证的 Node 22.19/24 基线；
+- Ink 7 + React 19 结构化 TTY 界面，保持 Node 22.19/24 基线；
 - 一个 Harness runtime 支撑持续多轮交互，active session 默认保持稳定；
-- resize-aware transcript、prompt editor、历史导航与自适应状态栏；
-- `Enter` 提交，`↑/↓` 浏览 prompt history，`Ctrl+J` 插入换行；
+- 从仓库 cwd 直接启动即可使用 Harness-owned `read`、`write`、`edit`、`glob`、`grep`、POSIX Bash / Windows PowerShell、subagent 与 todo；
+- filesystem 与 shell 共用上游 `workspace-write` sandbox policy；`danger-full-access` 绝不是隐式 fallback；
+- approval policy 保持 `ask`；protocol `0.0.1` 没有 dshc 可用的 server→client approval transport，因此无法获得的升级请求会 fail closed；
+- resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
-- first-party terminal plugin API v1：command、renderer、view、status segment 使用统一确定性 registry；
-- tool/subagent 专用 renderer 与 unknown event 的安全 generic fallback；
-- 大段 tool/output 自动折叠，并明确提示折叠内容而不是静默丢失；
-- Capability Explorer 显示已验证 runtime metadata，并明确标注无法从协议获得的插件清单；
-- `/trace` 与 `/agents` 只从公开、可观测的 normalized events 构建；
-- terminal control/bidi 注入防护、secret-redacted diagnostics 与异常安全的 alternate-screen 恢复；
-- M1/M2 的 one-shot、stdin pipe、JSON 与非 TTY `--interactive` 脚本模式全部保留。
+- first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
+- activity/trace/transcript/topology 使用有界本地 retention，并明确披露 eviction；
+- ESC/CSI/OSC/C1/bidi 终端注入防护、secret-redacted diagnostics 与异常安全的 alternate-screen 恢复；
+- `dshc doctor` 只做兼容性/启动 preflight，只执行 `initialize`，绝不发送模型 prompt；
+- one-shot、stdin pipe、JSON 与非 TTY `--interactive` 脚本模式全部保留。
 
 ## 源码使用
 
@@ -52,8 +50,12 @@ corepack enable
 corepack prepare pnpm@11.7.0 --activate
 pnpm install --frozen-lockfile
 
-# 先按正常 DeepSeek Harness 方式配置 provider 环境。
-# 在 TTY 中不带 positional prompt 直接启动，即进入 M3 终端产品。
+# provider key 尚未配置时也可以先做 preflight；doctor 只报告凭据是否存在。
+pnpm dev -- doctor
+pnpm dev -- doctor --json
+
+# 真正进行模型任务前再按正常 DeepSeek Harness 方式配置 provider 环境。
+# 在 TTY 中不带 positional prompt 直接启动，即进入终端产品。
 pnpm dev
 ```
 
@@ -74,9 +76,19 @@ TTY 中的主要命令：
 
 如果确实要向模型发送以 `/` 开头的文本，使用 `//...`。
 
-### one-shot 与脚本兼容模式
+### Doctor
 
-非 TTY/plain 路径有意保持独立，不依赖 Ink：
+`dshc doctor` 不创建 session，也不调用 `session/prompt`。它会用 PASS/WARN/FAIL/UNKNOWN 检查 Node、workspace、runtime config、固定 DSH 包版本、provider/model 选择、DeepSeek 凭据存在性、TTY/raw-mode、公开 `initialize` handshake、server/protocol identity、M4 默认 sandbox/approval 以及 dshc 本地 retention policy。
+
+```bash
+pnpm dev -- doctor
+pnpm dev -- doctor --workspace ./some-repo
+pnpm dev -- doctor --json
+```
+
+它不会打印 credential value、长度、前缀、fingerprint 或 environment dump。使用 `--runtime-config` 时会明确标记 override，因为自定义 composition 可能不再符合 shipped M4 capability/sandbox/approval 事实。硬配置/兼容性错误返回非 0；缺少 key、非 TTY 等属于 warning，而不是伪造 runtime failure。
+
+### one-shot 与脚本兼容模式
 
 ```bash
 pnpm dev -- "inspect this repository"
@@ -105,23 +117,25 @@ printf "first prompt\nsecond prompt\n/exit\n" | pnpm dev -- --interactive
 
 已验证基线仍为 DeepSeek Harness `0.1.0-rc.8`、SDK server `deepseek-harness-sdk-runtime`、protocol `0.0.1`、Node `^22.19.0 || >=24`、pnpm `11.7.0`。
 
-M3 没有增加任何新的 wire method。当前协议依然没有 per-prompt cancel、per-session close，也没有 authoritative full runtime-plugin inventory。因此：
+`dshc` 不增加私有 wire method。当前协议依然没有 per-prompt cancel、per-session close、可用的 server→client approval request flow，也没有 authoritative full runtime-plugin inventory。因此：
 
-- `session/prompt` 仍只视为 enqueue receipt，不伪装成某个 assistant result；
-- 每次 activity 从匹配的 durable receipt 一直观察到 root `idle`；
+- `session/prompt` 仍只视为 enqueue receipt；
+- 每次 activity 从匹配 durable receipt 一直观察到 root `idle`；
 - `/new` 只改变本地选中的 session；
-- active turn 中 Ctrl+C 会关闭整个 Harness runtime，不宣称“单个 prompt 已取消”；
-- `/plugins` 对 Harness runtime plugin inventory 明确显示 partial/unavailable，而不是猜测；
+- active turn 中 Ctrl+C 会关闭整个 Harness runtime；
+- `doctor` 在公开 `initialize` 后停止，不会触发模型调用；
+- 无法获得的权限升级会 fail closed，而不是由终端层伪造批准；
+- `/plugins` 对 runtime plugin inventory 明确显示 partial/unavailable；
 - `/trace` 不重建、不暴露 hidden reasoning；
-- M3 本地生成的 `activityId` 只用于区分终端展示块，不是上游 message/turn/causal id。
+- 本地 `activityId` 只用于终端展示分组，不是上游 message/turn/causal id。
 
 详见 [协议与上游兼容](docs/PROTOCOL.md)。
 
 ## first-party terminal plugin plane
 
-M3 是在 M1/M2 已经证明真实需求之后，才正式抽象终端插件层。内置命令、event renderer、view 与 status segment 都通过同一个确定性 `TerminalPluginHost` 注册。
+终端插件层目前只支持 first-party。内置 command、event renderer、view 与 status segment 都通过确定性 `TerminalPluginHost` 注册。
 
-这目前有意**不是**一个允许任意 npm/Node package 加载的社区插件生态。未经隔离的第三方 Node 包天然拥有很宽的机器权限，因此 third-party loading 会等到 M4/M6 的安全与隔离设计成熟后再讨论。
+这有意**不是**允许任意 npm/Node package 直接加载的社区插件生态。未经隔离的第三方 Node 包天然拥有宽泛机器权限，因此 third-party loading 会等 M4/M6 的隔离设计真正成立后再开放。
 
 ## 验证
 
@@ -132,7 +146,7 @@ Required CI 不需要真实 provider secret，并阻塞验证：
 - Ubuntu latest / Node 24；
 - Ubuntu latest / Node 22.19.0。
 
-每个 Runtime job 都会编译 Ink/React 产品层。正常测试还会用可注入的 TTY-like streams 真正驱动 Ink 产品，覆盖 raw-mode ownership、同 session 两轮 prompt、Capability Explorer、resize、alternate-screen 恢复与 `/exit`。原有 fake-runtime 生命周期测试与发布版 Harness one-shot/两轮 smoke 继续保留，model traffic 由本地 deterministic stub 接管。
+正常 gate 覆盖 injected-TTY 产品测试、fake-runtime lifecycle/security 与 bounded-retention。官方发布版 Harness smoke 覆盖 one-shot、持续交互、仓库 read/edit/search/shell、workspace sandbox denial/escalation，以及 built `dshc doctor --json`。doctor smoke 会主动删除 `DEEPSEEK_API_KEY` 并把模型 endpoint 指向不可达地址；仍能成功意味着 preflight 没有发出模型请求。
 
 ## 架构
 
@@ -141,7 +155,7 @@ Terminal user
     │
     ▼
  dshc
- ├─ CLI mode routing
+ ├─ CLI mode routing + doctor preflight
  ├─ Ink TTY product / plain fallback
  ├─ first-party terminal plugin host
  ├─ normalized transcript / trace / topology
@@ -162,7 +176,7 @@ Terminal user
 
 ## 下一阶段
 
-- **M4**：可靠性、兼容性、安全与长会话强化；
+- **M4**：完成 Session Debugger/trace navigation、failure drill-down 与 alpha 前 upstream compatibility re-validation；
 - **M5**：公开 alpha；
 - **M6**：安全的社区扩展生态与高级 capability views。
 
