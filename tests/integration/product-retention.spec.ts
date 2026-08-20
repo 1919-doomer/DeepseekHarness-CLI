@@ -77,9 +77,9 @@ describe('M4 bounded terminal process history', () => {
 
       input.write('q')
       await delay(30)
-      await submitLine(input, '/trace find future.notification.100')
+      await submitLine(input, '/trace find future.notification.100/retention-noise')
       await waitFor(
-        () => lastView(readOutput(), 'Session Trace').includes('query: find "future.notification.100" · page 1/1 · 1 retained matches'),
+        () => lastView(readOutput(), 'Session Trace').includes('query: find "future.notification.100/retention-noise" · page 1/1 · 1 retained matches'),
         5_000,
         'trace search',
       )
