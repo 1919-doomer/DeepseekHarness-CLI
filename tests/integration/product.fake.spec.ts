@@ -15,9 +15,20 @@ const ALT_SCREEN_OFF = '\u001B[?1049l'
 class TestInput extends PassThrough {
   isTTY = true
   isRaw = false
+  referenced = false
 
   setRawMode(mode: boolean): this {
     this.isRaw = mode
+    return this
+  }
+
+  ref(): this {
+    this.referenced = true
+    return this
+  }
+
+  unref(): this {
+    this.referenced = false
     return this
   }
 }
@@ -95,6 +106,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     try {
       await waitFor(() => readOutput().includes('DeepSeek Harness Console'))
       await waitFor(() => input.isRaw)
+      expect(input.referenced).toBe(true)
       expect(readOutput()).toContain(ALT_SCREEN_ON)
 
       input.write('first product turn\r')
@@ -130,7 +142,8 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
         totalTurns: 2,
         sessionId: 'm3-product-session',
       })
-      expect(input.isRaw).toBe(false)
+      await waitFor(() => !input.isRaw)
+      expect(input.referenced).toBe(false)
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
       expect(readOutput()).not.toContain('private-reasoning-must-not-render')
       expect(readError()).toBe('')
