@@ -59,17 +59,19 @@ describe('M4 bounded terminal process history', () => {
       const dropped = events.length - MAX_RETAINED_TERMINAL_EVENTS
       expect(dropped).toBe(54)
 
-      await submitLine(input, '/trace unknown --page 2')
+      // Query the oldest retained page so the real Ink view stays compact while
+      // still exercising command-driven paging and absolute numbering.
+      await submitLine(input, '/trace unknown --page 137')
       await waitFor(
-        () => lastView(readOutput(), 'Session Trace').includes('query: unknown · page 2/103 · 2047 retained matches'),
+        () => lastView(readOutput(), 'Session Trace').includes('query: unknown · page 137/137 · 2047 retained matches'),
         5_000,
         'filtered trace page',
       )
       const unknownPage = lastView(readOutput(), 'Session Trace')
       expect(unknownPage).toContain(`scope: retained 2048/${events.length} normalized events; ${dropped} older evicted locally`)
       expect(unknownPage).toContain('scope note: filters/search cannot inspect events already evicted from local retention')
-      expect(unknownPage).toContain('2061 unknown retention-root future.notification.2061/retention-noise')
-      expect(unknownPage).toContain('2080 unknown retention-root future.notification.2080/retention-noise')
+      expect(unknownPage).toContain('0054 unknown retention-root future.notification.54/retention-noise')
+      expect(unknownPage).toContain('0060 unknown retention-root future.notification.60/retention-noise')
       // The first child event is older than the retained trace tail.
       expect(unknownPage).not.toContain('0000 agent.start')
 
