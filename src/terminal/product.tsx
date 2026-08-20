@@ -32,6 +32,10 @@ export interface TerminalProductOptions {
   initialSessionId?: string
   host?: TerminalPluginHost
   useAlternateScreen?: boolean
+  stdin?: NodeJS.ReadStream
+  stdout?: NodeJS.WriteStream
+  stderr?: NodeJS.WriteStream
+  interactive?: boolean
 }
 
 export interface TerminalProductResult {
@@ -50,6 +54,9 @@ export async function runTerminalProduct(
   const metadata = await runtime.start()
   const host = options.host ?? createDefaultTerminalHost()
   const initialSessionId = options.initialSessionId ?? createSessionId()
+  const stdin = options.stdin ?? process.stdin
+  const stdout = options.stdout ?? process.stdout
+  const stderr = options.stderr ?? process.stderr
   const alternate = options.useAlternateScreen ?? true
   let alternateEntered = false
   let instance: ReturnType<typeof render> | undefined
@@ -81,7 +88,7 @@ export async function runTerminalProduct(
 
   try {
     if (alternate) {
-      process.stdout.write(ALT_SCREEN_ON)
+      stdout.write(ALT_SCREEN_ON)
       alternateEntered = true
     }
     process.once('SIGINT', onInt)
@@ -97,7 +104,14 @@ export async function runTerminalProduct(
         onProgress={(totalTurns, sessionId) => { latest = { totalTurns, sessionId } }}
         onFinish={finish}
       />,
-      { exitOnCtrlC: false, patchConsole: false },
+      {
+        stdin,
+        stdout,
+        stderr,
+        interactive: options.interactive,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
     )
 
     const result = await finished
@@ -110,7 +124,7 @@ export async function runTerminalProduct(
     process.off('SIGINT', onInt)
     process.off('SIGTERM', onTerm)
     instance?.unmount()
-    if (alternateEntered) process.stdout.write(ALT_SCREEN_OFF)
+    if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
   }
 }
 
