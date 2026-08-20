@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality / Node 24 / Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: Enable pnpm 11.7.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  runtime:
+    name: Runtime / ${{ matrix.os }} / Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '24.x'
+          - os: windows-latest
+            node: '24.x'
+          - os: macos-latest
+            node: '24.x'
+          - os: ubuntu-latest
+            node: '22.19.0'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Enable pnpm 11.7.0
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Fake-runtime protocol and lifecycle tests
+        run: pnpm test
+      - name: Official DSH runtime keyless smoke
+        run: pnpm test:official-runtime
