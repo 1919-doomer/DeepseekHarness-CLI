@@ -59,6 +59,7 @@ Never import private Harness implementation objects into terminal/plugin modules
 - Local slash commands are intercepted before the model boundary; malformed local commands remain local errors.
 - `//text` sends a literal slash-prefixed prompt.
 - Ctrl+C closes the whole owned runtime while upstream lacks prompt cancellation.
+- SIGINT/SIGTERM ownership begins before runtime startup. A close request during workspace/version/launch/initialize work is terminal: startup must not later publish a live client or successful metadata, and repeated close calls remain idempotent.
 
 ## M3 terminal plugin discipline
 
@@ -115,9 +116,9 @@ This test is part of normal `pnpm test`, so the Runtime matrix exercises it on W
 
 ### Fake-runtime subprocess integration
 
-The deterministic JSON-RPC subprocess suite covers durable receipt ownership, pinned upstream event ordering, descendant-session traffic, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX active-turn SIGINT/SIGTERM, receipt-to-idle timeout semantics, malformed response, transport loss, crash, redaction and bounded shutdown.
+The deterministic JSON-RPC subprocess suite covers durable receipt ownership, pinned upstream event ordering, descendant-session traffic, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX startup and active-turn SIGINT/SIGTERM, close-during-initialize ownership, receipt-to-idle timeout semantics, malformed response, transport loss, crash, redaction and bounded shutdown.
 
-The fake runtime should model the pinned Harness ordering closely enough to catch frontend projection mistakes. In particular, an assembled `assistant/message` precedes tool execution for that step; later steps may produce additional assistant commits in the same run interval.
+The fake runtime should model the pinned Harness ordering closely enough to catch frontend projection mistakes. In particular, an assembled `assistant/message` precedes tool execution for that step; later steps may produce additional assistant commits in the same run interval. Lifecycle fixtures may deliberately delay initialize so tests can prove that close cannot race startup into resurrecting an owned child.
 
 ### Official-runtime smoke
 
@@ -154,7 +155,7 @@ Release blockers include:
 - hidden state-changing tool activity;
 - UI behavior that weakens upstream approval/sandbox semantics;
 - descendant session output silently impersonating root output;
-- orphaned processes;
+- orphaned processes, including clients created by an interrupted startup after close has already been requested;
 - alternate-screen state not restored after failure;
 - unbounded practical output growth;
 - arbitrary unisolated third-party plugin loading.
