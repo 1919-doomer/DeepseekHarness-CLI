@@ -59,15 +59,21 @@ export function cropTerminalText(value: string, width: number): string {
   return `${prefixByCells(value, budget - 1)}…`
 }
 
+/**
+ * Cell slicing is also capped by grapheme count so a pathological run of
+ * zero-width clusters/newlines cannot bypass a practical output budget.
+ */
 export function prefixByCells(value: string, maxCells: number): string {
   if (maxCells <= 0) return ''
   let result = ''
   let cells = 0
+  let count = 0
   for (const grapheme of splitGraphemes(value)) {
     const next = graphemeCellWidth(grapheme)
-    if (cells + next > maxCells) break
+    if (cells + next > maxCells || count >= maxCells) break
     result += grapheme
     cells += next
+    count++
   }
   return result
 }
@@ -77,12 +83,14 @@ export function suffixByCells(value: string, maxCells: number): string {
   const graphemes = splitGraphemes(value)
   let result = ''
   let cells = 0
+  let count = 0
   for (let index = graphemes.length - 1; index >= 0; index--) {
     const grapheme = graphemes[index]!
     const next = graphemeCellWidth(grapheme)
-    if (cells + next > maxCells) break
+    if (cells + next > maxCells || count >= maxCells) break
     result = grapheme + result
     cells += next
+    count++
   }
   return result
 }
