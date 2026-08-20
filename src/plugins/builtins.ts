@@ -3,6 +3,7 @@ import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { terminalBlockId } from '../terminal/transcript.js'
 import {
   TERMINAL_PLUGIN_API_VERSION,
+  type TerminalAgentTopologyEntry,
   type TerminalCommandContext,
   type TerminalPluginSpec,
   type TerminalRenderContext,
@@ -32,8 +33,8 @@ function corePlugin(): TerminalPluginSpec {
       { name: 'new', summary: 'Select a fresh Harness session without restarting the runtime', execute: () => ({ kind: 'new-session' }) },
       { name: 'clear', summary: 'Clear local presentation only; Harness history is unchanged', execute: () => ({ kind: 'clear' }) },
       { name: 'plugins', aliases: ['capabilities'], summary: 'Inspect verified runtime metadata and active terminal adapters', execute: () => ({ kind: 'view', viewId: 'capabilities' }) },
-      { name: 'trace', summary: 'Open the normalized event timeline; hidden reasoning is never reconstructed', execute: () => ({ kind: 'view', viewId: 'trace' }) },
-      { name: 'agents', summary: 'Show current root/descendant topology derived from public events', execute: () => ({ kind: 'view', viewId: 'agents' }) },
+      { name: 'trace', summary: 'Open the bounded normalized event timeline; hidden reasoning is never reconstructed', execute: () => ({ kind: 'view', viewId: 'trace' }) },
+      { name: 'agents', summary: 'Show current root/descendant topology projected from public events', execute: () => ({ kind: 'view', viewId: 'agents' }) },
       { name: 'exit', aliases: ['quit'], summary: 'Close the owned Harness runtime and exit', execute: () => ({ kind: 'exit' }) },
     ],
     views: [
@@ -82,7 +83,7 @@ function toolMutations(event: NormalizedEvent, context: TerminalRenderContext): 
         id: terminalBlockId('tool', context.activityId, event.sessionId, event.callId),
         kind: 'tool',
         title: scopedTitle(`tool · ${sanitizeTerminalText(event.name)}`, event.sessionId, context.rootSessionId),
-        text: sanitizeTerminalText(event.arguments),
+        text: event.arguments,
         state: 'running',
         foldable: true,
         sessionId: event.sessionId,
@@ -95,7 +96,7 @@ function toolMutations(event: NormalizedEvent, context: TerminalRenderContext): 
       kind: 'patch',
       id: terminalBlockId('tool', context.activityId, event.sessionId, event.callId),
       patch: {
-        detail: sanitizeTerminalText(event.text),
+        detail: event.text,
         state: event.isError ? 'error' : 'success',
         foldable: true,
       },
@@ -112,8 +113,8 @@ function agentMutations(event: NormalizedEvent, context: TerminalRenderContext):
         id: terminalBlockId('agent', context.activityId, event.parentSessionId, event.childSessionId),
         kind: 'agent',
         title: event.provider === undefined ? 'subagent' : `subagent · ${sanitizeTerminalText(event.provider)}`,
-        text: sanitizeTerminalText(event.childSessionId),
-        detail: `parent ${sanitizeTerminalText(event.parentSessionId)}`,
+        text: event.childSessionId,
+        detail: `parent ${event.parentSessionId}`,
         state: 'running',
         sessionId: event.parentSessionId,
         activityId: context.activityId,
@@ -162,8 +163,26 @@ function renderCapabilities(context: TerminalViewContext): string {
 }
 
 function renderTrace(context: TerminalViewContext): string {
-  if (context.events.length === 0) return 'No normalized runtime events have been observed in this terminal process yet.'
-  return context.events.slice(-120).map((event, index) => formatTraceEvent(event, context.events.length - Math.min(120, context.events.length) + index)).join('\n')
+  const retention = context.retention
+  if (context.events.length === 0) {
+    return retention !== undefined && retention.droppedEventCount > 0
+      ? `No retained normalized events. ${retention.droppedEventCount} older events were evicted from local trace retention.`
+      : 'No normalized runtime events have been observed in this terminal process yet.'
+  }
+
+  const visible = context.events.slice(-120)
+  const absoluteStart = retention === undefined
+    ? context.events.length - visible.length
+    : retention.totalEventCount - visible.length
+  const lines = visible.map((event, index) => formatTraceEvent(event, absoluteStart + index))
+  const notes: string[] = []
+  if (retention !== undefined && retention.droppedEventCount > 0) {
+    notes.push(`retention: ${retention.droppedEventCount} older normalized events evicted locally; total observed ${retention.totalEventCount}`)
+  }
+  if (context.events.length > visible.length) {
+    notes.push(`view: showing newest ${visible.length} of ${context.events.length} retained events`)
+  }
+  return notes.length === 0 ? lines.join('\n') : `${notes.join('\n')}\n\n${lines.join('\n')}`
 }
 
 export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.sequence): string {
@@ -171,10 +190,10 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
   switch (event.kind) {
     case 'session-status': return `${prefix} session ${short(event.sessionId)} ${event.status}`
     case 'user-message': return `${prefix} user ${short(event.sessionId)} ${preview(event.text)}`
-    case 'assistant-delta': return `${prefix} assistant.stream ${short(event.sessionId)} +${event.text.length} chars`
-    case 'assistant-message': return `${prefix} assistant.commit ${short(event.sessionId)} ${event.text.length} chars`
+    case 'assistant-delta': return `${prefix} assistant.stream ${short(event.sessionId)} +${event.text.length} retained chars`
+    case 'assistant-message': return `${prefix} assistant.commit ${short(event.sessionId)} ${event.text.length} retained chars`
     case 'tool-call': return `${prefix} tool.call ${short(event.sessionId)} ${sanitizeTerminalText(event.name)} ${short(event.callId)}`
-    case 'tool-result': return `${prefix} tool.${event.isError ? 'error' : 'result'} ${short(event.sessionId)} ${short(event.callId)} ${event.text.length} chars`
+    case 'tool-result': return `${prefix} tool.${event.isError ? 'error' : 'result'} ${short(event.sessionId)} ${short(event.callId)} ${event.text.length} retained chars`
     case 'subagent-started': return `${prefix} agent.start ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'subagent-finished': return `${prefix} agent.finish ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'turn-error': return `${prefix} turn.error ${short(event.sessionId)} ${preview(event.message)}`
@@ -184,23 +203,14 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
 }
 
 function renderAgents(context: TerminalViewContext): string {
-  type Agent = { parent: string; provider?: string; status: 'running' | 'finished' }
-  const agents = new Map<string, Agent>()
+  const topology = context.agentTopology ?? deriveTopologyFromEvents(context.events)
+  const agents = new Map<string, TerminalAgentTopologyEntry>()
   const children = new Map<string, string[]>()
 
-  for (const event of context.events) {
-    if (event.kind !== 'subagent-started' && event.kind !== 'subagent-finished') continue
-    const previous = agents.get(event.childSessionId)
-    const parent = event.parentSessionId
-    agents.set(event.childSessionId, {
-      parent,
-      ...(event.kind === 'subagent-started' && event.provider !== undefined
-        ? { provider: event.provider }
-        : previous?.provider === undefined ? {} : { provider: previous.provider }),
-      status: event.kind === 'subagent-started' ? 'running' : 'finished',
-    })
-    const siblings = children.get(parent) ?? []
-    if (!siblings.includes(event.childSessionId)) children.set(parent, [...siblings, event.childSessionId])
+  for (const entry of topology) {
+    agents.set(entry.childSessionId, entry)
+    const siblings = children.get(entry.parentSessionId) ?? []
+    if (!siblings.includes(entry.childSessionId)) children.set(entry.parentSessionId, [...siblings, entry.childSessionId])
   }
 
   const root = context.session.sessionId
@@ -214,7 +224,7 @@ function renderAgents(context: TerminalViewContext): string {
         continue
       }
       const agent = agents.get(child)
-      if (agent === undefined || agent.parent !== parent) continue
+      if (agent === undefined || agent.parentSessionId !== parent) continue
       reachable.add(child)
       lines.push(
         `${'  '.repeat(depth)}└─ ${sanitizeTerminalText(child)} · ${agent.status}`
@@ -226,7 +236,27 @@ function renderAgents(context: TerminalViewContext): string {
 
   walk(root, 1, new Set([root]))
   if (reachable.size === 0) lines.push('  └─ no descendant activity observed for this session')
+  if ((context.retention?.droppedTopologyEntryCount ?? 0) > 0) {
+    lines.push(`  retention: ${context.retention!.droppedTopologyEntryCount} older topology entries evicted; view may be partial`)
+  }
   return lines.join('\n')
+}
+
+function deriveTopologyFromEvents(events: readonly NormalizedEvent[]): readonly TerminalAgentTopologyEntry[] {
+  const agents = new Map<string, TerminalAgentTopologyEntry>()
+  for (const event of events) {
+    if (event.kind !== 'subagent-started' && event.kind !== 'subagent-finished') continue
+    const previous = agents.get(event.childSessionId)
+    agents.set(event.childSessionId, {
+      childSessionId: event.childSessionId,
+      parentSessionId: event.parentSessionId,
+      ...(event.kind === 'subagent-started' && event.provider !== undefined
+        ? { provider: event.provider }
+        : previous?.provider === undefined ? {} : { provider: previous.provider }),
+      status: event.kind === 'subagent-started' ? 'running' : 'finished',
+    })
+  }
+  return [...agents.values()]
 }
 
 function statusMessage(context: TerminalCommandContext): string {
