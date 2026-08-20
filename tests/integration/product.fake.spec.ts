@@ -109,11 +109,11 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(input.referenced).toBe(true)
       expect(readOutput()).toContain(ALT_SCREEN_ON)
 
-      input.write('first product turn\r')
+      await submitLine(input, 'first product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 1)
       await waitFor(() => readOutput().includes('hello'))
 
-      input.write('second product turn\r')
+      await submitLine(input, 'second product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 2)
       await waitFor(() => readOutput().includes('turns:2'))
 
@@ -121,7 +121,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(records).toHaveLength(2)
       expect(records.map(record => record.sessionId)).toEqual(['m3-product-session', 'm3-product-session'])
 
-      input.write('/plugins\r')
+      await submitLine(input, '/plugins')
       await waitFor(() => readOutput().includes('Capability Explorer'))
       expect(readOutput()).toContain('partial/unavailable on SDK protocol 0.0.1')
       expect(readOutput()).toContain('prompt cancel: unavailable')
@@ -134,7 +134,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       output.emit('resize')
       await delay(50)
 
-      input.write('/exit\r')
+      await submitLine(input, '/exit')
       const result = await product
       expect(result).toEqual({
         exitCode: 0,
@@ -153,6 +153,12 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 15_000)
 })
+
+async function submitLine(input: TestInput, text: string): Promise<void> {
+  input.write(text)
+  await delay(30)
+  input.write('\r')
+}
 
 async function promptRecords(logPath: string): Promise<Array<{ sessionId: string }>> {
   try {
