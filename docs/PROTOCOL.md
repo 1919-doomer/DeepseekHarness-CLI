@@ -4,9 +4,9 @@ This document records the public DeepSeek Harness boundary that `dshc` depends o
 
 Last reviewed and exercised in CI: **2026-08-20**.
 
-## Validated M1 baseline
+## Validated M1/M2 baseline
 
-M1 is pinned to DeepSeek Harness `0.1.0-rc.8` and the current SDK server protocol identity:
+M1 and M2 are pinned to:
 
 - DeepSeek Harness packages: `0.1.0-rc.8`;
 - `@deepseek-ai/cordis`: `4.0.1`;
@@ -15,128 +15,114 @@ M1 is pinned to DeepSeek Harness `0.1.0-rc.8` and the current SDK server protoco
 - Node: `^22.19.0 || >=24.0.0`;
 - pnpm: `11.7.0`.
 
-The exact dependency closure is committed in `pnpm-lock.yaml`. Startup checks reject an unexpected SDK/runtime package version or server protocol identity instead of silently guessing compatibility.
+The exact dependency closure is committed in `pnpm-lock.yaml`. Startup rejects unexpected SDK/runtime package versions or server protocol identity instead of guessing compatibility.
 
-The credential-free official-runtime smoke is green on:
+Required credential-free runtime validation is green on Windows latest / Node 24, macOS latest / Node 24, Ubuntu latest / Node 24, and Ubuntu latest / Node 22.19.0.
 
-- Windows latest / Node 24;
-- macOS latest / Node 24;
-- Ubuntu latest / Node 24;
-- Ubuntu latest / Node 22.19.0.
+`dshc` uses public package/runtime surfaces only: `@deepseek-ai/dsh-sdk-client`, the published `dsh-jsonrpc-agent` entry point from `@deepseek-ai/dsh-sdk-jsonrpc-demo`, the public JSON-RPC server, and the external Cordis composition in `runtime/cordis.yml`.
 
-M1 uses only public package/runtime surfaces: `@deepseek-ai/dsh-sdk-client`, the published `dsh-jsonrpc-agent` entry point from `@deepseek-ai/dsh-sdk-jsonrpc-demo`, the public JSON-RPC server, and a small external Cordis composition under `runtime/cordis.yml`.
-
-## Transport
-
-The SDK protocol uses newline-delimited JSON-RPC 2.0 over caller-owned stdin/stdout. Harness stdout is protocol-only; human diagnostics belong on the `dshc` side or stderr.
-
-The M1 process model is:
+## Process and transport
 
 ```text
 dshc process
     │
-    │ stdin/stdout JSON-RPC
+    │ newline-delimited JSON-RPC 2.0 over stdin/stdout
     ▼
 official dsh-jsonrpc-agent
     │
     └─ runtime/cordis.yml
 ```
 
-`src/upstream/` owns all launch/version/wire adaptation. Terminal code consumes normalized local events instead of private Harness objects.
+Harness stdout is protocol-only. Human terminal output belongs to `dshc`; runtime diagnostics belong on stderr. `src/upstream/` owns launch/version/wire adaptation, while terminal code consumes normalized local events.
 
-## Request surface
-
-At the validated baseline the public client-to-runtime requests are:
+## Public request surface used by dshc
 
 | Method | Purpose | Semantics used by dshc |
 |---|---|---|
-| `initialize` | configure workspace/provider/model | handshake; returns server identity |
-| `session/prompt` | queue a user message | returns an enqueue receipt (`messageId`), not an assistant result |
-| `shutdown` | request runtime shutdown | followed by bounded SDK process teardown when needed |
+| `initialize` | configure workspace/provider/model | one runtime handshake; returns server identity |
+| `session/prompt` | queue a user message | enqueue receipt (`messageId`), not an assistant result |
+| `shutdown` | request runtime shutdown | followed by bounded SDK/process teardown where necessary |
 
-## Notification surface
+The runtime emits `session.event`, `session.status`, `subagent.started`, and `subagent.finished` notifications used by the M1/M2 projection.
 
-The runtime can emit:
+## Activity ownership is receipt-to-idle, not prompt/result RPC
 
-| Method | Purpose |
-|---|---|
-| `session.event` | durable session-log event envelope |
-| `session.status` | whole-agent `running` / `idle` transition |
-| `subagent.started` | descendant start notification |
-| `subagent.finished` | descendant completion notification where supported |
-
-M1 subscribes before prompting, waits for the matching durable `agent/inbox/spliced` receipt, then projects subsequent root/descendant notifications until the root session reports `idle`. This mirrors the ownership interval used by the official high-level SDK without inventing strict prompt/response causality.
-
-## Event projection rules
-
-M1 normalizes the public event stream into terminal-facing state.
-
-Rules:
-
-1. preserve SDK notification order;
-2. scope unrelated global session traffic out of the active session tree;
-3. render `text-delta` streaming as ephemeral visible output;
-4. treat the committed assistant message as authoritative and avoid duplicate rendering;
-5. keep tool call/result and subagent lifecycle visible;
-6. do **not** surface reasoning deltas as normal assistant text;
-7. retain terminal turn failures separately from later `idle` state;
-8. count unknown event vocabulary for diagnostics and degrade safely;
-9. never invent an event merely because the UI would like one.
-
-## Prompt ownership is not prompt/result RPC
-
-`session/prompt` confirms that a user message was queued. Its `messageId` does not identify a later assistant message.
-
-The M1 activity interval is:
+For each turn `dshc` subscribes before prompting, captures the returned `messageId`, waits until the matching durable `agent/inbox/spliced` receipt is observed, then consumes the ordered session-tree stream until the root session reports `idle`.
 
 ```text
 subscribe session tree
  -> enqueue prompt
  -> observe matching durable inbox receipt
- -> consume ordered notifications
+ -> consume ordered root/descendant notifications
  -> stop at root session.status(idle)
 ```
 
-Steering, injected context, queued work or descendants can contribute before idle. `dshc` therefore uses terms such as activity/turn interval rather than exposing a false `prompt -> exact response` protocol abstraction.
+The receipt does not identify a later assistant message. Steering, injected context, queued work, tools, or descendants may contribute before idle. UI wording must not imply a stronger one-request/one-response contract.
 
-## Cancellation, timeout and shutdown
+## M2 multi-turn semantics
 
-The validated public protocol still has **no per-prompt cancel** and **no per-session close** request.
+M2 reuses one initialized `HarnessRuntime` and repeatedly calls the same supported session/prompt path.
 
-Therefore M1:
+- The active session id remains stable across ordinary turns, so Harness reconstructs prior conversation state for later requests.
+- `/new` creates a new local session id and selects it for future prompts without restarting the runtime.
+- The old session is **not** closed by `/new`; protocol `0.0.1` exposes no per-session close method, so it remains runtime-owned until process shutdown.
+- Local commands (`/help`, `/status`, `/session`, `/new`, `/clear`, `/exit`) are intercepted before the Harness boundary and are never sent as model prompts.
+- `//text` is the explicit escape for a literal prompt beginning with `/`.
+- Piped `--interactive` input is processed line-by-line in the same persistent runtime and is used by deterministic CI.
 
-- bounds request and activity waits;
-- reports activity timeout without claiming the model turn was cancelled;
-- makes SIGINT/SIGTERM close the owned Harness runtime, not a fictitious single prompt;
-- relies on the official SDK shutdown sequence and bounded process escalation;
-- treats transport/runtime failure separately from a model turn error.
+## Event and renderer rules
 
-A future official cancel method belongs behind `src/upstream/` and must replace, not disguise, the current coarse process-level fallback.
+1. Preserve SDK notification order.
+2. Scope unrelated global session traffic out of the active session tree.
+3. Render text deltas as visible ephemeral output; do not surface reasoning deltas as normal assistant text.
+4. Treat committed assistant messages as authoritative while avoiding duplicate text already streamed.
+5. A display-line break caused by tool/subagent output must **not** discard the accumulated streamed assistant prefix; otherwise the later committed message would be printed twice.
+6. Keep tool call/result and subagent lifecycle visible.
+7. Retain turn failures separately from later `idle` state.
+8. Unknown vocabulary degrades safely and is available in debug diagnostics.
+9. Sanitize untrusted terminal control and bidi sequences at the rendering boundary.
+
+## Cancellation, EOF, timeout, and shutdown
+
+The validated protocol still has **no per-prompt cancel** and **no per-session close** request.
+
+Therefore:
+
+- activity timeout reports an unresolved turn without claiming cancellation;
+- Ctrl+C during an active interactive turn closes the entire owned Harness runtime and exits with signal-style status where the host exposes POSIX signals;
+- Ctrl+C must never be described as successful prompt cancellation;
+- EOF while idle exits cleanly; already-read scripted work is allowed to finish before clean exit;
+- `/clear` affects local terminal presentation only and does not delete Harness history;
+- `/exit` performs the normal whole-runtime close path;
+- transport/runtime failure remains distinct from a model turn error.
+
+A future official prompt-cancel or session-close method should be implemented behind `src/upstream/` and then exposed truthfully by the terminal layer.
+
+## Credential-free contract gates
+
+Required CI has three layers:
+
+**Unit/projection tests** cover command parsing, session selection, normalized events, terminal sanitization, and streamed/committed folding.
+
+**Fake-runtime subprocess tests** cover initialize validation, receipt ownership, ordering, unrelated-session filtering, multi-turn same-session reuse, `/new`, EOF, POSIX active-turn SIGINT, activity timeout, malformed protocol, child crash/EOF, secret redaction, and bounded shutdown.
+
+**Official-runtime smoke tests** launch the published `dsh-jsonrpc-agent` with a real Harness composition and route the DeepSeek adapter to a local deterministic HTTP model stub. CI exercises both the M1 one-shot path and an actual two-turn `dshc --interactive` subprocess, verifying that the second provider request carries expanded same-session history. No paid provider call or real API key is required.
 
 ## Compatibility policy
 
-DeepSeek Harness remains developer preview. Before each milestone, issue #17 requires a fresh upstream check.
+DeepSeek Harness remains developer preview. Before each milestone, perform a fresh upstream contract check. If the public boundary changes:
 
-When the public boundary changes:
-
-1. reproduce the change in fixture/official-runtime tests;
-2. update only `src/upstream/` where possible;
+1. reproduce it in fixture/official-runtime tests;
+2. isolate adaptation under `src/upstream/` where possible;
 3. add a regression test;
-4. update this validated baseline;
-5. fail clearly on unsupported identities instead of silently reinterpreting fields.
-
-## M1 contract tests
-
-Required CI is credential-free and contains two layers:
-
-**Fake-runtime subprocess tests** cover initialize validation, receipt ownership, ordering, unrelated-session filtering, text vs reasoning chunks, tool/subagent projection, activity timeout, malformed protocol, child crash/EOF, secret redaction and bounded shutdown.
-
-**Official-runtime keyless smoke** launches the published `dsh-jsonrpc-agent`, initializes the real Harness composition, routes the DeepSeek adapter to a local deterministic HTTP model stub, observes committed output and idle, then performs clean shutdown. No provider secret or paid model call is required.
+4. update the validated range here;
+5. fail clearly on unsupported identities rather than silently reinterpreting fields.
 
 ## Primary upstream sources
 
 - `deepseek-ai/deepseek-harness/package.json`
 - `packages/sdk/protocol/README.md`
+- `packages/sdk/client/src/api.ts`
 - `packages/sdk/client/README.md`
 - `packages/sdk/server/README.md`
 - `packages/examples/jsonrpc-demo/README.md`
