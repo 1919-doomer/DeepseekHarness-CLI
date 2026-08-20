@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
 const tempRoots: string[] = []
-const cliEntry = fileURLToPath(new URL('../../src/cli/bin.ts', import.meta.url))
+const cliEntry = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
 
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -53,7 +53,7 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
     }
   }, 30_000)
 
-  it('runs the actual dshc one-shot command through the published runtime', async () => {
+  it('runs the built dshc one-shot distribution entrypoint through the published runtime', async () => {
     const root = await testWorkspace()
     const modelRequests: Record<string, unknown>[] = []
     const stub = await startModelStub('m1-cli-ok', modelRequests)
@@ -62,8 +62,6 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       const result = await runProcess(
         process.execPath,
         [
-          '--import',
-          'tsx',
           cliEntry,
           '--workspace',
           root,

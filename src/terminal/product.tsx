@@ -9,7 +9,9 @@ import type {
   TerminalCommandContext,
   TerminalCommandOutcome,
   TerminalRuntimePhase,
+  TerminalStatusSegmentSpec,
   TerminalViewContext,
+  TerminalViewSpec,
   TranscriptBlock,
 } from '../plugins/api.js'
 import { createDefaultTerminalHost } from '../plugins/builtins.js'
@@ -154,7 +156,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [activeView, setActiveView] = useState<string | undefined>()
   const [history, setHistory] = useState<readonly string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number | undefined>()
+  const [commandBusy, setCommandBusy] = useState(false)
   const runningRef = useRef(false)
+  const commandRunningRef = useRef(false)
   const interruptingRef = useRef(false)
   const totalTurnsRef = useRef(0)
   const sessionRef = useRef(sessionId)
@@ -221,6 +225,15 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
         return
       case 'view':
+        if (props.host.resolveView(outcome.viewId) === undefined) {
+          setTranscript(state => appendSystemMessage(
+            state,
+            `terminal command requested unknown view: ${outcome.viewId}`,
+            'terminal plugin error',
+            nextId('view-error'),
+          ))
+          return
+        }
         setActiveView(outcome.viewId)
         return
       case 'new-session': {
@@ -246,23 +259,43 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         finish(0, false)
         return
     }
-  }, [finish, nextId, props.metadata.protocolVersion, sessionId])
+  }, [finish, nextId, props.host, props.metadata.protocolVersion, sessionId])
 
   const runCommand = useCallback(async (raw: string): Promise<boolean> => {
     const parsed = parseTerminalCommand(raw)
     if (parsed === undefined) return false
     const command = props.host.resolveCommand(parsed.name)
     if (command === undefined) {
-      setTranscript(state => appendSystemMessage(state, `unknown command /${parsed.name}; use /help`, 'command', nextId('command')))
+      setTranscript(state => appendSystemMessage(
+        state,
+        `unknown or invalid command /${parsed.name}; use /help`,
+        'command',
+        nextId('command'),
+      ))
       return true
     }
-    const outcome = await command.execute(commandContext(), parsed.args)
-    await applyOutcome(outcome)
+
+    commandRunningRef.current = true
+    setCommandBusy(true)
+    try {
+      const outcome = await command.execute(commandContext(), parsed.args)
+      await applyOutcome(outcome)
+    } catch (error) {
+      setTranscript(state => appendSystemMessage(
+        state,
+        pluginErrorMessage(error),
+        `command error · /${parsed.name}`,
+        nextId('command-error'),
+      ))
+    } finally {
+      commandRunningRef.current = false
+      setCommandBusy(false)
+    }
     return true
   }, [applyOutcome, commandContext, nextId, props.host])
 
   const submit = useCallback(async (): Promise<void> => {
-    if (runningRef.current) return
+    if (runningRef.current || commandRunningRef.current) return
     const raw = input
     if (raw.trim().length === 0) return
     setInput('')
@@ -276,17 +309,25 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
     const prompt = raw.startsWith('//') ? raw.slice(1) : raw
     const activityId = nextId('activity')
+    const rootSessionId = sessionId
     setHistory(items => [...items.slice(-99), prompt])
-    setTranscript(state => appendUserPrompt(state, sessionId, prompt, nextId('user')))
+    setTranscript(state => appendUserPrompt(state, rootSessionId, prompt, nextId('user')))
     setPhase('running')
     runningRef.current = true
 
     try {
       const result = await props.runtime.run(prompt, {
-        sessionId,
+        sessionId: rootSessionId,
         onEvent: event => {
           setEvents(items => [...items, event])
-          setTranscript(state => reduceTerminalEvent(state, event, props.host, activityId, props.debug))
+          setTranscript(state => reduceTerminalEvent(
+            state,
+            event,
+            props.host,
+            activityId,
+            rootSessionId,
+            props.debug,
+          ))
         },
       })
       setSessionTurns(value => value + 1)
@@ -295,7 +336,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (result.projection.lastTurnError !== undefined) {
         setTranscript(state => appendSystemMessage(
           state,
-          'The Harness turn ended with an observable error. The runtime reported idle and remains owned by this terminal process.',
+          'The Harness turn ended with an observable root-session error. The runtime reported idle and remains owned by this terminal process.',
           'turn',
           nextId('turn-error'),
         ))
@@ -321,7 +362,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (key.escape || key.return || keyInput === 'q') setActiveView(undefined)
       return
     }
-    if (runningRef.current) return
+    if (runningRef.current || commandRunningRef.current) return
 
     if (key.return) {
       void submit()
@@ -379,13 +420,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const status = useMemo(() => {
     const context = commandContext()
     return props.host.orderedStatusSegments()
-      .map(segment => segment.render(context))
+      .map(segment => renderStatusSegmentSafely(segment, context))
       .filter((value): value is string => value !== undefined && value.length > 0)
       .map(sanitizeTerminalText)
       .join(' · ')
   }, [commandContext, props.host])
 
   const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
+  const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
   const bodyRows = Math.max(4, size.rows - 7)
   const visibleBlocks = currentView === undefined ? takeVisibleBlocks(transcript.blocks, bodyRows) : []
 
@@ -400,7 +442,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       <Box flexDirection="column" flexGrow={1} overflow="hidden" marginTop={1}>
         {currentView === undefined
           ? visibleBlocks.map(block => <TranscriptBlockView key={block.id} block={block} width={size.columns} />)
-          : <ViewPanel title={currentView.title} text={currentView.render(viewContext())} />}
+          : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
       </Box>
 
       <Box borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
@@ -411,8 +453,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         {currentView !== undefined
           ? <Text dimColor>Esc / Enter / q · return to transcript</Text>
           : <>
-              <Text dimColor>{phase === 'running' ? 'Harness is running… Ctrl+C closes the whole runtime' : 'Enter submit · ↑/↓ history · Ctrl+J newline · /help'}</Text>
-              <Text>{renderEditor(input, cursor, phase === 'running')}</Text>
+              <Text dimColor>{phase === 'running'
+                ? 'Harness is running… Ctrl+C closes the whole runtime'
+                : commandBusy ? 'Local terminal command is running…'
+                  : 'Enter submit · ↑/↓ history · Ctrl+J newline · /help'}</Text>
+              <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
             </>}
       </Box>
     </Box>
@@ -428,7 +473,6 @@ export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undef
   if (!raw.startsWith('/') || raw.startsWith('//')) return undefined
   const tokens = raw.trim().slice(1).split(/\s+/).filter(Boolean)
   const name = (tokens.shift() ?? '').toLowerCase()
-  if (!/^[a-z][a-z0-9-]*$/.test(name)) return { name, args: tokens }
   return { name, args: tokens }
 }
 
@@ -490,6 +534,29 @@ function renderEditor(value: string, cursor: number, disabled: boolean): string 
   const current = value[cursor] === undefined ? ' ' : sanitizeTerminalText(value[cursor]!)
   const after = sanitizeTerminalText(value.slice(cursor + (value[cursor] === undefined ? 0 : 1)))
   return `❯ ${before}▌${current}${after}`
+}
+
+function renderViewSafely(view: TerminalViewSpec, context: TerminalViewContext): string {
+  try {
+    return view.render(context)
+  } catch (error) {
+    return `Terminal view ${view.id} failed locally: ${pluginErrorMessage(error)}`
+  }
+}
+
+function renderStatusSegmentSafely(
+  segment: TerminalStatusSegmentSpec,
+  context: TerminalCommandContext,
+): string | undefined {
+  try {
+    return segment.render(context)
+  } catch {
+    return `status:${segment.id}:error`
+  }
+}
+
+function pluginErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function crop(value: string, width: number): string {

@@ -37,7 +37,11 @@ export async function runInteractiveLoop(
   const errorOutput = options.error ?? process.stderr
   const terminal = options.terminal ?? (process.stdin.isTTY === true && process.stdout.isTTY === true)
   const state = new InteractiveSessionState(options.initialSessionId)
-  const renderer = new PlainRenderer({ output, debugUnknownEvents: options.debug })
+  const renderer = new PlainRenderer({
+    output,
+    debugUnknownEvents: options.debug,
+    rootSessionId: state.sessionId,
+  })
   const metadata = await runtime.start()
   const rl = createInterface({ input, output, terminal, crlfDelay: Infinity })
   let phase: InteractivePhase = 'input'
@@ -94,6 +98,7 @@ export async function runInteractiveLoop(
       phase = 'running'
       if (terminal) rl.pause()
       try {
+        renderer.setRootSessionId(state.sessionId)
         const result = await runtime.run(action.text, {
           sessionId: state.sessionId,
           onEvent: (event) => renderer.render(event),

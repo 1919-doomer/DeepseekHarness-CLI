@@ -112,21 +112,25 @@ export class HarnessRuntime {
       this.defaultActivityTimeoutMs,
       'activityTimeoutMs',
     )
-    const deadline = Date.now() + activityTimeoutMs
     const subscription = client.subscribeSessionTree(sessionId)
-    const projector = new SessionProjector()
+    const projector = new SessionProjector(sessionId)
     const events: NormalizedEvent[] = []
     const notifications: HarnessNotification[] = []
 
     try {
       const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
       let receiptObserved = false
+      let deadline = Date.now() + activityTimeoutMs
 
       while (true) {
         const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs)
         if (!receiptObserved) {
           if (!isInboxReceipt(notification, sessionId, messageId)) continue
           receiptObserved = true
+          // `activityTimeoutMs` is documented as receipt-to-idle. Waiting for
+          // the durable receipt is bounded by the same value, then the activity
+          // receives a fresh full window once ownership is proven.
+          deadline = Date.now() + activityTimeoutMs
         }
 
         notifications.push(notification)

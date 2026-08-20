@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
-const cliPath = fileURLToPath(new URL('../../src/cli/bin.ts', import.meta.url))
+const cliPath = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
 const tempRoots: string[] = []
 
 afterEach(async () => {
@@ -14,7 +14,7 @@ afterEach(async () => {
 })
 
 describe('official DeepSeek Harness interactive CLI', () => {
-  it('keeps one published Harness runtime/session alive across two dshc turns', async () => {
+  it('keeps one published Harness runtime/session alive across two built dshc turns', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m2-official-'))
     tempRoots.push(root)
     const modelRequests: Record<string, unknown>[] = []
@@ -44,7 +44,7 @@ describe('official DeepSeek Harness interactive CLI', () => {
     const child = spawn(
       process.execPath,
       [
-        '--import', 'tsx/esm', cliPath,
+        cliPath,
         '--interactive',
         '--workspace', root,
         '--session', 'm2-official-session',
