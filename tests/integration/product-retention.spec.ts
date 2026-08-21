@@ -70,10 +70,12 @@ describe('M4 bounded terminal process history', () => {
 
       input.write('q')
       await delay(30)
-      const beforeAgents = readOutput().length
       await submitLine(input, '/agents')
+      // Wait for the view itself, not merely for the id to appear somewhere in
+      // the stream: a command runs asynchronously, so writing the close key
+      // before the view opens leaves it open and swallows the next command.
       await waitFor(
-        () => readOutput().slice(beforeAgents).includes(childSessionId),
+        () => lastView(readOutput(), 'Agent Topology').includes(childSessionId),
         5_000,
         'dedicated topology survives trace eviction',
       )
