@@ -210,7 +210,7 @@ function promptFor(sessionId: string): string {
 
 function writeBanner(output: Writable, metadata: HarnessRuntimeMetadata, sessionId: string): void {
   output.write(
-    `DeepSeek Harness Console ${DSHC_VERSION} · interactive M2\n`
+    `DeepSeek Harness Console ${DSHC_VERSION}\n`
     + `runtime ${sanitizeTerminalText(metadata.serverName)}/${sanitizeTerminalText(metadata.protocolVersion)} · ${sanitizeTerminalText(metadata.model)}\n`
     + `session ${sanitizeTerminalText(sessionId)} · /help for commands\n`,
   )

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DSHC_VERSION } from '../../src/version.js'
 
 const cliPath = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
 const tempRoots: string[] = []
@@ -77,7 +78,9 @@ describe('official DeepSeek Harness interactive CLI', () => {
 
       expect(exit).toEqual({ code: 0, signal: null })
       expect(stderr).toBe('')
-      expect(stdout).toContain('interactive M2')
+      // The banner carries the product name and the shipped version, not an
+      // internal milestone label.
+      expect(stdout).toContain(`DeepSeek Harness Console ${DSHC_VERSION}`)
       expect(stdout).toContain('user> first official turn')
       expect(stdout).toContain('assistant> m2-turn-1')
       expect(stdout).toContain('user> second official turn')
