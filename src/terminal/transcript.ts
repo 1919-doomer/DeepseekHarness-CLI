@@ -338,6 +338,10 @@ function genericEventMutations(
       }] : []
     case 'session-status':
     case 'user-message':
+    case 'session-title':
+      // Session naming metadata: observable in the trace, but not activity the
+      // transcript should present as a turn.
+      return []
     case 'internal':
       return []
   }

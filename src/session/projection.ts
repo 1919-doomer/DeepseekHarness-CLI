@@ -12,6 +12,7 @@ export type NormalizedEvent =
   | { sequence: number; kind: 'subagent-started'; parentSessionId: string; childSessionId: string; provider?: string }
   | { sequence: number; kind: 'subagent-finished'; parentSessionId: string; childSessionId: string }
   | { sequence: number; kind: 'turn-error'; sessionId: string; message: string }
+  | { sequence: number; kind: 'session-title'; sessionId: string; title: string; source?: string }
   | { sequence: number; kind: 'internal'; sessionId?: string; type: string }
   | { sequence: number; kind: 'unknown'; sessionId?: string; method: string; type?: string }
 
@@ -122,6 +123,7 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
     case 'unknown':
       return { ...state, unknownEventCount: state.unknownEventCount + 1 }
     case 'user-message':
+    case 'session-title':
     case 'internal':
       return state
   }
@@ -247,6 +249,20 @@ export function normalizeNotification(notification: HarnessNotification, sequenc
         ?? 'unknown-call',
       text: result.text,
       isError: error !== undefined || result.isError || message?.isError === true,
+    }
+  }
+
+  if (type === 'session/title') {
+    // Session naming metadata, not agent activity. The title is model-authored
+    // text and stays untrusted until a renderer sanitizes it.
+    const source = data === undefined ? undefined : recordField(data, 'source')
+    const kind = stringField(source, 'kind')
+    return {
+      sequence,
+      kind: 'session-title',
+      sessionId,
+      title: stringField(data, 'title') ?? '',
+      ...(kind === undefined ? {} : { source: kind }),
     }
   }
 
