@@ -2,7 +2,7 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：pre-alpha。M1-M3 已完成。M4 的 coding baseline、零配置仓库工作流、workspace sandbox、终端安全门禁与长会话有界 retention 已实现；兼容性诊断与 debugger 强化仍在进行。尚未发布到 npm。**
+**当前状态：pre-alpha。M1–M4 已完成。** Harness-native coding baseline、零配置仓库工作流、workspace sandbox、终端安全门禁、长会话有界 retention、`dshc doctor`、可查询的 session trace debugger 与 alpha 前安全评审均已就位。M4 的验收任务——检视仓库、做一次改动、跑它的测试——已在真实 runtime 上端到端跑通。固定在 DeepSeek Harness `0.1.1-rc.1`。**下一步是 M5：首个可安装的公开 alpha；尚未发布到 npm。**
 
 [English](README.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
@@ -176,7 +176,7 @@ Terminal user
 
 ## 下一阶段
 
-- **M4**：完成 Session Debugger/trace navigation、failure drill-down 与 alpha 前 upstream compatibility re-validation；
+- **M5**：公开 alpha——package/binary 命名、发布自动化、安装与更新文档、兼容性声明；
 - **M5**：公开 alpha；
 - **M6**：安全的社区扩展生态与高级 capability views。
 

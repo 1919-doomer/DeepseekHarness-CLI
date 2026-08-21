@@ -70,9 +70,9 @@ M3 intentionally does **not** load arbitrary third-party Node plugins. The first
 
 Issue #35 continues into M4 for deeper trace/debugger hardening rather than being treated as fully closed by the initial M3 trace/topology slice.
 
-## M4 — Reliability, security and compatibility — next — #13
+## M4 — Reliability, security and compatibility — complete — #13
 
-Make daily use dependable and prepare the terminal/plugin boundaries for alpha-quality scrutiny:
+Completed on 2026-08-21. Made daily use dependable and prepared the terminal/plugin boundaries for alpha-quality scrutiny:
 
 - compatibility/startup diagnostics and `dshc doctor` direction;
 - long-session memory/backpressure/output hardening;
@@ -84,9 +84,11 @@ Make daily use dependable and prepare the terminal/plugin boundaries for alpha-q
 - Windows/POSIX lifecycle coverage, including host-specific interrupt semantics;
 - upstream contract re-validation before alpha.
 
-Security gate: #18. Third-party plugin isolation research: #37.
+Security gate: #18, recorded in [SECURITY-REVIEW.md](SECURITY-REVIEW.md) — no open release blocker. Third-party plugin isolation design: #37, recorded in [PLUGIN-ISOLATION.md](PLUGIN-ISOLATION.md).
 
-## M5 — Public alpha — #14
+The acceptance gate in #13 was executed against the live runtime rather than argued on paper: a real repository was inspected, a bug fixed and its tests run, with DSH owning the tool execution path throughout. Two defects that only that run could expose were fixed as part of it — tool results were parsed against a payload shape the runtime never sends (#84), and one stdin chunk was treated as one keystroke (#86).
+
+## M5 — Public alpha — next — #14
 
 Ship the first installable community preview:
 
