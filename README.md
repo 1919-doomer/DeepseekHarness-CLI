@@ -2,7 +2,7 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: pre-alpha. M1-M3 are complete. M4 coding baseline, zero-config repository workflow, workspace sandboxing, terminal-security gates and bounded long-session retention are implemented; compatibility/debugger hardening is in progress. Not published to npm yet.**
+**Status: pre-alpha. M1-M4 are complete.** The Harness-native coding baseline, zero-config repository workflow, workspace sandboxing, terminal-security gates, bounded long-session retention, `dshc doctor`, the queryable session trace debugger and the pre-alpha security gate are all in. The M4 acceptance task — inspect a repository, make a change, run its tests — has been executed end to end against the live runtime. Pinned to DeepSeek Harness `0.1.1-rc.1`. **M5, the first installable public alpha, is next; not published to npm yet.**
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
@@ -179,8 +179,7 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M4** — finish Session Debugger/trace navigation, failure drill-down and upstream compatibility re-validation;
-- **M5** — public alpha;
+- **M5** — public alpha: package/binary naming, release automation, install/update docs and a compatibility statement;
 - **M6** — safe community extension ecosystem and advanced capability views.
 
 ## License and affiliation
