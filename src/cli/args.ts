@@ -30,8 +30,17 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const positional: string[] = []
   let index = 0
 
-  if (argv[0] === 'run' || argv[0] === 'doctor') {
-    options.command = argv[0]
+  // pnpm and npm forward `--` into argv, so the documented `pnpm dev -- doctor`
+  // arrives as ['--', 'doctor']. A leading `--` in front of an ordinary token
+  // never meant anything the bare token did not already mean, so consume it
+  // before subcommand detection. `dshc -- --dashed-prompt` keeps POSIX
+  // end-of-options semantics, and `dshc run doctor` remains the explicit way to
+  // send a subcommand name to the model as a prompt.
+  if (argv[index] === '--' && !(argv[index + 1] ?? '-').startsWith('-')) index++
+
+  const subcommand = argv[index]
+  if (subcommand === 'run' || subcommand === 'doctor') {
+    options.command = subcommand
     index++
   }
 
