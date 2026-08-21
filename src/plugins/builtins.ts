@@ -279,6 +279,7 @@ function eventSessionIds(event: NormalizedEvent): readonly string[] {
     case 'tool-call':
     case 'tool-result':
     case 'turn-error':
+    case 'session-title':
       return [event.sessionId]
     case 'subagent-started':
     case 'subagent-finished':
