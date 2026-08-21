@@ -43,12 +43,36 @@ export function terminalCellWidth(value: string): number {
   return width
 }
 
+/**
+ * Count the rows a string occupies once the terminal wraps it.
+ *
+ * Dividing total cells by the column count would assume a wide grapheme can be
+ * split across the wrap boundary. A terminal never does that: with one column
+ * left and a two-cell grapheme next, it wraps early and wastes the column. That
+ * assumption under-counts CJK and emoji lines, and under-counting is the
+ * direction that corrupts the frame — the transcript then selects more blocks
+ * than fit and the alternate screen scrolls.
+ */
 export function wrappedTerminalRows(value: string, columns: number): number {
   const width = Math.max(1, columns)
-  return value.split('\n').reduce((rows, line) => {
-    const cells = terminalCellWidth(line)
-    return rows + Math.max(1, Math.ceil(cells / width))
-  }, 0)
+  return value.split('\n').reduce((rows, line) => rows + lineRows(line, width), 0)
+}
+
+function lineRows(line: string, width: number): number {
+  let rows = 1
+  let used = 0
+  for (const grapheme of splitGraphemes(line)) {
+    const cells = graphemeCellWidth(grapheme)
+    // `used > 0` keeps a grapheme wider than the whole terminal on its own row
+    // instead of looping.
+    if (used > 0 && used + cells > width) {
+      rows++
+      used = cells
+      continue
+    }
+    used += cells
+  }
+  return rows
 }
 
 export function cropTerminalText(value: string, width: number): string {
