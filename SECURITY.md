@@ -39,7 +39,7 @@ For non-sensitive bugs, use normal GitHub Issues.
 
 ## M4 validated default
 
-The M4 default composition uses the pinned DeepSeek Harness `0.1.0-rc.8` security seams:
+The M4 default composition uses the pinned DeepSeek Harness `0.1.1-rc.1` security seams:
 
 - `@deepseek-ai/dsh-sandbox-local`;
 - `@deepseek-ai/dsh-sandbox-policy` with `workspace-write`;
@@ -53,3 +53,8 @@ Credential-free official-runtime CI exercises repository-local read/edit/shell w
 Terminal-security CI additionally injects ESC/CSI/OSC-52/BEL/C1/bidi payloads through plain assistant/tool/error output, JSON output, transcript renderer mutations, Ink status/view/event-renderer output, and local command errors. The attacker sequences must never occur raw in captured output, while their visible escaped forms remain diagnosable and dshc-owned alternate-screen controls still restore normally.
 
 These requirements are release blockers for the first public alpha.
+
+## Reviews
+
+- [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) — the pre-alpha security gate (#18): what was checked, how, and what was found.
+- [docs/PLUGIN-ISOLATION.md](docs/PLUGIN-ISOLATION.md) — the isolation design required (#37) before any third-party terminal plugin may be loaded.
