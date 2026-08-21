@@ -1,6 +1,6 @@
 import { constants, realpathSync } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
-import { relative, resolve, sep } from 'node:path'
+import { resolve, win32 } from 'node:path'
 import {
   MAX_RETAINED_ACTIVITY_EVENTS,
   MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
@@ -453,7 +453,7 @@ export function shellTempRootFacts(
   }
 
   const realWorkspace = realPathOrSelf(workspace)
-  const realTemp = realPathOrSelf(resolve(configured))
+  const realTemp = realPathOrSelf(win32.resolve(configured))
 
   if (!containsPath(realWorkspace, realTemp)) {
     findings.push({
@@ -475,19 +475,25 @@ export function shellTempRootFacts(
   })
 }
 
-/** Resolves 8.3 short names and symlinks; falls back to the literal path. */
+/**
+ * Resolves 8.3 short names and symlinks. A path that does not exist — or a
+ * Windows path evaluated on another host, as the tests do — falls back to
+ * win32 normalization so the rule is decided by Windows semantics rather than
+ * by whichever platform happens to be running the check.
+ */
 function realPathOrSelf(target: string): string {
   try {
     return realpathSync.native(target)
   } catch {
-    return resolve(target)
+    return win32.resolve(target)
   }
 }
 
+/** Windows containment, evaluated with win32 semantics on every host. */
 function containsPath(parent: string, child: string): boolean {
-  const offset = relative(parent, child)
+  const offset = win32.relative(parent, child)
   if (offset.length === 0) return true
-  return !offset.startsWith('..') && !offset.startsWith(`..${sep}`) && !/^[a-zA-Z]:/.test(offset)
+  return !offset.startsWith('..') && !/^[a-zA-Z]:/.test(offset)
 }
 
 function ttyFacts(
