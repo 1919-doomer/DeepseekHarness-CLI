@@ -487,7 +487,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
       <Box justifyContent="space-between">
         <Text bold>DeepSeek Harness Console</Text>
-        <Text dimColor>M3 · {DSHC_VERSION}</Text>
+        <Text dimColor>{DSHC_VERSION}</Text>
       </Box>
       <Text dimColor>{sanitizeTerminalText(props.metadata.serverName)}/{sanitizeTerminalText(props.metadata.protocolVersion)}</Text>
 
