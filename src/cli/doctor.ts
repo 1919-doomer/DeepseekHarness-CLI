@@ -1,6 +1,6 @@
-import { constants } from 'node:fs'
+import { constants, realpathSync } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { relative, resolve, sep } from 'node:path'
 import {
   MAX_RETAINED_ACTIVITY_EVENTS,
   MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
@@ -137,6 +137,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   })
 
   const credential = credentialFacts(provider, childEnv, findings)
+  shellTempRootFacts(workspace, childEnv, findings)
   const tty = ttyFacts(stdin, stdout, stderr, childEnv)
   findings.push({
     id: 'terminal',
@@ -420,6 +421,73 @@ function credentialFacts(
       : 'DEEPSEEK_API_KEY is absent; initialize can still be diagnosed, but provider-backed prompts will require a credential.',
   })
   return { provider, environmentVariable: 'DEEPSEEK_API_KEY', present }
+}
+
+/**
+ * The upstream Windows shell sandbox refuses to run when its temp root sits
+ * inside the workspace. Without this check `doctor` reports a healthy machine
+ * and `composition.coding` claims a platform shell, while every shell call
+ * fails — the exact class of startup problem this command exists to catch.
+ *
+ * Paths are resolved to their real form first: on Windows `%TEMP%` is commonly
+ * an 8.3 short name, so the containment is invisible to a textual comparison.
+ * dshc reports the same conclusion as the sandbox; it never enforces it.
+ */
+export function shellTempRootFacts(
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  findings: DoctorFinding[],
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== 'win32') return
+
+  const configured = env.TEMP ?? env.TMP
+  if (configured === undefined || configured.length === 0) {
+    findings.push({
+      id: 'shell.temp-root',
+      status: 'WARN',
+      category: 'environment',
+      summary: 'Neither TEMP nor TMP is set for the Harness child; the platform shell sandbox may be unable to select a temporary root.',
+    })
+    return
+  }
+
+  const realWorkspace = realPathOrSelf(workspace)
+  const realTemp = realPathOrSelf(resolve(configured))
+
+  if (!containsPath(realWorkspace, realTemp)) {
+    findings.push({
+      id: 'shell.temp-root',
+      status: 'PASS',
+      category: 'environment',
+      summary: 'Shell sandbox temporary root resolves outside the workspace.',
+      detail: sanitizeTerminalText(realTemp),
+    })
+    return
+  }
+
+  findings.push({
+    id: 'shell.temp-root',
+    status: 'FAIL',
+    category: 'environment',
+    summary: 'Shell sandbox temporary root resolves inside the workspace, so every platform shell call will fail. Run dshc from a project directory that does not contain the temporary root, or point TEMP outside it.',
+    detail: sanitizeTerminalText(`workspace=${realWorkspace}; temp=${realTemp}`),
+  })
+}
+
+/** Resolves 8.3 short names and symlinks; falls back to the literal path. */
+function realPathOrSelf(target: string): string {
+  try {
+    return realpathSync.native(target)
+  } catch {
+    return resolve(target)
+  }
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const offset = relative(parent, child)
+  if (offset.length === 0) return true
+  return !offset.startsWith('..') && !offset.startsWith(`..${sep}`) && !/^[a-zA-Z]:/.test(offset)
 }
 
 function ttyFacts(
