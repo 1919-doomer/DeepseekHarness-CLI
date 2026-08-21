@@ -118,7 +118,7 @@ Useful options:
 
 ## Protocol truth
 
-The validated baseline remains DeepSeek Harness `0.1.0-rc.8`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.
+The validated baseline remains DeepSeek Harness `0.1.1-rc.1`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.
 
 `dshc` adds no private wire method. The public protocol still has no per-prompt cancel, no per-session close, no active server-to-client approval request flow, and no authoritative full runtime-plugin inventory. Therefore:
 

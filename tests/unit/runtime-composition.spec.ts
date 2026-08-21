@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
+import { TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
 
 const runtimeConfigUrl = new URL('../../runtime/cordis.yml', import.meta.url)
 const packageJsonUrl = new URL('../../package.json', import.meta.url)
@@ -67,7 +68,7 @@ describe('M4 runtime composition', () => {
     const dependencies = packageJson.dependencies ?? {}
 
     for (const { name } of parsePluginEntries(config)) {
-      expect(dependencies[name], `${name} must be direct because dsh-jsonrpc-agent external configs own bare plugins`).toBe('0.1.0-rc.8')
+      expect(dependencies[name], `${name} must be direct because dsh-jsonrpc-agent external configs own bare plugins`).toBe(TESTED_DSH_BASELINE.sdkVersion)
     }
   })
 })

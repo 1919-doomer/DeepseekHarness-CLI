@@ -54,6 +54,7 @@ describe('official DeepSeek Harness interactive CLI', () => {
         env: {
           ...process.env,
           DEEPSEEK_API_KEY: 'dshc-m2-smoke-no-real-call',
+          DSH_SESSION_ROOT: join(root, '.dsh-sessions'),
           DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}`,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
