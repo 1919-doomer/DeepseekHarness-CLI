@@ -112,9 +112,17 @@ function emitCompletedTurn(sessionId, turn) {
     turn: 1,
     step: 1,
     message: {
-      role: 'tool',
-      toolCallId: `call-${turn}`,
-      content: [{ type: 'text', text: 'child result' }],
+      // Mirrors the live DSH payload: the call id and error flag live on the
+      // nested tool-result block, not on the message itself.
+      source: { kind: 'tool', callId: `call-${turn}` },
+      content: [{
+        type: 'tool-result',
+        toolCallId: `call-${turn}`,
+        content: [{ type: 'text', text: 'child result' }],
+        isError: false,
+      }],
+      role: 'user',
+      id: 'fixture-child-result',
     },
   })
   notify('session.status', { sessionId: childSessionId, status: 'idle' })
@@ -127,9 +135,17 @@ function emitCompletedTurn(sessionId, turn) {
     turn,
     step: 1,
     message: {
-      role: 'tool',
-      toolCallId: `call-${turn}`,
-      content: [{ type: 'text', text: 'README content' }],
+      // Mirrors the live DSH payload: the call id and error flag live on the
+      // nested tool-result block, not on the message itself.
+      source: { kind: 'tool', callId: `call-${turn}` },
+      content: [{
+        type: 'tool-result',
+        toolCallId: `call-${turn}`,
+        content: [{ type: 'text', text: 'README content' }],
+        isError: false,
+      }],
+      role: 'user',
+      id: 'fixture-root-result',
     },
   })
   sessionEvent(sessionId, 'step/end', { turn, step: 1 })

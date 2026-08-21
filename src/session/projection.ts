@@ -235,13 +235,18 @@ export function normalizeNotification(notification: HarnessNotification, sequenc
   if (type === 'tool/result') {
     const message = data === undefined ? undefined : recordField(data, 'message')
     const error = data === undefined ? undefined : recordField(data, 'error')
+    const result = extractToolResult(message)
     return {
       sequence,
       kind: 'tool-result',
       sessionId,
-      callId: stringField(message, 'toolCallId') ?? stringField(data, 'callId') ?? 'unknown-call',
-      text: extractContentText(message?.content),
-      isError: error !== undefined || message?.isError === true,
+      callId: result.callId
+        ?? stringField(recordField(message, 'source'), 'callId')
+        ?? stringField(message, 'toolCallId')
+        ?? stringField(data, 'callId')
+        ?? 'unknown-call',
+      text: result.text,
+      isError: error !== undefined || result.isError || message?.isError === true,
     }
   }
 
@@ -277,6 +282,43 @@ export function isInboxReceipt(notification: HarnessNotification, sessionId: str
 
 function isRootSession(state: ProjectionState, sessionId: string): boolean {
   return state.rootSessionId === undefined || state.rootSessionId === sessionId
+}
+
+interface ToolResultParts {
+  callId: string | undefined
+  text: string
+  isError: boolean
+}
+
+/**
+ * A DSH tool result nests its payload: `message.content` carries `tool-result`
+ * blocks, and each block owns the call id, the actual output as its own nested
+ * content array, and the error flag. Reading only the outer array yields an
+ * empty string and a permanently false `isError`, which silently renders failed
+ * tool calls as successes. Plain text blocks are still accepted so a simpler
+ * shape degrades instead of disappearing.
+ */
+function extractToolResult(message: Record<string, unknown> | undefined): ToolResultParts {
+  const content = message?.['content']
+  if (!Array.isArray(content)) return { callId: undefined, text: '', isError: false }
+
+  let callId: string | undefined
+  let isError = false
+  const text: string[] = []
+
+  for (const block of content) {
+    if (!isRecord(block)) continue
+    if (block.type === 'tool-result') {
+      callId ??= typeof block.toolCallId === 'string' ? block.toolCallId : undefined
+      if (block.isError === true) isError = true
+      const nested = extractContentText(block.content)
+      if (nested.length > 0) text.push(nested)
+      continue
+    }
+    if (block.type === 'text' && typeof block.text === 'string') text.push(block.text)
+  }
+
+  return { callId, text: text.join(''), isError }
 }
 
 function extractContentText(value: unknown): string {

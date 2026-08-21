@@ -154,3 +154,89 @@ describe('session projection', () => {
     expect(projector.state.unknownEventCount).toBe(1)
   })
 })
+
+describe('tool result projection against the live DSH payload', () => {
+  // Captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.1 running the `read`
+  // tool. The call id, output text and error flag all live on the nested
+  // tool-result block rather than on the message.
+  function liveToolResult(overrides: {
+    callId?: string
+    text?: string
+    isError?: boolean
+    toolCallId?: string | undefined
+  } = {}) {
+    const callId = overrides.callId ?? 'call_00_live'
+    const block: Record<string, unknown> = {
+      type: 'tool-result',
+      content: [{ type: 'text', text: overrides.text ?? '<content>README</content>' }],
+      isError: overrides.isError ?? false,
+    }
+    if (overrides.toolCallId !== undefined) block.toolCallId = overrides.toolCallId
+    return sessionEvent('tool/result', {
+      turn: 1,
+      step: 1,
+      message: {
+        source: { kind: 'tool', callId },
+        content: [block],
+        role: 'user',
+        id: '4434b4cd-c6c1-4627-97ab-067da69d2bf2',
+      },
+    })
+  }
+
+  it('reads the call id and output out of the nested tool-result block', () => {
+    const event = normalizeNotification(liveToolResult({ toolCallId: 'call_00_live' }))
+    expect(event).toMatchObject({
+      kind: 'tool-result',
+      callId: 'call_00_live',
+      text: '<content>README</content>',
+      isError: false,
+    })
+  })
+
+  it('detects a failed tool call instead of reporting every result as success', () => {
+    const event = normalizeNotification(liveToolResult({
+      toolCallId: 'call_00_boom',
+      callId: 'call_00_boom',
+      text: 'permission denied',
+      isError: true,
+    }))
+    expect(event).toMatchObject({
+      kind: 'tool-result',
+      callId: 'call_00_boom',
+      text: 'permission denied',
+      isError: true,
+    })
+  })
+
+  it('falls back to message.source.callId when the block omits toolCallId', () => {
+    const event = normalizeNotification(liveToolResult({ callId: 'call_00_source_only' }))
+    expect(event).toMatchObject({ kind: 'tool-result', callId: 'call_00_source_only' })
+  })
+
+  it('never reports an unresolved call id or empty output for a real result', () => {
+    const event = normalizeNotification(liveToolResult({ toolCallId: 'call_00_live' }))
+    expect(event).toMatchObject({ kind: 'tool-result' })
+    if (event.kind !== 'tool-result') throw new Error('expected a tool-result projection')
+    expect(event.callId).not.toBe('unknown-call')
+    expect(event.text).not.toBe('')
+  })
+
+  it('still degrades a flat text-block result rather than dropping it', () => {
+    const event = normalizeNotification(sessionEvent('tool/result', {
+      turn: 1,
+      step: 1,
+      message: {
+        role: 'tool',
+        toolCallId: 'call-legacy',
+        content: [{ type: 'text', text: 'legacy output' }],
+      },
+    }))
+    expect(event).toMatchObject({
+      kind: 'tool-result',
+      callId: 'call-legacy',
+      text: 'legacy output',
+      isError: false,
+    })
+  })
+})
