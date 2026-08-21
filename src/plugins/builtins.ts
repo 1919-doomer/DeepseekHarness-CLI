@@ -197,6 +197,7 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
     case 'subagent-started': return `${prefix} agent.start ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'subagent-finished': return `${prefix} agent.finish ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'turn-error': return `${prefix} turn.error ${short(event.sessionId)} ${preview(event.message)}`
+    case 'session-title': return `${prefix} session.title ${short(event.sessionId)}${event.source === undefined ? '' : ` ${sanitizeTerminalText(event.source)}`} ${preview(event.title)}`
     case 'internal': return `${prefix} internal${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.type)}`
     case 'unknown': return `${prefix} unknown${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`
   }
