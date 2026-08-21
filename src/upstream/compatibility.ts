@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { CompatibilityError } from './errors.js'
 
 export const TESTED_DSH_BASELINE = Object.freeze({
-  sdkVersion: '0.1.0-rc.8',
-  runtimePackageVersion: '0.1.0-rc.8',
+  sdkVersion: '0.1.1-rc.1',
+  runtimePackageVersion: '0.1.1-rc.1',
   serverName: 'deepseek-harness-sdk-runtime',
   protocolVersion: '0.0.1',
 })

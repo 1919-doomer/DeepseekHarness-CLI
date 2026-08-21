@@ -115,7 +115,7 @@ printf "first prompt\nsecond prompt\n/exit\n" | pnpm dev -- --interactive
 
 ## 协议边界
 
-已验证基线仍为 DeepSeek Harness `0.1.0-rc.8`、SDK server `deepseek-harness-sdk-runtime`、protocol `0.0.1`、Node `^22.19.0 || >=24`、pnpm `11.7.0`。
+已验证基线仍为 DeepSeek Harness `0.1.1-rc.1`、SDK server `deepseek-harness-sdk-runtime`、protocol `0.0.1`、Node `^22.19.0 || >=24`、pnpm `11.7.0`。
 
 `dshc` 不增加私有 wire method。当前协议依然没有 per-prompt cancel、per-session close、可用的 server→client approval request flow，也没有 authoritative full runtime-plugin inventory。因此：
 

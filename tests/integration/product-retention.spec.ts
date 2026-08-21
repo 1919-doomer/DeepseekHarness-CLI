@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream'
 import { describe, expect, it } from 'vitest'
+import { TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
 import type { NormalizedEvent } from '../../src/session/projection.js'
 import { MAX_RETAINED_TERMINAL_EVENTS } from '../../src/retention.js'
 import { runTerminalProduct } from '../../src/terminal/product.js'
@@ -146,8 +147,8 @@ function inMemoryRuntime(events: readonly NormalizedEvent[]): HarnessRuntime {
         model: 'deepseek-v4-flash',
         serverName: 'deepseek-harness-sdk-runtime',
         protocolVersion: '0.0.1',
-        sdkVersion: '0.1.0-rc.8',
-        runtimePackageVersion: '0.1.0-rc.8',
+        sdkVersion: TESTED_DSH_BASELINE.sdkVersion,
+        runtimePackageVersion: TESTED_DSH_BASELINE.runtimePackageVersion,
       }
     },
     async run(_prompt: string, options: { sessionId?: string; onEvent?: (event: NormalizedEvent) => void }) {

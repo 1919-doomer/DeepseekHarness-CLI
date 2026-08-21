@@ -2,13 +2,13 @@
 
 This document records the public DeepSeek Harness boundary that `dshc` depends on. Upstream documentation remains authoritative.
 
-Last reviewed and exercised in CI: **2026-08-20**.
+Last reviewed and exercised in CI: **2026-08-21**.
 
 ## Validated M1-M3 baseline
 
 The current terminal product remains pinned to:
 
-- DeepSeek Harness packages: `0.1.0-rc.8`;
+- DeepSeek Harness packages: `0.1.1-rc.1`;
 - `@deepseek-ai/cordis`: `4.0.1`;
 - SDK server name: `deepseek-harness-sdk-runtime`;
 - SDK protocol version: `0.0.1`;
@@ -20,6 +20,16 @@ The exact dependency closure is committed in `pnpm-lock.yaml`. Startup rejects u
 Required credential-free validation targets Windows latest / Node 24, macOS latest / Node 24, Ubuntu latest / Node 24, and Ubuntu latest / Node 22.19.0.
 
 `dshc` uses public package/runtime surfaces only: `@deepseek-ai/dsh-sdk-client`, the published `dsh-jsonrpc-agent` entry point from `@deepseek-ai/dsh-sdk-jsonrpc-demo`, the public JSON-RPC server, and the external Cordis composition in `runtime/cordis.yml`.
+
+## Session persistence and identity
+
+Sessions are persisted by `@deepseek-ai/dsh-session-persistence-jsonl` under the root configured in `runtime/cordis.yml`, which defaults to `$DSH_SESSION_ROOT` and otherwise to `<home>/sessions/dshc`. The store is therefore **user-global and shared across workspaces**, not per repository.
+
+Since `0.1.1-rc.1` a persisted session id is bound to the working directory it was created in. Reusing that id from a different cwd fails the turn with an `id collision` error rather than resuming or forking. Consequences:
+
+- `dshc --session <id>` only resumes inside the directory the session was created in;
+- default session ids are random per process, so ordinary use is unaffected;
+- anything that pins a session id across directories — tests especially — must set `DSH_SESSION_ROOT` to its own scratch root, or it will both pollute the user store and eventually collide.
 
 ## Process and transport
 

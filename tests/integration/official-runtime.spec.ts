@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
 const tempRoots: string[] = []
@@ -42,8 +43,8 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       expect(metadata).toMatchObject({
         serverName: 'deepseek-harness-sdk-runtime',
         protocolVersion: '0.0.1',
-        sdkVersion: '0.1.0-rc.8',
-        runtimePackageVersion: '0.1.0-rc.8',
+        sdkVersion: TESTED_DSH_BASELINE.sdkVersion,
+        runtimePackageVersion: TESTED_DSH_BASELINE.runtimePackageVersion,
       })
 
       const result = await runtime.run('Reply with the smoke-test marker.', { sessionId: 'm4-smoke' })
