@@ -12,6 +12,7 @@
 | [ROADMAP.md](ROADMAP.md) | Milestone intent and the curated future-feature backlog |
 | [SECURITY-REVIEW.md](SECURITY-REVIEW.md) | Pre-alpha security gate findings: what was checked, how, and what was found |
 | [PLUGIN-ISOLATION.md](PLUGIN-ISOLATION.md) | Isolation design required before any third-party terminal plugin may be loaded |
+| [TOOL-ACTIVITY-UI.md](TOOL-ACTIVITY-UI.md) | M4.5 contract for tool activity presentation and runtime configuration |
 
 Repository-level policies:
 
