@@ -336,6 +336,24 @@ function genericEventMutations(
           activityId: context.activityId,
         },
       }] : []
+    case 'context-compacted': {
+      // Compaction changes what the model can still see, so it gets a visible
+      // marker rather than disappearing into the internal stream.
+      const tokens = event.shadowedTokens === undefined ? '' : ` · ${event.shadowedTokens} tokens`
+      return [{
+        kind: 'append',
+        block: {
+          id: terminalBlockId('compaction', context.activityId, event.sessionId, String(event.sequence)),
+          kind: 'system',
+          title: `context compacted · ${event.shadowedEvents} earlier events${tokens} replaced by a summary`,
+          text: event.summary,
+          state: 'finished',
+          foldable: true,
+          sessionId: event.sessionId,
+          activityId: context.activityId,
+        },
+      }]
+    }
     case 'session-status':
     case 'user-message':
     case 'session-title':

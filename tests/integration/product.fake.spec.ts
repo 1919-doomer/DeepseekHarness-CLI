@@ -378,6 +378,17 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await submitLine(input, 'produce a long answer')
       await waitForTurn(readOutput, 1)
 
+      // Typing a bare slash lists the commands, built from the live registry.
+      // This viewport only has room for a few, so the rest are counted rather
+      // than clipped by the frame.
+      input.write('/')
+      await delay(200)
+      const menu = readOutput()
+      expect(menu).toContain('/agents')
+      expect(menu).toMatch(/… \d+ more/)
+      input.write('')
+      await delay(150)
+
       // At rest the newest activity is shown and nothing claims to be below.
       expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
 

@@ -27,6 +27,7 @@ export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'subagent-finished'; parentSessionId: string; childSessionId: string }
   | { sequence: number; kind: 'turn-error'; sessionId: string; message: string }
   | { sequence: number; kind: 'session-title'; sessionId: string; title: string; source?: string }
+  | { sequence: number; kind: 'context-compacted'; sessionId: string; shadowedEvents: number; shadowedTokens?: number; summary: string }
   | { sequence: number; kind: 'internal'; sessionId?: string; type: string }
   | { sequence: number; kind: 'unknown'; sessionId?: string; method: string; type?: string }
 )
@@ -181,6 +182,7 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
       return { ...state, unknownEventCount: state.unknownEventCount + 1 }
     case 'user-message':
     case 'session-title':
+    case 'context-compacted':
     case 'internal':
       return state
   }
@@ -338,6 +340,23 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     }
   }
 
+  if (type === 'compaction/summary') {
+    // Compaction replaces part of the conversation the model can see, so it is
+    // state-changing activity and has to be visible. Counts come straight from
+    // the event; an absent token count stays absent rather than being guessed.
+    const shadowed = data?.['shadowedSeqs']
+    return {
+      sequence,
+      kind: 'context-compacted',
+      sessionId,
+      shadowedEvents: Array.isArray(shadowed) ? shadowed.length : 0,
+      ...(numberField(data, 'shadowedTokenCount') === undefined
+        ? {}
+        : { shadowedTokens: numberField(data, 'shadowedTokenCount') }),
+      summary: stringField(data, 'summary') ?? '',
+    }
+  }
+
   if (type === 'session/title') {
     // Session naming metadata, not agent activity. The title is model-authored
     // text and stays untrusted until a renderer sanitizes it.
@@ -366,7 +385,7 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     return { sequence, kind: 'internal', sessionId, type }
   }
 
-  if (type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header' || type === 'request/context') {
+  if (type === 'compaction/start' || type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header' || type === 'request/context') {
     return { sequence, kind: 'internal', sessionId, type }
   }
 
