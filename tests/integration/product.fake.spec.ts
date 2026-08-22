@@ -57,17 +57,17 @@ function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRun
 }
 
 /**
- * The newest rendered frame: everything after the last screen clear. The clear
- * sequence differs by platform, so match any of them rather than assuming the
- * one this machine happens to emit.
+ * Output produced by a fresh render, isolated from everything drawn before it.
+ * Typing and deleting a character forces the product to redraw, so whatever is
+ * currently on screen has to appear in the slice.
  */
-function lastFrame(output: string): string {
-  let start = -1
-  for (const marker of ['[H', '[0f', '[3J']) {
-    const at = output.lastIndexOf(marker)
-    if (at >= 0 && at + marker.length > start) start = at + marker.length
-  }
-  return start < 0 ? output : output.slice(start)
+async function renderedAfterTick(input: TestInput, readOutput: () => string): Promise<string> {
+  const mark = readOutput().length
+  input.write('x')
+  await delay(80)
+  input.write('')
+  await delay(120)
+  return readOutput().slice(mark)
 }
 
 function capture(stream: PassThrough): () => string {
@@ -193,24 +193,24 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
       // Typing redraws the frame on every keystroke, so only the newest frame
       // says whether the sidebar is currently shown.
+      // Ink renders differentially and does not clear the screen per frame on
+      // every platform, so "is it on screen now" cannot be read by splitting
+      // the stream into frames. Force fresh renders instead and ask whether the
+      // sidebar appears in the output they produce.
       await submitLine(input, '/tools')
-      try {
-        await waitFor(() => !lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar hidden')
-      } catch (error) {
-        const out = readOutput()
-        console.log('=== TAIL ===' + JSON.stringify(out.slice(-1200)))
-        console.log('=== FRAME ===' + JSON.stringify(lastFrame(out).slice(0, 900)))
-        throw error
-      }
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
 
       await submitLine(input, '/tools')
-      await waitFor(() => lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar shown again')
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).toContain('calls')
 
       // Narrowing past the threshold collapses it rather than squeezing the
       // transcript.
       output.columns = 70
       output.emit('resize')
-      await waitFor(() => !lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar collapsed when narrow')
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
 
       await submitLine(input, '/exit')
       await product
