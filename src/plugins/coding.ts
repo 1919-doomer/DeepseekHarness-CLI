@@ -65,6 +65,7 @@ function codingToolMutations(event: NormalizedEvent, context: TerminalRenderCont
       foldable: true,
       sessionId: event.sessionId,
       activityId: context.activityId,
+      ...(event.upstreamTime === undefined ? {} : { startedAt: event.upstreamTime }),
     },
   }]
 }

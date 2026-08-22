@@ -114,6 +114,7 @@ function toolMutations(event: NormalizedEvent, context: TerminalRenderContext): 
         foldable: true,
         sessionId: event.sessionId,
         activityId: context.activityId,
+        ...(event.upstreamTime === undefined ? {} : { startedAt: event.upstreamTime }),
       },
     }]
   }
@@ -125,6 +126,7 @@ function toolMutations(event: NormalizedEvent, context: TerminalRenderContext): 
         detail: event.text,
         state: event.isError ? 'error' : 'success',
         foldable: true,
+        ...(event.upstreamTime === undefined ? {} : { endedAt: event.upstreamTime }),
       },
     }]
   }

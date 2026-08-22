@@ -103,6 +103,14 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(readOutput()).toContain('child-read')
       expect(readOutput()).toContain('child result')
       expect(readOutput()).toContain('README content')
+      // Outcome must reach the screen as a glyph next to its word, and the
+      // upstream-derived span must render beside it.
+      expect(readOutput()).toContain('✓')
+      expect(readOutput()).toMatch(/success · \d+(?:ms|\.\ds)/)
+      // The glyph sits at column 0 of the header. Yoga used to compress blocks
+      // when the column ran out of height and lay body text over the header,
+      // eating exactly that prefix, so assert the whole header survives.
+      expect(readOutput()).toMatch(/✓ tool · read · success/)
 
       await submitLine(input, 'second product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 2, 5_000, 'second prompt receipt')
