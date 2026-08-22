@@ -88,6 +88,25 @@ Security gate: #18, recorded in [SECURITY-REVIEW.md](SECURITY-REVIEW.md) — no 
 
 The acceptance gate in #13 was executed against the live runtime rather than argued on paper: a real repository was inspected, a bug fixed and its tests run, with DSH owning the tool execution path throughout. Two defects that only that run could expose were fixed as part of it — tool results were parsed against a payload shape the runtime never sends (#84), and one stdin chunk was treated as one keystroke (#86).
 
+## M4.5 — Daily-use polish — complete — #97
+
+Completed on 2026-08-23. Not a planned milestone: it came out of the first real
+sessions with `0.1.0-preview.1`, where the product was correct and still
+unpleasant to use.
+
+- tool activity framed and given a persistent sidebar, condensed while scrolled back;
+- transcript scrolling, page keys, and a slash-command menu built from the live registry;
+- compaction made visible instead of silently shrinking the context at 80% pressure;
+- `/config`, `/config fork`, `/model`, `/provider`, `/reload` — composition inspection and
+  replacement, each stating the session loss before acting, with no upstream settings
+  schema encoded in dshc;
+- a deployment persona built from the launch itself, and `scout` / `planner` / `reviewer` /
+  `oracle` read-only role subagents mounted on the upstream delegation seam (#111).
+
+Shipped as `0.1.0-preview.4`. Every defect this milestone fixed was found by running the
+product, not by reading it; the recurring lesson is recorded in #97 and
+[SUBAGENT-ROLES.md](SUBAGENT-ROLES.md).
+
 ## M5 — Public alpha — next — #14
 
 Ship the first installable community preview:
