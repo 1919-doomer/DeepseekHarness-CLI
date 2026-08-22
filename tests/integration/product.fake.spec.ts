@@ -194,7 +194,14 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       // Typing redraws the frame on every keystroke, so only the newest frame
       // says whether the sidebar is currently shown.
       await submitLine(input, '/tools')
-      await waitFor(() => !lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar hidden')
+      try {
+        await waitFor(() => !lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar hidden')
+      } catch (error) {
+        const out = readOutput()
+        console.log('=== TAIL ===' + JSON.stringify(out.slice(-1200)))
+        console.log('=== FRAME ===' + JSON.stringify(lastFrame(out).slice(0, 900)))
+        throw error
+      }
 
       await submitLine(input, '/tools')
       await waitFor(() => lastFrame(readOutput()).includes('calls'), 5_000, 'sidebar shown again')
