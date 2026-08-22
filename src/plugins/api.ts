@@ -25,6 +25,17 @@ export type TerminalCommandOutcome =
   | { kind: 'exit' }
   | { kind: 'view'; viewId: string }
   | { kind: 'toggle-tools' }
+  | { kind: 'fork-composition' }
+  /**
+   * Restart the owned runtime with a different selection. Protocol 0.0.1 has no
+   * way to reconfigure a live runtime, so this is the only mechanism, and it
+   * starts a new session — `warning` states that before anything happens.
+   */
+  | {
+      kind: 'restart-runtime'
+      selection: { provider?: string; model?: string; maxTokens?: number; runtimeConfig?: string }
+      summary: string
+    }
 
 export interface TerminalCommandSpec {
   name: string
@@ -109,6 +120,15 @@ export interface TerminalViewContext extends TerminalCommandContext {
   events: readonly NormalizedEvent[]
   /** Optional to preserve API-v1 compatibility for external test/embedding code. */
   retention?: TerminalRetentionSummary
+  /**
+   * Composition dshc launched with, for display. Requested configuration, never
+   * confirmation of what the runtime actually loaded.
+   */
+  composition?: {
+    path: string
+    source: 'shipped-default' | 'override'
+    entries: readonly { id: string; settings: readonly string[] }[]
+  }
   /** Tool activity entry the sidebar has selected, when one is focused. */
   selectedToolKey?: string
   /** Current selected-session topology projection, independent of trace eviction. */
