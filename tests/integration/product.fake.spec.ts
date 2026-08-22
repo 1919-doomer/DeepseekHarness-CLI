@@ -297,6 +297,52 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 20_000)
 
+  it('keeps the prompt hint and status line intact when the frame is tight', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-chrome-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    // A long, wide-character reply is what actually overflows the frame; the
+    // default fixture reply is far too short to reproduce the compression.
+    const runtime = runtimeFor(root, logPath, 'verbose')
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    // Short enough that the transcript cannot fit, which is when Yoga used to
+    // compress the chrome and lay the editor over its own hint.
+    output.rows = 12
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'chrome-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw, 5_000, 'chrome raw-mode ownership')
+      await submitLine(input, 'fill the frame')
+      await waitForTurn(readOutput, 1)
+
+      const rendered = await renderedAfterTick(input, readOutput)
+      // The editor row begins with the prompt marker, so a compressed column
+      // eats the first characters of the hint above it — 'Enter' became
+      // 'r submit' in the report that prompted this test.
+      expect(rendered).toContain('Enter submit')
+      expect(rendered).not.toMatch(/\br submit\b/)
+      // The status line sits between two rules and was eaten the same way.
+      expect(rendered).toContain('turns:1')
+
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
   it('preserves Unicode graphemes through editing, navigation, deletion and submission', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-unicode-editor-'))
     tempRoots.push(root)
