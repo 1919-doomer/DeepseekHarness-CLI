@@ -1,4 +1,4 @@
-import type { NormalizedEvent } from '../session/projection.js'
+import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { terminalBlockId } from '../terminal/transcript.js'
 import {
@@ -226,8 +226,11 @@ export function renderTraceQuery(context: TerminalViewContext, query: TraceQuery
   const retainedStart = retention === undefined
     ? 0
     : Math.max(0, retention.totalEventCount - context.events.length)
+  // Durations are paired across the whole retained tail, not the page, so a
+  // result still reports its span when its call sits on an earlier page.
+  const durations = toolCallDurations(context.events)
   const entries = context.events.map((event, index) => ({ event, absoluteIndex: retainedStart + index }))
-  const matches = entries.filter(entry => matchesTraceQuery(entry.event, entry.absoluteIndex, query))
+  const matches = entries.filter(entry => matchesTraceQuery(entry.event, entry.absoluteIndex, query, durations))
   const totalPages = Math.max(1, Math.ceil(matches.length / TRACE_PAGE_SIZE))
   const pageEnd = Math.max(0, matches.length - (query.page - 1) * TRACE_PAGE_SIZE)
   const pageStart = Math.max(0, pageEnd - TRACE_PAGE_SIZE)
@@ -252,10 +255,15 @@ export function renderTraceQuery(context: TerminalViewContext, query: TraceQuery
     return notes.join('\n')
   }
 
-  return `${notes.join('\n')}\n\n${visible.map(entry => formatTraceEvent(entry.event, entry.absoluteIndex)).join('\n')}`
+  return `${notes.join('\n')}\n\n${visible.map(entry => formatTraceEvent(entry.event, entry.absoluteIndex, durations)).join('\n')}`
 }
 
-function matchesTraceQuery(event: NormalizedEvent, absoluteIndex: number, query: TraceQuery): boolean {
+function matchesTraceQuery(
+  event: NormalizedEvent,
+  absoluteIndex: number,
+  query: TraceQuery,
+  durations?: ReadonlyMap<string, number>,
+): boolean {
   switch (query.mode) {
     case 'all': return true
     case 'errors': return event.kind === 'turn-error' || (event.kind === 'tool-result' && event.isError)
@@ -265,7 +273,7 @@ function matchesTraceQuery(event: NormalizedEvent, absoluteIndex: number, query:
     case 'session': return query.value !== undefined && eventSessionIds(event).includes(query.value)
     case 'find': {
       const needle = query.value?.toLocaleLowerCase() ?? ''
-      return needle.length > 0 && formatTraceEvent(event, absoluteIndex).toLocaleLowerCase().includes(needle)
+      return needle.length > 0 && formatTraceEvent(event, absoluteIndex, durations).toLocaleLowerCase().includes(needle)
     }
   }
 }
@@ -322,7 +330,11 @@ function unknownSummary(events: readonly NormalizedEvent[]): string {
   return `unknown summary: ${rows.join(' · ')}${extra}; meanings are not inferred`
 }
 
-export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.sequence): string {
+export function formatTraceEvent(
+  event: NormalizedEvent,
+  timelineIndex = event.sequence,
+  durations?: ReadonlyMap<string, number>,
+): string {
   const prefix = String(timelineIndex).padStart(4, '0')
   switch (event.kind) {
     case 'session-status': return `${prefix} session ${short(event.sessionId)} ${event.status}`
@@ -330,9 +342,12 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
     case 'assistant-delta': return `${prefix} assistant.stream ${short(event.sessionId)} +${event.text.length} retained chars`
     case 'assistant-message': return `${prefix} assistant.commit ${short(event.sessionId)} ${event.text.length} retained chars`
     case 'tool-call': return `${prefix} tool.call ${short(event.sessionId)} ${sanitizeTerminalText(event.name)} ${short(event.callId)}`
-    case 'tool-result': return event.isError
-      ? `${prefix} tool.error ${short(event.sessionId)} ${short(event.callId)} ${preview(event.text)}`
-      : `${prefix} tool.result ${short(event.sessionId)} ${short(event.callId)} ${event.text.length} retained chars`
+    case 'tool-result': {
+      const elapsed = formatElapsed(durations?.get(toolProjectionKey(event.sessionId, event.callId)))
+      return event.isError
+        ? `${prefix} tool.error ${short(event.sessionId)} ${short(event.callId)}${elapsed} ${preview(event.text)}`
+        : `${prefix} tool.result ${short(event.sessionId)} ${short(event.callId)}${elapsed} ${event.text.length} retained chars`
+    }
     case 'subagent-started': return `${prefix} agent.start ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'subagent-finished': return `${prefix} agent.finish ${short(event.childSessionId)} <- ${short(event.parentSessionId)}`
     case 'turn-error': return `${prefix} turn.error ${short(event.sessionId)} ${preview(event.message)}`
@@ -340,6 +355,15 @@ export function formatTraceEvent(event: NormalizedEvent, timelineIndex = event.s
     case 'internal': return `${prefix} internal${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.type)}`
     case 'unknown': return `${prefix} unknown${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`
   }
+}
+
+/**
+ * Elapsed upstream time between a tool call and its result. Blank when upstream
+ * did not timestamp both ends, so an unknown span is never shown as zero.
+ */
+function formatElapsed(ms: number | undefined): string {
+  if (ms === undefined) return ''
+  return ms < 1000 ? ` ${ms}ms` : ` ${(ms / 1000).toFixed(1)}s`
 }
 
 function renderAgents(context: TerminalViewContext): string {

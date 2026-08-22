@@ -2,7 +2,21 @@ import type { HarnessNotification } from '@deepseek-ai/dsh-sdk-client'
 
 export type SessionActivity = 'starting' | 'initializing' | 'idle' | 'running' | 'shutting-down' | 'closed' | 'failed'
 
-export type NormalizedEvent =
+/**
+ * Public facts carried on the `session.event` envelope, kept distinct from
+ * anything dshc computes locally. Absent on notifications that are not session
+ * events, and individually absent when upstream omits them.
+ */
+export interface UpstreamEventEnvelope {
+  /** Upstream event timestamp in ms. Not when dshc observed the notification. */
+  upstreamTime?: number
+  /** Upstream event sequence. Distinct from dshc's local `sequence` counter. */
+  upstreamSeq?: number
+  /** Upstream sequences this event derives from; a result links back to its call. */
+  sourceEventSeqs?: readonly number[]
+}
+
+export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'session-status'; sessionId: string; status: 'running' | 'idle' }
   | { sequence: number; kind: 'user-message'; sessionId: string; text: string }
   | { sequence: number; kind: 'assistant-delta'; sessionId: string; text: string }
@@ -15,6 +29,7 @@ export type NormalizedEvent =
   | { sequence: number; kind: 'session-title'; sessionId: string; title: string; source?: string }
   | { sequence: number; kind: 'internal'; sessionId?: string; type: string }
   | { sequence: number; kind: 'unknown'; sessionId?: string; method: string; type?: string }
+)
 
 export interface ToolProjection {
   sessionId: string
@@ -57,6 +72,48 @@ export function initialProjectionState(rootSessionId?: string): ProjectionState 
 
 export function toolProjectionKey(sessionId: string, callId: string): string {
   return `${sessionId.length}:${sessionId}${callId}`
+}
+
+/**
+ * Pair each tool result with its call and report the elapsed upstream time.
+ *
+ * The span comes from the timestamps upstream puts on the events themselves,
+ * never from when dshc observed them: a locally measured interval would fold in
+ * transport and scheduling delay and present a dshc-invented number as a fact
+ * about the tool. Pairing prefers `sourceEventSeqs`, which is upstream's own
+ * causal link, and falls back to (sessionId, callId) — never callId alone.
+ *
+ * A pair missing either timestamp, or one that runs backwards, is reported as
+ * unknown rather than guessed.
+ */
+export function toolCallDurations(events: readonly NormalizedEvent[]): ReadonlyMap<string, number> {
+  const startedBySeq = new Map<number, number>()
+  const startedByKey = new Map<string, number>()
+  const durations = new Map<string, number>()
+
+  for (const event of events) {
+    if (event.kind === 'tool-call') {
+      if (event.upstreamTime === undefined) continue
+      startedByKey.set(toolProjectionKey(event.sessionId, event.callId), event.upstreamTime)
+      if (event.upstreamSeq !== undefined) startedBySeq.set(event.upstreamSeq, event.upstreamTime)
+      continue
+    }
+    if (event.kind !== 'tool-result' || event.upstreamTime === undefined) continue
+
+    const key = toolProjectionKey(event.sessionId, event.callId)
+    let started: number | undefined
+    for (const seq of event.sourceEventSeqs ?? []) {
+      started = startedBySeq.get(seq)
+      if (started !== undefined) break
+    }
+    started ??= startedByKey.get(key)
+    if (started === undefined) continue
+
+    const elapsed = event.upstreamTime - started
+    if (elapsed >= 0) durations.set(key, elapsed)
+  }
+
+  return durations
 }
 
 export function reduceProjection(state: ProjectionState, event: NormalizedEvent): ProjectionState {
@@ -149,6 +206,35 @@ export class SessionProjector {
 }
 
 export function normalizeNotification(notification: HarnessNotification, sequence = 0): NormalizedEvent {
+  const event = classifyNotification(notification, sequence)
+  const envelope = readEnvelope(notification)
+  return Object.keys(envelope).length === 0 ? event : { ...event, ...envelope }
+}
+
+/**
+ * Reads the envelope facts upstream publishes alongside every session event.
+ * Each is optional: a missing field stays missing rather than being defaulted,
+ * so a consumer can tell "upstream did not say" from "upstream said zero".
+ */
+function readEnvelope(notification: HarnessNotification): UpstreamEventEnvelope {
+  if (notification.method !== 'session.event') return {}
+  const rawEvent = recordField(notification.params, 'event')
+  if (rawEvent === undefined) return {}
+
+  const envelope: UpstreamEventEnvelope = {}
+  const time = numberField(rawEvent, 'time')
+  if (time !== undefined) envelope.upstreamTime = time
+  const seq = numberField(rawEvent, 'seq')
+  if (seq !== undefined) envelope.upstreamSeq = seq
+  const sources = rawEvent['sourceEventSeqs']
+  if (Array.isArray(sources)) {
+    const numeric = sources.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    if (numeric.length > 0) envelope.sourceEventSeqs = numeric
+  }
+  return envelope
+}
+
+function classifyNotification(notification: HarnessNotification, sequence: number): NormalizedEvent {
   const params = notification.params
 
   if (notification.method === 'session.status') {
@@ -345,6 +431,11 @@ function extractContentText(value: unknown): string {
     text.push(block.text)
   }
   return text.join('')
+}
+
+function numberField(value: Record<string, unknown> | undefined, key: string): number | undefined {
+  const field = value?.[key]
+  return typeof field === 'number' && Number.isFinite(field) ? field : undefined
 }
 
 function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
