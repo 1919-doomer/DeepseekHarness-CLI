@@ -183,6 +183,24 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
   const [showTools, setShowTools] = useState(true)
+  // Focus and selection are mirrored in refs because one stdin chunk can carry
+  // several keystrokes that must observe each other's effect, not a value that
+  // only lands on the next render.
+  const [toolFocus, setToolFocus] = useState(false)
+  const toolFocusRef = useRef(false)
+  const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>()
+  const selectedToolKeyRef = useRef<string | undefined>(undefined)
+  const activityRowKeysRef = useRef<readonly string[]>([])
+
+  const focusTools = useCallback((next: boolean): void => {
+    toolFocusRef.current = next
+    setToolFocus(next)
+  }, [])
+
+  const selectTool = useCallback((key: string | undefined): void => {
+    selectedToolKeyRef.current = key
+    setSelectedToolKey(key)
+  }, [])
   const [history, setHistory] = useState<readonly string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number | undefined>()
   const [commandBusy, setCommandBusy] = useState(false)
@@ -228,6 +246,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     renderers: props.host.listRenderers(),
     plugins: props.host.listPlugins(),
     events: eventHistory.items,
+    ...(selectedToolKeyRef.current === undefined ? {} : { selectedToolKey: selectedToolKeyRef.current }),
     retention: {
       totalEventCount: eventHistory.total,
       droppedEventCount: eventHistory.dropped,
@@ -268,7 +287,13 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
         return
       case 'toggle-tools':
-        setShowTools(value => !value)
+        setShowTools(value => {
+          if (value) {
+            focusTools(false)
+            selectTool(undefined)
+          }
+          return !value
+        })
         return
       case 'view':
         if (props.host.resolveView(outcome.viewId) === undefined) {
@@ -421,6 +446,36 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (key.escape || key.return || keyInput === 'q') selectView(undefined)
       return
     }
+    // Tab moves focus between the prompt and the sidebar. It is the only key
+    // that changes focus, and the current focus is always stated on screen, so
+    // the arrow keys never mean two things at once.
+    if (key.tab) {
+      if (!toolFocusRef.current && activityRowKeysRef.current.length === 0) return
+      const next = !toolFocusRef.current
+      focusTools(next)
+      if (next && selectedToolKeyRef.current === undefined) {
+        selectTool(activityRowKeysRef.current.at(-1))
+      }
+      return
+    }
+
+    if (toolFocusRef.current) {
+      if (key.escape) {
+        focusTools(false)
+        return
+      }
+      if (key.upArrow || key.downArrow) {
+        moveToolSelection(key.downArrow ? 1 : -1)
+        return
+      }
+      if (key.return) {
+        if (selectedToolKeyRef.current !== undefined) selectView('tool-detail')
+        return
+      }
+      // Anything else is swallowed rather than leaking into the prompt.
+      return
+    }
+
     if (runningRef.current || commandRunningRef.current) return
 
     if (key.return) {
@@ -472,6 +527,17 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     insertInput(keyInput)
   }
 
+  function moveToolSelection(delta: number): void {
+    const keys = activityRowKeysRef.current
+    if (keys.length === 0) return
+    const current = selectedToolKeyRef.current
+    const index = current === undefined ? keys.length - 1 : keys.indexOf(current)
+    const next = index < 0
+      ? keys.length - 1
+      : Math.min(keys.length - 1, Math.max(0, index + delta))
+    selectTool(keys[next])
+  }
+
   function insertInput(text: string): void {
     const edited = insertAtGrapheme(input, cursor, text)
     setInput(edited.value)
@@ -501,6 +567,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const activity = sidebarVisible
     ? projectToolActivity(eventHistory.items, sessionId)
     : undefined
+  activityRowKeysRef.current = activity?.rows.map(row => row.key) ?? []
 
   return (
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
@@ -521,6 +588,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             activity={activity}
             rows={bodyRows}
             droppedEvents={eventHistory.dropped}
+            focused={toolFocus}
+            selectedKey={selectedToolKey}
           />
         )}
       </Box>
@@ -533,10 +602,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         {currentView !== undefined
           ? <Text dimColor>Esc / Enter / q · return to transcript</Text>
           : <>
-              <Text dimColor>{phase === 'running'
-                ? 'Harness is running… Ctrl+C closes the whole runtime'
-                : commandBusy ? 'Local terminal command is running…'
-                  : 'Enter submit · ↑/↓ history · Ctrl+J newline · /help'}</Text>
+              <Text dimColor>{toolFocus
+                ? 'tools focused · ↑/↓ select · Enter details · Tab or Esc back to prompt'
+                : phase === 'running'
+                  ? 'Harness is running… Ctrl+C closes the whole runtime'
+                  : commandBusy ? 'Local terminal command is running…'
+                    : 'Enter submit · ↑/↓ history · Tab tools · Ctrl+J newline · /help'}</Text>
               <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
             </>}
       </Box>
@@ -633,20 +704,36 @@ export const TOOL_SIDEBAR_WIDTH = 30
  */
 export const TOOL_SIDEBAR_MIN_COLUMNS = 100
 
-function ToolActivitySidebar({ activity, rows, droppedEvents }: {
+function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey }: {
   activity: ToolActivityProjection
   rows: number
   droppedEvents: number
+  focused: boolean
+  selectedKey?: string
 }): React.ReactElement {
   const inner = TOOL_SIDEBAR_WIDTH - 3
-  // Reserve the counter line, and the eviction note when there is one.
-  const notes = droppedEvents > 0 ? 2 : 1
+  // Reserve the header, the counter line, and the eviction note when present.
+  const notes = droppedEvents > 0 ? 3 : 2
+  const selectedIndex = selectedKey === undefined
+    ? -1
+    : activity.rows.findIndex(row => row.key === selectedKey)
+  // Which entry is selected is stated in words, not carried by highlight alone.
+  const heading = focused
+    ? `tools · focus ${selectedIndex < 0 ? '-' : selectedIndex + 1}/${activity.rows.length}`
+    : 'tools'
   const visible = activity.rows.slice(-Math.max(1, rows - notes))
   return (
     <Box flexDirection="column" flexShrink={0} width={TOOL_SIDEBAR_WIDTH} borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} paddingX={1} overflow="hidden">
+      <Box flexShrink={0}>
+        <Text bold={focused} color={focused ? 'cyan' : undefined} wrap="truncate">{cropTerminalText(heading, inner)}</Text>
+      </Box>
       {visible.map(row => (
         <Box key={row.key} flexShrink={0}>
-          <Text color={activityColor(row.state)} wrap="truncate">{formatActivityRow(row, inner)}</Text>
+          <Text
+            color={activityColor(row.state)}
+            inverse={row.key === selectedKey}
+            wrap="truncate"
+          >{formatActivityRow(row, inner)}</Text>
         </Box>
       ))}
       <Box flexGrow={1} />

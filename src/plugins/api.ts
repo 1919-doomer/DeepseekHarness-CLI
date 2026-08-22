@@ -109,6 +109,8 @@ export interface TerminalViewContext extends TerminalCommandContext {
   events: readonly NormalizedEvent[]
   /** Optional to preserve API-v1 compatibility for external test/embedding code. */
   retention?: TerminalRetentionSummary
+  /** Tool activity entry the sidebar has selected, when one is focused. */
+  selectedToolKey?: string
   /** Current selected-session topology projection, independent of trace eviction. */
   agentTopology?: readonly TerminalAgentTopologyEntry[]
 }

@@ -1,4 +1,3 @@
-import type { HarnessNotification } from '@deepseek-ai/dsh-sdk-client'
 import { describe, expect, it } from 'vitest'
 import { normalizeNotification, type NormalizedEvent } from '../../src/session/projection.js'
 import {
