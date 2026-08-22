@@ -173,7 +173,10 @@ Doctor:
   sandbox/approval defaults, protocol limitations and local retention policy.
 
 Interactive commands:
-  /help  /status  /session  /new  /clear  /exit
+  Scripted non-TTY loop: /help  /status  /session  /new  /clear  /exit
+  TTY product: the above plus /plugins, /trace, /agents and /tools. Its /help is
+  built from the active plugin host, so it always lists what is really loaded
+  rather than a copy that can fall behind.
 
 DeepSeek Harness protocol 0.0.1 exposes no prompt-level cancel or session-close request.
 `
