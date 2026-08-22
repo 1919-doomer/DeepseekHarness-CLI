@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-cli",
-  "version": "0.1.0-preview.3",
+  "version": "0.1.0-preview.4",
   "description": "Unofficial terminal-native console for DeepSeek Harness",
   "license": "MIT",
   "private": true,
