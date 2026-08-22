@@ -24,16 +24,24 @@ function response(id, result) {
   send({ jsonrpc: '2.0', id, result })
 }
 
-function sessionEvent(sessionId, type, data) {
+// Upstream increments seq per event and timestamps each one; a derived event
+// names the sequences it came from. Emitting a constant seq and no causal link
+// would let the pairing logic pass here while failing on the wire.
+let nextEventSeq = 0
+
+function sessionEvent(sessionId, type, data, sourceEventSeqs) {
+  const seq = nextEventSeq++
   notify('session.event', {
     sessionId,
     event: {
       type,
       data,
-      seq: 0,
+      seq,
       time: Date.now(),
+      ...(sourceEventSeqs === undefined ? {} : { sourceEventSeqs }),
     },
   })
+  return seq
 }
 
 function emitReceiptAndStart(sessionId, messageId, contentBlocks, turn) {
@@ -73,7 +81,7 @@ function emitCompletedTurn(sessionId, turn) {
     },
   })
 
-  sessionEvent(sessionId, 'tool/call', {
+  const rootCallSeq = sessionEvent(sessionId, 'tool/call', {
     turn,
     step: 1,
     callId: `call-${turn}`,
@@ -101,7 +109,7 @@ function emitCompletedTurn(sessionId, turn) {
       content: [{ type: 'text', text: 'child' }],
     },
   })
-  sessionEvent(childSessionId, 'tool/call', {
+  const childCallSeq = sessionEvent(childSessionId, 'tool/call', {
     turn: 1,
     step: 1,
     callId: `call-${turn}`,
@@ -124,7 +132,7 @@ function emitCompletedTurn(sessionId, turn) {
       role: 'user',
       id: 'fixture-child-result',
     },
-  })
+  }, [childCallSeq])
   notify('session.status', { sessionId: childSessionId, status: 'idle' })
   notify('subagent.finished', {
     parentSessionId: sessionId,
@@ -147,7 +155,7 @@ function emitCompletedTurn(sessionId, turn) {
       role: 'user',
       id: 'fixture-root-result',
     },
-  })
+  }, [rootCallSeq])
   sessionEvent(sessionId, 'step/end', { turn, step: 1 })
 
   sessionEvent(sessionId, 'step/start', { turn, step: 2 })
