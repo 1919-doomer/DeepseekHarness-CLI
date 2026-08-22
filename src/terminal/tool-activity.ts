@@ -119,6 +119,39 @@ export function projectToolActivity(
   }
 }
 
+export interface ToolActivityDetail {
+  row: ToolActivityRow
+  /** Raw arguments the model sent, as they appeared on the wire. */
+  argumentsText?: string
+  /** Retained result text; retention may already have truncated it. */
+  resultText?: string
+}
+
+/**
+ * Everything observed about one call, for the detail panel. Absent fields mean
+ * the event was never seen or was already evicted — they are not filled in.
+ */
+export function findToolActivityDetail(
+  events: readonly NormalizedEvent[],
+  rootSessionId: string,
+  key: string,
+): ToolActivityDetail | undefined {
+  const row = projectToolActivity(events, rootSessionId).rows.find(candidate => candidate.key === key)
+  if (row === undefined) return undefined
+
+  const detail: ToolActivityDetail = { row }
+  for (const event of events) {
+    if (event.kind === 'tool-call' && toolProjectionKey(event.sessionId, event.callId) === key) {
+      detail.argumentsText = event.arguments
+      continue
+    }
+    if (event.kind === 'tool-result' && toolProjectionKey(event.sessionId, event.callId) === key) {
+      detail.resultText = event.text
+    }
+  }
+  return detail
+}
+
 function placeSession(
   sessionId: string,
   rootSessionId: string,

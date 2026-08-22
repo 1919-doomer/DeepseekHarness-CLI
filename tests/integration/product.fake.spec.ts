@@ -220,6 +220,83 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 15_000)
 
+  it('moves focus to the sidebar, selects an entry and opens its detail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m45-focus-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    output.columns = 140
+    const readOutput = capture(output)
+
+    const TAB = '\u0009'
+    const ESC = '\u001b'
+    const ENTER = '\u000d'
+    const UP = `${ESC}[A`
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'm45-focus-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw, 5_000, 'focus raw-mode ownership')
+      await submitLine(input, 'drive one turn')
+      await waitForTurn(readOutput, 1)
+      await waitFor(() => readOutput().includes('calls'), 5_000, 'sidebar counters')
+
+      // Before Tab the prompt owns the arrows, and the hint says so.
+      expect(await renderedAfterTick(input, readOutput)).toContain('Tab tools')
+
+      input.write(TAB)
+      // With focus in the sidebar, typing no longer changes the prompt, so a
+      // forced render is unavailable here; these strings appear nowhere else,
+      // so their presence in the stream is proof enough.
+      await waitFor(() => readOutput().includes('tools · focus'), 5_000, 'sidebar focused')
+      const focused = readOutput()
+      // Focus is stated in words, and so is which entry is selected — neither
+      // is carried by highlight alone.
+      expect(focused).toContain('select')
+      expect(focused).toMatch(/focus \d+\/\d+/)
+
+      // While the sidebar holds focus, typing must not reach the prompt. This
+      // token appears nowhere else, so any leak would show up in the stream.
+      input.write('zzz')
+      await delay(200)
+      expect(readOutput()).not.toContain('zzz')
+
+      // Arrows move the selection; Enter opens the detail on the view plane.
+      input.write(UP)
+      await delay(120)
+      input.write(ENTER)
+      await waitFor(() => readOutput().includes('Tool Call'), 5_000, 'tool detail view')
+      const detail = readOutput()
+      expect(detail).toContain('outcome:')
+      expect(detail).toContain('elapsed:')
+      expect(detail).toContain('arguments')
+
+      // Close the detail, then leave the sidebar: the arrows go back to
+      // prompt history and the hint says so again.
+      input.write('q')
+      await delay(150)
+      input.write(ESC)
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).toContain('Tab tools')
+
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 20_000)
+
   it('preserves Unicode graphemes through editing, navigation, deletion and submission', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-unicode-editor-'))
     tempRoots.push(root)

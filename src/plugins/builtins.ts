@@ -1,4 +1,5 @@
 import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
+import { findToolActivityDetail, formatActivityElapsed } from '../terminal/tool-activity.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { terminalBlockId } from '../terminal/transcript.js'
 import {
@@ -69,6 +70,7 @@ function corePlugin(): TerminalPluginSpec {
       { id: 'capabilities', title: 'Capability Explorer', render: renderCapabilities },
       { id: 'trace', title: 'Session Trace', render: context => renderTraceQuery(context, traceQuery) },
       { id: 'agents', title: 'Agent Topology', render: renderAgents },
+      { id: 'tool-detail', title: 'Tool Call', render: renderToolDetail },
     ],
     statusSegments: [
       { id: 'phase', priority: 100, render: context => context.phase },
@@ -367,6 +369,47 @@ export function formatTraceEvent(
 function formatElapsed(ms: number | undefined): string {
   if (ms === undefined) return ''
   return ms < 1000 ? ` ${ms}ms` : ` ${(ms / 1000).toFixed(1)}s`
+}
+
+/**
+ * Everything observed about the selected call. Absent facts are named as
+ * absent rather than filled in, and retained sizes are labelled as retained,
+ * because retention may already have truncated the result.
+ */
+function renderToolDetail(context: TerminalViewContext): string {
+  const key = context.selectedToolKey
+  if (key === undefined) return 'No tool call is selected.'
+
+  const detail = findToolActivityDetail(context.events, context.session.sessionId, key)
+  if (detail === undefined) {
+    return 'That tool call is no longer in local retention. Older activity is evicted to keep this terminal process bounded.'
+  }
+
+  const { row } = detail
+  const lines = [
+    `${row.label}`,
+    `outcome: ${row.state}${row.state === 'running' ? ' (no result observed yet)' : ''}`,
+    `session: ${sanitizeTerminalText(row.sessionId)}${row.orphaned ? ' (parent chain not observed)' : ''}`,
+    `call: ${sanitizeTerminalText(row.callId)}`,
+    row.elapsedMs === undefined
+      ? 'elapsed: unknown (upstream did not timestamp both ends)'
+      : `elapsed: ${formatActivityElapsed(row.elapsedMs)} between upstream events`,
+    '',
+    'arguments',
+    detail.argumentsText === undefined
+      ? '  (the call was evicted from local retention)'
+      : indentBlock(sanitizeTerminalText(detail.argumentsText)),
+    '',
+    'result',
+    detail.resultText === undefined
+      ? '  (no result observed yet)'
+      : `  ${detail.resultText.length} retained chars\n${indentBlock(sanitizeTerminalText(detail.resultText))}`,
+  ]
+  return lines.join('\n')
+}
+
+function indentBlock(text: string): string {
+  return text.split('\n').map(line => `  ${line}`).join('\n')
 }
 
 function renderAgents(context: TerminalViewContext): string {
