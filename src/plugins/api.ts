@@ -24,6 +24,7 @@ export type TerminalCommandOutcome =
   | { kind: 'clear' }
   | { kind: 'exit' }
   | { kind: 'view'; viewId: string }
+  | { kind: 'toggle-tools' }
 
 export interface TerminalCommandSpec {
   name: string

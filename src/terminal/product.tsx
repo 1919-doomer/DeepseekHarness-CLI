@@ -32,6 +32,13 @@ import {
 } from './transcript.js'
 import { sanitizeTerminalText } from './sanitize.js'
 import {
+  formatActivityCounts,
+  formatActivityRow,
+  projectToolActivity,
+  type ToolActivityProjection,
+  type ToolActivityState,
+} from './tool-activity.js'
+import {
   cropTerminalText,
   deleteGraphemeBefore,
   graphemeAt,
@@ -175,6 +182,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
+  const [showTools, setShowTools] = useState(true)
   const [history, setHistory] = useState<readonly string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number | undefined>()
   const [commandBusy, setCommandBusy] = useState(false)
@@ -258,6 +266,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     switch (outcome.kind) {
       case 'message':
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
+        return
+      case 'toggle-tools':
+        setShowTools(value => !value)
         return
       case 'view':
         if (props.host.resolveView(outcome.viewId) === undefined) {
@@ -479,9 +490,17 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
   const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
   const bodyRows = Math.max(4, size.rows - 7)
+  // A sidebar takes a fixed column count, never a share of the width, so the
+  // transcript rewraps predictably. Below the threshold it collapses rather
+  // than squeezing the transcript, per the narrow-terminal invariant.
+  const sidebarVisible = showTools && size.columns >= TOOL_SIDEBAR_MIN_COLUMNS && currentView === undefined
+  const transcriptWidth = Math.max(20, size.columns - (sidebarVisible ? TOOL_SIDEBAR_WIDTH : 0))
   const visibleBlocks = currentView === undefined
-    ? takeVisibleBlocks(transcript.blocks, bodyRows, Math.max(20, size.columns))
+    ? takeVisibleBlocks(transcript.blocks, bodyRows, transcriptWidth)
     : []
+  const activity = sidebarVisible
+    ? projectToolActivity(eventHistory.items, sessionId)
+    : undefined
 
   return (
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
@@ -491,10 +510,19 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       </Box>
       <Text dimColor>{sanitizeTerminalText(props.metadata.serverName)}/{sanitizeTerminalText(props.metadata.protocolVersion)}</Text>
 
-      <Box flexDirection="column" flexGrow={1} overflow="hidden" marginTop={1}>
-        {currentView === undefined
-          ? visibleBlocks.map(block => <TranscriptBlockView key={block.id} block={block} width={size.columns} />)
-          : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden" marginTop={1}>
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+          {currentView === undefined
+            ? visibleBlocks.map(block => <TranscriptBlockView key={block.id} block={block} width={transcriptWidth} />)
+            : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
+        </Box>
+        {activity !== undefined && (
+          <ToolActivitySidebar
+            activity={activity}
+            rows={bodyRows}
+            droppedEvents={eventHistory.dropped}
+          />
+        )}
       </Box>
 
       <Box borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
@@ -594,6 +622,52 @@ export function splitKeystrokes(keyInput: string, key: InputKey): readonly Keyst
   }
   if (pending.length > 0) strokes.push({ text: pending, key: PLAIN_KEY })
   return strokes
+}
+
+/** Fixed sidebar width; never a share of the terminal. */
+export const TOOL_SIDEBAR_WIDTH = 30
+
+/**
+ * Below this the sidebar collapses instead of squeezing the transcript, so a
+ * narrow terminal keeps the newest useful activity and an intact input area.
+ */
+export const TOOL_SIDEBAR_MIN_COLUMNS = 100
+
+function ToolActivitySidebar({ activity, rows, droppedEvents }: {
+  activity: ToolActivityProjection
+  rows: number
+  droppedEvents: number
+}): React.ReactElement {
+  const inner = TOOL_SIDEBAR_WIDTH - 3
+  // Reserve the counter line, and the eviction note when there is one.
+  const notes = droppedEvents > 0 ? 2 : 1
+  const visible = activity.rows.slice(-Math.max(1, rows - notes))
+  return (
+    <Box flexDirection="column" flexShrink={0} width={TOOL_SIDEBAR_WIDTH} borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} paddingX={1} overflow="hidden">
+      {visible.map(row => (
+        <Box key={row.key} flexShrink={0}>
+          <Text color={activityColor(row.state)} wrap="truncate">{formatActivityRow(row, inner)}</Text>
+        </Box>
+      ))}
+      <Box flexGrow={1} />
+      <Box flexShrink={0}>
+        <Text dimColor wrap="truncate">{cropTerminalText(formatActivityCounts(activity.counts), inner)}</Text>
+      </Box>
+      {droppedEvents > 0 && (
+        <Box flexShrink={0}>
+          <Text dimColor wrap="truncate">{cropTerminalText(`${droppedEvents} older evicted`, inner)}</Text>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+function activityColor(state: ToolActivityState): string | undefined {
+  switch (state) {
+    case 'running': return 'cyan'
+    case 'success': return 'green'
+    case 'error': return 'red'
+  }
 }
 
 export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undefined {

@@ -61,6 +61,7 @@ function corePlugin(): TerminalPluginSpec {
         },
       },
       { name: 'agents', summary: 'Show current root/descendant topology projected from public events', execute: () => ({ kind: 'view', viewId: 'agents' }) },
+      { name: 'tools', summary: 'Show or hide the tool activity sidebar', execute: () => ({ kind: 'toggle-tools' }) },
       { name: 'exit', aliases: ['quit'], summary: 'Close the owned Harness runtime and exit', execute: () => ({ kind: 'exit' }) },
     ],
     views: [
