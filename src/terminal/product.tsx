@@ -581,7 +581,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
   const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
-  const bodyRows = Math.max(4, size.rows - 7)
+  const suggestions = currentView === undefined && !toolFocus
+    ? commandSuggestions(input, props.host.listCommands())
+    : []
+  // The menu competes with the transcript for rows, so it takes only what is
+  // left after the chrome and a usable body. On a short terminal it shows
+  // fewer entries rather than being clipped by the frame.
+  const menuCapacity = Math.max(0, Math.min(8, size.rows - 7 - MIN_BODY_ROWS))
+  const menuShown = Math.min(suggestions.length, menuCapacity)
+  const menuRows = menuShown === 0 ? 0 : menuShown + (suggestions.length > menuShown ? 1 : 0)
+  const bodyRows = Math.max(MIN_BODY_ROWS, size.rows - 7 - menuRows)
   // A sidebar takes a fixed column count, never a share of the width, so the
   // transcript rewraps predictably. Below the threshold it collapses rather
   // than squeezing the transcript, per the narrow-terminal invariant.
@@ -619,7 +628,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             </Box>
           )}
           {currentView === undefined
-            ? visibleBlocks.map(block => <TranscriptBlockView key={block.id} block={block} width={transcriptWidth} />)
+            ? visibleBlocks.map(block => (
+                <TranscriptBlockView
+                  key={block.id}
+                  block={block}
+                  width={transcriptWidth}
+                  condensed={scrollBack > 0}
+                />
+              ))
             : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
         </Box>
         {activity !== undefined && (
@@ -636,6 +652,10 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       <Box flexShrink={0} borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
         <Text>{cropTerminalText(status, Math.max(10, size.columns - 4))}</Text>
       </Box>
+
+      {menuShown > 0 && (
+        <CommandMenu suggestions={suggestions} shown={menuShown} width={size.columns} />
+      )}
 
       <Box flexDirection="column" flexShrink={0} paddingX={1}>
         {currentView !== undefined
@@ -738,6 +758,9 @@ export function splitKeystrokes(keyInput: string, key: InputKey): readonly Keyst
 }
 
 /** Fixed sidebar width; never a share of the terminal. */
+/** Rows the transcript keeps whatever else wants space. */
+const MIN_BODY_ROWS = 4
+
 export const TOOL_SIDEBAR_WIDTH = 30
 
 /**
@@ -756,6 +779,58 @@ function scrollNotice(visible: VisibleTranscript): string {
   if (visible.below > 0) parts.push(`${visible.below} newer below · PageDown to catch up`)
   else if (visible.above > 0) parts.push('PageUp for older')
   return parts.join(' · ')
+}
+
+export interface CommandSuggestion {
+  name: string
+  summary: string
+}
+
+/**
+ * Commands matching what has been typed so far.
+ *
+ * Built from the plugin host's registry rather than a list kept alongside it,
+ * so a command cannot exist without appearing here — the drift that made
+ * `dshc --help` under-report the product for two milestones.
+ *
+ * Only a lone `/…` token qualifies: `//literal` is an escaped prompt, and once
+ * an argument is typed the user is past choosing a command.
+ */
+export function commandSuggestions(
+  input: string,
+  commands: readonly { name: string; aliases: readonly string[]; summary: string }[],
+): readonly CommandSuggestion[] {
+  if (!input.startsWith('/') || input.startsWith('//')) return []
+  if (/\s/.test(input)) return []
+  const prefix = input.slice(1).toLowerCase()
+  return commands
+    .filter(command => command.name.startsWith(prefix))
+    .map(command => ({ name: command.name, summary: command.summary }))
+}
+
+function CommandMenu({ suggestions, shown, width }: {
+  suggestions: readonly CommandSuggestion[]
+  shown: number
+  width: number
+}): React.ReactElement {
+  const nameWidth = Math.max(...suggestions.map(item => item.name.length + 1))
+  return (
+    <Box flexDirection="column" flexShrink={0} paddingX={1}>
+      {suggestions.slice(0, shown).map(item => (
+        <Box key={item.name} flexShrink={0}>
+          <Text wrap="truncate">{cropTerminalText(
+            `/${item.name.padEnd(nameWidth)} ${item.summary}`,
+            Math.max(10, width - 2),
+          )}</Text>
+        </Box>
+      ))}
+      {suggestions.length > shown && (
+        <Box flexShrink={0}>
+          <Text dimColor>{`… ${suggestions.length - shown} more`}</Text>
+        </Box>
+      )}
+    </Box>
+  )
 }
 
 function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey }: {
@@ -818,13 +893,21 @@ export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undef
   return { name, args: tokens }
 }
 
-function TranscriptBlockView({ block, width }: { block: TranscriptBlock; width: number }): React.ReactElement {
+function TranscriptBlockView({ block, width, condensed = false }: {
+  block: TranscriptBlock
+  width: number
+  condensed?: boolean
+}): React.ReactElement {
   const status = blockStatus(block)
   const header = blockHeaderText(block)
+  // While reviewing older context, a tool call collapses to its header: the
+  // outcome is what you are scanning for, and its arguments and output would
+  // push the prose you are actually looking for off the screen.
+  const collapsed = condensed && isActivityBlock(block)
   // Tool and subagent activity is framed so a call is a distinct object on the
   // screen rather than another paragraph. Prose keeps flowing unframed: boxing
   // an assistant answer would cost two columns and gain nothing.
-  const framed = block.kind === 'tool' || block.kind === 'agent'
+  const framed = isActivityBlock(block) && !collapsed
   const bodyWidth = framed ? Math.max(10, width - 4) : width
   return (
     <Box
@@ -839,8 +922,8 @@ function TranscriptBlockView({ block, width }: { block: TranscriptBlock; width: 
           header and the body on the same row, so the colour applies to the
           whole header line instead. */}
       <Text bold={block.kind === 'user' || block.kind === 'assistant'} color={status.color}>{header}</Text>
-      {block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>}
-      {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, bodyWidth)}</Text>}
+      {!collapsed && block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>}
+      {!collapsed && block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, bodyWidth)}</Text>}
     </Box>
   )
 }
@@ -924,6 +1007,7 @@ export function selectVisibleBlocks(
   rows: number,
   width = 72,
   offset = 0,
+  condensed = offset > 0,
 ): VisibleTranscript {
   const below = Math.max(0, Math.min(offset, Math.max(0, blocks.length - 1)))
   const end = blocks.length - below
@@ -931,7 +1015,7 @@ export function selectVisibleBlocks(
   let budget = rows
   for (let index = end - 1; index >= 0 && budget > 0; index--) {
     const block = blocks[index]!
-    const needed = estimateRows(block, width)
+    const needed = estimateRows(block, width, condensed)
     // Admitting a block before checking that it fits lets the selection
     // overshoot the frame by almost a whole block. Ink then compresses the
     // children instead of clipping them, and body text lands on top of the
@@ -953,11 +1037,18 @@ export function takeVisibleBlocks(
   return selectVisibleBlocks(blocks, rows, width).blocks
 }
 
-function estimateRows(block: TranscriptBlock, width: number): number {
+/** Tool and subagent activity, the blocks that collapse while reviewing. */
+function isActivityBlock(block: TranscriptBlock): boolean {
+  return block.kind === 'tool' || block.kind === 'agent'
+}
+
+function estimateRows(block: TranscriptBlock, width: number, condensed = false): number {
+  const collapsed = condensed && isActivityBlock(block)
   // A framed block spends two rows on its border and two columns on padding.
-  const framed = block.kind === 'tool' || block.kind === 'agent'
+  const framed = isActivityBlock(block) && !collapsed
   const frameRows = framed ? 2 : 0
   const contentWidth = Math.max(10, width - (framed ? 6 : 2))
+  if (collapsed) return wrappedTerminalRows(blockHeaderText(block), contentWidth) + 1
   const text = foldTerminalText(block.text, block.foldable === true, contentWidth)
   const detail = block.detail === undefined ? '' : foldTerminalText(block.detail, true, contentWidth)
   const textRows = block.text.length === 0 ? 0 : wrappedTerminalRows(text, contentWidth)

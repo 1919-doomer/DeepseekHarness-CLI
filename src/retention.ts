@@ -81,6 +81,8 @@ export function retainNormalizedEvent(event: NormalizedEvent): NormalizedEvent {
       return { ...event, message: retainText(event.message, MAX_RETAINED_EVENT_TEXT_CHARS).text }
     case 'session-title':
       return { ...event, title: retainText(event.title, MAX_RETAINED_EVENT_TEXT_CHARS).text }
+    case 'context-compacted':
+      return { ...event, summary: retainText(event.summary, MAX_RETAINED_EVENT_TEXT_CHARS).text }
     case 'session-status':
     case 'subagent-started':
     case 'subagent-finished':
