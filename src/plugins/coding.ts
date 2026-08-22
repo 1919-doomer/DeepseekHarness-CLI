@@ -75,6 +75,18 @@ interface ToolPresentation {
   text: string
 }
 
+/**
+ * The compact description the transcript already shows for a call, reused so a
+ * second surface cannot drift from it. Undefined when the arguments are not
+ * fully explainable, which is the same condition under which the specialized
+ * renderer declines the event.
+ */
+export function describeToolCall(name: string, argumentsJson: string): string | undefined {
+  const args = parseArguments(argumentsJson)
+  if (args === undefined) return undefined
+  return presentCodingCall(name, args)?.title
+}
+
 function presentCodingCall(name: string, args: Record<string, unknown>): ToolPresentation | undefined {
   switch (name) {
     case 'read': {

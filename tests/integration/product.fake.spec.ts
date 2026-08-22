@@ -56,6 +56,20 @@ function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRun
   })
 }
 
+/**
+ * Output produced by a fresh render, isolated from everything drawn before it.
+ * Typing and deleting a character forces the product to redraw, so whatever is
+ * currently on screen has to appear in the slice.
+ */
+async function renderedAfterTick(input: TestInput, readOutput: () => string): Promise<string> {
+  const mark = readOutput().length
+  input.write('x')
+  await delay(80)
+  input.write('')
+  await delay(120)
+  return readOutput().slice(mark)
+}
+
 function capture(stream: PassThrough): () => string {
   let value = ''
   stream.setEncoding('utf8')
@@ -139,6 +153,67 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
       expect(readOutput()).not.toContain('private-reasoning-must-not-render')
       expect(readError()).toBe('')
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('shows the tool activity sidebar on a wide terminal and collapses it on a narrow one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m45-sidebar-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    output.columns = 140
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'm45-sidebar-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw, 5_000, 'sidebar raw-mode ownership')
+      await submitLine(input, 'drive one turn')
+      await waitForTurn(readOutput, 1)
+
+      // The sidebar is on by default and projects the same activity the
+      // transcript shows, one row per call with its outcome.
+      await waitFor(() => readOutput().includes('calls'), 5_000, 'sidebar counters')
+      const wide = readOutput()
+      expect(wide).toMatch(/\d+ calls · \d+ ok · \d+ failed/)
+      expect(wide).toContain('child-read')
+
+      // Typing redraws the frame on every keystroke, so only the newest frame
+      // says whether the sidebar is currently shown.
+      // Ink renders differentially and does not clear the screen per frame on
+      // every platform, so "is it on screen now" cannot be read by splitting
+      // the stream into frames. Force fresh renders instead and ask whether the
+      // sidebar appears in the output they produce.
+      await submitLine(input, '/tools')
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
+
+      await submitLine(input, '/tools')
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).toContain('calls')
+
+      // Narrowing past the threshold collapses it rather than squeezing the
+      // transcript.
+      output.columns = 70
+      output.emit('resize')
+      await delay(250)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
+
+      await submitLine(input, '/exit')
+      await product
     } finally {
       input.end()
       await runtime.close()
