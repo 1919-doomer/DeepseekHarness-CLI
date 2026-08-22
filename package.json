@@ -19,7 +19,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "dev": "tsx src/cli/bin.ts",
     "lint": "oxlint src tests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
