@@ -604,16 +604,68 @@ export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undef
 }
 
 function TranscriptBlockView({ block, width }: { block: TranscriptBlock; width: number }): React.ReactElement {
-  const marker = block.kind === 'user' ? '›' : block.kind === 'assistant' ? '◆' : block.kind === 'tool' ? '⚙' : block.kind === 'agent' ? '◇' : block.kind === 'error' ? '!' : '·'
-  const state = block.state === undefined ? '' : ` · ${block.state}`
-  const title = sanitizeTerminalText(block.title ?? block.kind)
+  const status = blockStatus(block)
+  const header = blockHeaderText(block)
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold={block.kind === 'user' || block.kind === 'assistant'}>{marker} {title}{state}</Text>
+    <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+      {/* One Text node, one row. Nesting Text inside Text made Ink lay the
+          header and the body on the same row, so the colour applies to the
+          whole header line instead. */}
+      <Text bold={block.kind === 'user' || block.kind === 'assistant'} color={status.color}>{header}</Text>
       {block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, width)}</Text>}
       {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, width)}</Text>}
     </Box>
   )
+}
+
+/**
+ * Outcome is carried by a glyph *and* a word, never by colour alone: the
+ * transcript has to stay correct on a monochrome terminal and for a reader who
+ * cannot distinguish the colours.
+ */
+function blockStatus(block: TranscriptBlock): { marker: string; color?: string } {
+  switch (block.state) {
+    case 'running': return { marker: '▸', color: 'cyan' }
+    case 'success': return { marker: '✓', color: 'green' }
+    case 'error': return { marker: '✗', color: 'red' }
+    case 'finished': return { marker: '•' }
+    default: break
+  }
+  if (block.kind === 'error') return { marker: '!', color: 'red' }
+  return { marker: kindMarker(block.kind) }
+}
+
+function kindMarker(kind: TranscriptBlock['kind']): string {
+  switch (kind) {
+    case 'user': return '›'
+    case 'assistant': return '◆'
+    case 'tool': return '⚙'
+    case 'agent': return '◇'
+    case 'error': return '!'
+    default: return '·'
+  }
+}
+
+function blockStatusSuffix(block: TranscriptBlock): string {
+  const state = block.state === undefined ? '' : ` · ${block.state}`
+  const elapsed = blockElapsedMs(block)
+  return elapsed === undefined ? state : `${state} · ${formatElapsedMs(elapsed)}`
+}
+
+/**
+ * Span between the two upstream timestamps bounding the block. Absent when
+ * either end is missing or the pair runs backwards, so an unknown span is never
+ * rendered as zero.
+ */
+export function blockElapsedMs(block: TranscriptBlock): number | undefined {
+  const { startedAt, endedAt } = block
+  if (startedAt === undefined || endedAt === undefined) return undefined
+  const elapsed = endedAt - startedAt
+  return elapsed >= 0 ? elapsed : undefined
+}
+
+export function formatElapsedMs(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
 function ViewPanel({ title, text }: { title: string; text: string }): React.ReactElement {
@@ -634,8 +686,15 @@ export function takeVisibleBlocks(
   let budget = rows
   for (let index = blocks.length - 1; index >= 0 && budget > 0; index--) {
     const block = blocks[index]!
+    const needed = estimateRows(block, width)
+    // Admitting a block before checking that it fits lets the selection
+    // overshoot the frame by almost a whole block. Ink then compresses the
+    // children instead of clipping them, and body text lands on top of the
+    // header row. The newest block is still always shown, because an oversized
+    // latest activity must not vanish.
+    if (result.length > 0 && needed > budget) break
     result.unshift(block)
-    budget -= estimateRows(block, width)
+    budget -= needed
   }
   return result
 }
@@ -646,7 +705,16 @@ function estimateRows(block: TranscriptBlock, width: number): number {
   const detail = block.detail === undefined ? '' : foldTerminalText(block.detail, true, contentWidth)
   const textRows = block.text.length === 0 ? 0 : wrappedTerminalRows(text, contentWidth)
   const detailRows = detail.length === 0 ? 0 : wrappedTerminalRows(detail, contentWidth)
-  return 2 + Math.max(1, textRows + detailRows)
+  // The header wraps like any other line; budgeting it as exactly one row
+  // under-counts a long title and overflows the frame.
+  const headerRows = wrappedTerminalRows(blockHeaderText(block), contentWidth)
+  return headerRows + 1 + Math.max(1, textRows + detailRows)
+}
+
+/** The rendered header line, shared by the view and the row estimate. */
+export function blockHeaderText(block: TranscriptBlock): string {
+  const status = blockStatus(block)
+  return `${status.marker} ${sanitizeTerminalText(block.title ?? block.kind)}${blockStatusSuffix(block)}`
 }
 
 export function foldTerminalText(

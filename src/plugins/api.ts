@@ -47,6 +47,13 @@ export interface TranscriptBlock {
   /** Characters omitted from the middle of `detail` by local retention. */
   detailDroppedChars?: number
   state?: 'running' | 'success' | 'error' | 'finished'
+  /**
+   * Upstream event timestamps bounding the activity, in ms. The view derives
+   * the elapsed span from these; it never reads a local clock, so an interval
+   * shown to the user is always a span between two public upstream events.
+   */
+  startedAt?: number
+  endedAt?: number
   foldable?: boolean
   sessionId?: string
   /** Local presentation grouping only; never an upstream causal id. */
