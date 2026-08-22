@@ -92,6 +92,10 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     const error = new TestOutput()
     const readOutput = capture(output)
     const readError = capture(error)
+    // Framed tool blocks spend two rows each on their border, so this case
+    // needs a taller viewport to keep asserting that content is present rather
+    // than accidentally asserting how much of it fits.
+    output.rows = 44
 
     const product = runTerminalProduct(runtime, {
       stdin: input as unknown as NodeJS.ReadStream,
@@ -125,6 +129,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       // when the column ran out of height and lay body text over the header,
       // eating exactly that prefix, so assert the whole header survives.
       expect(readOutput()).toMatch(/✓ tool · read · success/)
+      // A tool call is framed, so it reads as a distinct object on the screen
+      // rather than as another paragraph of prose.
+      expect(readOutput()).toContain('╭')
 
       await submitLine(input, 'second product turn')
       await waitFor(async () => (await promptRecords(logPath)).length === 2, 5_000, 'second prompt receipt')
@@ -342,6 +349,65 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await runtime.close()
     }
   }, 15_000)
+
+  it('scrolls the transcript, says what is out of sight, and returns to newest on submit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-scroll-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath, 'verbose')
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    output.rows = 16
+    const readOutput = capture(output)
+
+    const PAGE_UP = '\u001b[5~'
+    const PAGE_DOWN = '\u001b[6~'
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'scroll-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw, 5_000, 'scroll raw-mode ownership')
+      await submitLine(input, 'produce a long answer')
+      await waitForTurn(readOutput, 1)
+
+      // At rest the newest activity is shown and nothing claims to be below.
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
+
+      input.write(PAGE_UP)
+      await delay(150)
+      const scrolled = await renderedAfterTick(input, readOutput)
+      // A scrolled-back view must never look like the newest one.
+      expect(scrolled).toContain('newer below')
+      expect(scrolled).toContain('PageDown to catch up')
+
+      input.write(PAGE_DOWN)
+      await delay(150)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
+
+      // Scroll back again, then submit: a reply arriving off-screen would look
+      // like nothing happened, so submitting returns to the newest activity.
+      input.write(PAGE_UP)
+      await delay(150)
+      expect(await renderedAfterTick(input, readOutput)).toContain('newer below')
+      await submitLine(input, 'second turn')
+      await waitForTurn(readOutput, 2)
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
+
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 20_000)
 
   it('preserves Unicode graphemes through editing, navigation, deletion and submission', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-unicode-editor-'))

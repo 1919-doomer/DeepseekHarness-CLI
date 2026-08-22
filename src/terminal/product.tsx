@@ -183,6 +183,22 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
   const [showTools, setShowTools] = useState(true)
+  // Scroll position in blocks from the newest, mirrored in a ref for the same
+  // within-chunk ordering reason focus needs one.
+  const [scrollBack, setScrollBack] = useState(0)
+  const scrollBackRef = useRef(0)
+  const transcriptDepthRef = useRef(0)
+
+  const jumpToNewest = useCallback((): void => {
+    scrollBackRef.current = 0
+    setScrollBack(0)
+  }, [])
+
+  const scrollTranscript = useCallback((delta: number): void => {
+    const next = Math.max(0, Math.min(transcriptDepthRef.current, scrollBackRef.current + delta))
+    scrollBackRef.current = next
+    setScrollBack(next)
+  }, [])
   // Focus and selection are mirrored in refs because one stdin chunk can carry
   // several keystrokes that must observe each other's effect, not a value that
   // only lands on the next render.
@@ -476,9 +492,19 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return
     }
 
+    // Scrolling is available whatever has focus, because it is navigation
+    // rather than editing, and it never changes what is submitted.
+    if (key.pageUp || key.pageDown) {
+      scrollTranscript(key.pageUp ? 1 : -1)
+      return
+    }
+
     if (runningRef.current || commandRunningRef.current) return
 
     if (key.return) {
+      // Submitting returns to the newest activity: a reply arriving off-screen
+      // while the transcript is scrolled back would look like nothing happened.
+      jumpToNewest()
       void submit()
       return
     }
@@ -561,9 +587,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // than squeezing the transcript, per the narrow-terminal invariant.
   const sidebarVisible = showTools && size.columns >= TOOL_SIDEBAR_MIN_COLUMNS && currentView === undefined
   const transcriptWidth = Math.max(20, size.columns - (sidebarVisible ? TOOL_SIDEBAR_WIDTH : 0))
-  const visibleBlocks = currentView === undefined
-    ? takeVisibleBlocks(transcript.blocks, bodyRows, transcriptWidth)
-    : []
+  const visible = currentView === undefined
+    ? selectVisibleBlocks(transcript.blocks, bodyRows, transcriptWidth, scrollBack)
+    : { blocks: [], below: 0, above: 0 }
+  const visibleBlocks = visible.blocks
+  transcriptDepthRef.current = Math.max(0, transcript.blocks.length - 1)
   const activity = sidebarVisible
     ? projectToolActivity(eventHistory.items, sessionId)
     : undefined
@@ -585,6 +613,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden" marginTop={1}>
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
+          {currentView === undefined && (visible.above > 0 || visible.below > 0) && (
+            <Box flexShrink={0}>
+              <Text dimColor wrap="truncate">{scrollNotice(visible)}</Text>
+            </Box>
+          )}
           {currentView === undefined
             ? visibleBlocks.map(block => <TranscriptBlockView key={block.id} block={block} width={transcriptWidth} />)
             : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
@@ -613,7 +646,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
                 : phase === 'running'
                   ? 'Harness is running… Ctrl+C closes the whole runtime'
                   : commandBusy ? 'Local terminal command is running…'
-                    : 'Enter submit · ↑/↓ history · Tab tools · Ctrl+J newline · /help'}</Text>
+                    : 'Enter submit · ↑/↓ history · PgUp/PgDn scroll · Tab tools · /help'}</Text>
               <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
             </>}
       </Box>
@@ -639,6 +672,8 @@ export interface InputKey {
   rightArrow: boolean
   upArrow: boolean
   downArrow: boolean
+  pageUp?: boolean
+  pageDown?: boolean
 }
 
 export interface Keystroke {
@@ -679,6 +714,7 @@ export function splitKeystrokes(keyInput: string, key: InputKey): readonly Keyst
   const parsedSequence = key.ctrl || key.meta || key.escape || key.tab
     || key.backspace || key.delete
     || key.leftArrow || key.rightArrow || key.upArrow || key.downArrow
+    || key.pageUp === true || key.pageDown === true
   if (parsedSequence) return [{ text: keyInput, key }]
   if (!keyInput.includes('\r') && !keyInput.includes('\n')) {
     return [{ text: keyInput, key }]
@@ -709,6 +745,18 @@ export const TOOL_SIDEBAR_WIDTH = 30
  * narrow terminal keeps the newest useful activity and an intact input area.
  */
 export const TOOL_SIDEBAR_MIN_COLUMNS = 100
+
+/**
+ * States how much is out of sight in both directions. A scrolled-back view that
+ * looked like the newest one would be worse than no scrolling at all.
+ */
+function scrollNotice(visible: VisibleTranscript): string {
+  const parts: string[] = []
+  if (visible.above > 0) parts.push(`${visible.above} older above`)
+  if (visible.below > 0) parts.push(`${visible.below} newer below · PageDown to catch up`)
+  else if (visible.above > 0) parts.push('PageUp for older')
+  return parts.join(' · ')
+}
 
 function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey }: {
   activity: ToolActivityProjection
@@ -773,14 +821,26 @@ export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undef
 function TranscriptBlockView({ block, width }: { block: TranscriptBlock; width: number }): React.ReactElement {
   const status = blockStatus(block)
   const header = blockHeaderText(block)
+  // Tool and subagent activity is framed so a call is a distinct object on the
+  // screen rather than another paragraph. Prose keeps flowing unframed: boxing
+  // an assistant answer would cost two columns and gain nothing.
+  const framed = block.kind === 'tool' || block.kind === 'agent'
+  const bodyWidth = framed ? Math.max(10, width - 4) : width
   return (
-    <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+    <Box
+      flexDirection="column"
+      flexShrink={0}
+      marginBottom={1}
+      {...(framed
+        ? { borderStyle: 'round' as const, borderColor: status.color, paddingX: 1 }
+        : {})}
+    >
       {/* One Text node, one row. Nesting Text inside Text made Ink lay the
           header and the body on the same row, so the colour applies to the
           whole header line instead. */}
       <Text bold={block.kind === 'user' || block.kind === 'assistant'} color={status.color}>{header}</Text>
-      {block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, width)}</Text>}
-      {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, width)}</Text>}
+      {block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>}
+      {block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, bodyWidth)}</Text>}
     </Box>
   )
 }
@@ -844,30 +904,60 @@ function ViewPanel({ title, text }: { title: string; text: string }): React.Reac
   )
 }
 
-export function takeVisibleBlocks(
+export interface VisibleTranscript {
+  blocks: readonly TranscriptBlock[]
+  /** Blocks below the viewport; zero means the newest activity is shown. */
+  below: number
+  /** Blocks above the viewport, so the view can say how much is out of sight. */
+  above: number
+}
+
+/**
+ * Choose the blocks that fit, ending `offset` blocks before the newest.
+ *
+ * `offset` is the scroll position, counted in blocks from the tail rather than
+ * in rows, so a scroll step never lands halfway through a block and never
+ * depends on the width the last render happened to use.
+ */
+export function selectVisibleBlocks(
   blocks: readonly TranscriptBlock[],
   rows: number,
   width = 72,
-): readonly TranscriptBlock[] {
+  offset = 0,
+): VisibleTranscript {
+  const below = Math.max(0, Math.min(offset, Math.max(0, blocks.length - 1)))
+  const end = blocks.length - below
   const result: TranscriptBlock[] = []
   let budget = rows
-  for (let index = blocks.length - 1; index >= 0 && budget > 0; index--) {
+  for (let index = end - 1; index >= 0 && budget > 0; index--) {
     const block = blocks[index]!
     const needed = estimateRows(block, width)
     // Admitting a block before checking that it fits lets the selection
     // overshoot the frame by almost a whole block. Ink then compresses the
     // children instead of clipping them, and body text lands on top of the
-    // header row. The newest block is still always shown, because an oversized
-    // latest activity must not vanish.
+    // header row. The newest visible block is still always shown, because an
+    // oversized latest activity must not vanish.
     if (result.length > 0 && needed > budget) break
     result.unshift(block)
     budget -= needed
   }
-  return result
+  return { blocks: result, below, above: Math.max(0, end - result.length) }
+}
+
+/** Back-compatible view of {@link selectVisibleBlocks} for the tail. */
+export function takeVisibleBlocks(
+  blocks: readonly TranscriptBlock[],
+  rows: number,
+  width = 72,
+): readonly TranscriptBlock[] {
+  return selectVisibleBlocks(blocks, rows, width).blocks
 }
 
 function estimateRows(block: TranscriptBlock, width: number): number {
-  const contentWidth = Math.max(10, width - 2)
+  // A framed block spends two rows on its border and two columns on padding.
+  const framed = block.kind === 'tool' || block.kind === 'agent'
+  const frameRows = framed ? 2 : 0
+  const contentWidth = Math.max(10, width - (framed ? 6 : 2))
   const text = foldTerminalText(block.text, block.foldable === true, contentWidth)
   const detail = block.detail === undefined ? '' : foldTerminalText(block.detail, true, contentWidth)
   const textRows = block.text.length === 0 ? 0 : wrappedTerminalRows(text, contentWidth)
@@ -875,7 +965,7 @@ function estimateRows(block: TranscriptBlock, width: number): number {
   // The header wraps like any other line; budgeting it as exactly one row
   // under-counts a long title and overflows the frame.
   const headerRows = wrappedTerminalRows(blockHeaderText(block), contentWidth)
-  return headerRows + 1 + Math.max(1, textRows + detailRows)
+  return frameRows + headerRows + 1 + Math.max(1, textRows + detailRows)
 }
 
 /** The rendered header line, shared by the view and the row estimate. */
