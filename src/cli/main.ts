@@ -1,6 +1,9 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
 import { runTerminalProduct } from '../terminal/product.js'
+import { join } from 'node:path'
+import { forkComposition, readCompositionSummary } from '../upstream/composition.js'
+import { defaultRuntimeConfigPath } from '../upstream/runtime-launcher.js'
 import { sanitizeTerminalText, stringifyTerminalSafeJson } from '../terminal/sanitize.js'
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
@@ -137,9 +140,34 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
         },
       })
       try {
+        const configPath = options.runtimeConfig ?? defaultRuntimeConfigPath()
+        const composition = await readCompositionSummary(
+          configPath,
+          options.runtimeConfig === undefined ? 'shipped-default' : 'override',
+        )
         const result = await runTerminalProduct(runtime, {
           initialSessionId: options.sessionId,
           debug: options.debug,
+          ...(composition === undefined ? {} : { composition }),
+          // A fork lands beside the workspace so it travels with the project
+          // rather than with this machine.
+          forkComposition: (from) => forkComposition(
+            from,
+            join(options.workspace ?? process.cwd(), '.dshc', 'cordis.yml'),
+          ),
+          // Construction and startup live here; the product owns presentation
+          // and lifecycle, not how a runtime is built.
+          restart: async (selection) => {
+            const next = createRuntime({
+              ...options,
+              ...(selection.provider === undefined ? {} : { provider: selection.provider }),
+              ...(selection.model === undefined ? {} : { model: selection.model }),
+              ...(selection.maxTokens === undefined ? {} : { maxTokens: selection.maxTokens }),
+              ...(selection.runtimeConfig === undefined ? {} : { runtimeConfig: selection.runtimeConfig }),
+            })
+            const metadata = await next.start()
+            return { runtime: next, metadata }
+          },
         })
         exitCode = result.exitCode
       } catch (error) {

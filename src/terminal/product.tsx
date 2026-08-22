@@ -3,6 +3,7 @@ import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { createSessionId } from '../session/interactive-state.js'
 import { classifyRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata } from '../upstream/runtime.js'
+import type { CompositionForkResult, CompositionSummary } from '../upstream/composition.js'
 import { DSHC_VERSION } from '../version.js'
 import type {
   TerminalCommandContext,
@@ -55,8 +56,32 @@ const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
 export const DEFAULT_FOLD_LIMIT = 1_200
 
+/** The initialize parameters a restart may change, plus the composition file. */
+export interface RuntimeSelection {
+  provider?: string
+  model?: string
+  maxTokens?: number
+  /** Composition file to launch with; absent keeps the current one. */
+  runtimeConfig?: string
+}
+
+export interface RuntimeRestart {
+  runtime: HarnessRuntime
+  metadata: HarnessRuntimeMetadata
+}
+
 export interface TerminalProductOptions {
   debug?: boolean
+  /** Composition summary for `/config`; display only. */
+  composition?: CompositionSummary
+  /** Copies the composition into the workspace so it can be edited. */
+  forkComposition?: (from: string) => Promise<CompositionForkResult>
+  /**
+   * Starts a fresh runtime with the given selection. Protocol 0.0.1 has no way
+   * to reconfigure a live runtime, so every configuration change is a restart,
+   * and a restart starts a new session.
+   */
+  restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
   initialSessionId?: string
   host?: TerminalPluginHost
   useAlternateScreen?: boolean
@@ -80,6 +105,10 @@ export async function runTerminalProduct(
   options: TerminalProductOptions = {},
 ): Promise<TerminalProductResult> {
   const metadata = await runtime.start()
+  // Held mutably so a configuration restart can swap it without tearing the UI
+  // down. The new runtime is started before the old one closes, so a rejected
+  // composition leaves the session working rather than stranded.
+  const runtimeRef = { current: runtime }
   const host = options.host ?? createDefaultTerminalHost()
   const initialSessionId = options.initialSessionId ?? createSessionId()
   const stdin = options.stdin ?? process.stdin
@@ -109,7 +138,7 @@ export async function runTerminalProduct(
       totalTurns: latest.totalTurns,
       sessionId: latest.sessionId,
     })
-    void runtime.close().catch(() => undefined)
+    void runtimeRef.current.close().catch(() => undefined)
   }
   const onInt = (): void => closeForSignal(130)
   const onTerm = (): void => closeForSignal(143)
@@ -124,8 +153,11 @@ export async function runTerminalProduct(
 
     instance = render(
       <TerminalProductApp
-        runtime={runtime}
+        runtimeRef={runtimeRef}
         metadata={metadata}
+        {...(options.restart === undefined ? {} : { restart: options.restart })}
+        {...(options.composition === undefined ? {} : { composition: options.composition })}
+        {...(options.forkComposition === undefined ? {} : { forkComposition: options.forkComposition })}
         host={host}
         debug={options.debug ?? false}
         initialSessionId={initialSessionId}
@@ -157,8 +189,12 @@ export async function runTerminalProduct(
 }
 
 interface AppProps {
-  runtime: HarnessRuntime
+  /** Mutable so a configuration restart can swap the runtime under the UI. */
+  runtimeRef: { current: HarnessRuntime }
   metadata: HarnessRuntimeMetadata
+  restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
+  composition?: CompositionSummary
+  forkComposition?: (from: string) => Promise<CompositionForkResult>
   host: TerminalPluginHost
   debug: boolean
   initialSessionId: string
@@ -182,6 +218,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
+  const [metadata, setMetadata] = useState(props.metadata)
   const [showTools, setShowTools] = useState(true)
   // Scroll position in blocks from the newest, mirrored in a ref for the same
   // within-chunk ordering reason focus needs one.
@@ -250,7 +287,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const nextId = useCallback((prefix: string): string => `${prefix}-${++idRef.current}`, [])
 
   const commandContext = useCallback((): TerminalCommandContext => ({
-    runtime: props.metadata,
+    runtime: metadata,
     session: { sessionId, turnCount: sessionTurns, generation },
     phase,
     totalTurns,
@@ -262,6 +299,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     renderers: props.host.listRenderers(),
     plugins: props.host.listPlugins(),
     events: eventHistory.items,
+    ...(props.composition === undefined ? {} : { composition: props.composition }),
     ...(selectedToolKeyRef.current === undefined ? {} : { selectedToolKey: selectedToolKeyRef.current }),
     retention: {
       totalEventCount: eventHistory.total,
@@ -288,20 +326,112 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     if (runningRef.current) {
       setTranscript(state => appendSystemMessage(
         state,
-        `Ctrl+C closes the entire Harness runtime; protocol ${props.metadata.protocolVersion} has no prompt-level cancel.`,
+        `Ctrl+C closes the entire Harness runtime; protocol ${metadata.protocolVersion} has no prompt-level cancel.`,
         'interrupt',
         nextId('interrupt'),
       ))
     }
     setPhase('closing')
-    void props.runtime.close().finally(() => finish(130, true))
-  }, [finish, nextId, props.metadata.protocolVersion, props.runtime])
+    void props.runtimeRef.current.close().finally(() => finish(130, true))
+  }, [finish, nextId, metadata.protocolVersion, props.runtimeRef])
 
   const applyOutcome = useCallback(async (outcome: TerminalCommandOutcome): Promise<void> => {
     switch (outcome.kind) {
       case 'message':
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
         return
+      case 'fork-composition': {
+        const source = props.composition
+        const fork = props.forkComposition
+        if (source === undefined || fork === undefined) {
+          setTranscript(state => appendSystemMessage(
+            state,
+            'No composition file is available to fork in this session.',
+            'configuration',
+            nextId('fork'),
+          ))
+          return
+        }
+        try {
+          const result = await fork(source.path)
+          setTranscript(state => appendSystemMessage(
+            state,
+            result.created
+              ? [
+                  `Copied the composition to ${result.path}.`,
+                  '',
+                  'Edit it, then run  /reload ' + result.path + ' --yes  to start a runtime',
+                  'with it. dshc does not interpret the file; run dshc doctor afterwards to',
+                  'see what Harness reports about the result.',
+                ].join('\n')
+              : [
+                  `${result.path} already exists, so nothing was written.`,
+                  '',
+                  'Overwriting would discard edits with no way back. Move or delete it first',
+                  'if you want a fresh copy.',
+                ].join('\n'),
+            'configuration',
+            nextId('fork'),
+          ))
+        } catch (error) {
+          const failure = classifyRuntimeError(error)
+          setTranscript(state => appendSystemMessage(
+            state,
+            `Could not copy the composition: ${failure.message}`,
+            `configuration error · ${failure.code}`,
+            nextId('fork-error'),
+          ))
+        }
+        return
+      }
+      case 'restart-runtime': {
+        const restart = props.restart
+        if (restart === undefined) {
+          setTranscript(state => appendSystemMessage(
+            state,
+            'This session cannot restart its runtime: no restart was supplied to the terminal product.',
+            'configuration',
+            nextId('restart'),
+          ))
+          return
+        }
+        setTranscript(state => appendSystemMessage(
+          state,
+          `Restarting with ${outcome.summary}. The current session ends here.`,
+          'configuration',
+          nextId('restart'),
+        ))
+        try {
+          // Start the replacement before closing the old one, so a rejected
+          // composition leaves the session working instead of stranded.
+          const next = await restart(outcome.selection)
+          const previous = props.runtimeRef.current
+          props.runtimeRef.current = next.runtime
+          setMetadata(next.metadata)
+          void previous.close().catch(() => undefined)
+          const fresh = createSessionId()
+          setSessionId(fresh)
+          setGeneration(value => value + 1)
+          setSessionTurns(0)
+          setAgentTopology(initialAgentTopologyHistory())
+          jumpToNewest()
+          setTranscript(state => appendSystemMessage(
+            state,
+            `Runtime restarted with ${outcome.summary}. New session ${fresh}; run /config to see what it launched with.`,
+            'configuration',
+            nextId('restart'),
+          ))
+        } catch (error) {
+          const failure = classifyRuntimeError(error)
+          setTranscript(state => appendSystemMessage(
+            state,
+            `Restart failed, so the previous runtime is still serving this session: ${failure.message}`,
+            `configuration error · ${failure.code}`,
+            nextId('restart-error'),
+          ))
+        }
+        return
+      }
       case 'toggle-tools':
         setShowTools(value => {
           if (value) {
@@ -332,7 +462,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setAgentTopology(initialAgentTopologyHistory())
         setTranscript(state => appendSystemMessage(
           state,
-          `new ${next}\nprevious ${previous} remains runtime-owned until exit; protocol ${props.metadata.protocolVersion} has no session-close request.`,
+          `new ${next}\nprevious ${previous} remains runtime-owned until exit; protocol ${metadata.protocolVersion} has no session-close request.`,
           'session',
           nextId('session'),
         ))
@@ -347,7 +477,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         finish(0, false)
         return
     }
-  }, [finish, nextId, props.host, props.metadata.protocolVersion, sessionId])
+  }, [finish, nextId, props.host, metadata.protocolVersion, sessionId])
 
   const runCommand = useCallback(async (raw: string): Promise<boolean> => {
     const parsed = parseTerminalCommand(raw)
@@ -404,7 +534,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     runningRef.current = true
 
     try {
-      const result = await props.runtime.run(prompt, {
+      const result = await props.runtimeRef.current.run(prompt, {
         sessionId: rootSessionId,
         onEvent: event => {
           // Complete normalized events feed presentation first. Only the local
@@ -437,12 +567,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       const failure = classifyRuntimeError(error)
       setPhase('failed')
       setTranscript(state => appendSystemMessage(state, failure.message, `runtime error · ${failure.code}`, nextId('runtime-error')))
-      await props.runtime.close().catch(() => undefined)
+      await props.runtimeRef.current.close().catch(() => undefined)
       finish(1, false)
     } finally {
       runningRef.current = false
     }
-  }, [finish, input, nextId, props.debug, props.host, props.runtime, runCommand, sessionId])
+  }, [finish, input, nextId, props.debug, props.host, props.runtimeRef, runCommand, sessionId])
 
   useInput((keyInput, key) => {
     // Ink reports one parsed key per stdin chunk, but a chunk can carry several
@@ -617,7 +747,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         <Text dimColor>{DSHC_VERSION}</Text>
       </Box>
       <Box flexShrink={0}>
-        <Text dimColor>{sanitizeTerminalText(props.metadata.serverName)}/{sanitizeTerminalText(props.metadata.protocolVersion)}</Text>
+        <Text dimColor>{sanitizeTerminalText(metadata.serverName)}/{sanitizeTerminalText(metadata.protocolVersion)}</Text>
       </Box>
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden" marginTop={1}>

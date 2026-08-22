@@ -12,6 +12,7 @@ import {
   type TranscriptMutation,
 } from './api.js'
 import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
+import { configurationPlugin } from './configuration.js'
 import { TerminalPluginHost } from './host.js'
 
 const TRACE_PAGE_SIZE = 15
@@ -34,6 +35,7 @@ export function createDefaultTerminalHost(): TerminalPluginHost {
   host.register(corePlugin())
   host.register(codingActivityPlugin())
   host.register(activityPlugin())
+  host.register(configurationPlugin())
   return host
 }
 
