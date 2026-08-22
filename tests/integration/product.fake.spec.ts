@@ -56,11 +56,18 @@ function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRun
   })
 }
 
-/** The newest rendered frame: everything after the last screen clear. */
+/**
+ * The newest rendered frame: everything after the last screen clear. The clear
+ * sequence differs by platform, so match any of them rather than assuming the
+ * one this machine happens to emit.
+ */
 function lastFrame(output: string): string {
-  const marker = '[H'
-  const at = output.lastIndexOf(marker)
-  return at < 0 ? output : output.slice(at + marker.length)
+  let start = -1
+  for (const marker of ['[H', '[0f', '[3J']) {
+    const at = output.lastIndexOf(marker)
+    if (at >= 0 && at + marker.length > start) start = at + marker.length
+  }
+  return start < 0 ? output : output.slice(start)
 }
 
 function capture(stream: PassThrough): () => string {
