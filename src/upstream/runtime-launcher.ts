@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import { DshcRuntimeError } from './errors.js'
+import { PERSONA_ENV_VAR, resolvePersona } from './persona.js'
 
 export interface RuntimeLaunchOptions {
   workspace: string
@@ -27,11 +28,20 @@ export interface RuntimeLaunchOptions {
  */
 export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): NodeJS.ProcessEnv {
   if (options.override !== undefined) return options.override.env ?? process.env
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...options.env,
     DSH_CWD: options.workspace,
   }
+  // The composition reads the persona from this variable, so resolving it here
+  // keeps the launch facts (host, workspace) with the launch, and leaves an
+  // operator-set value untouched.
+  const persona = resolvePersona(env, {
+    platform: process.platform,
+    workspace: options.workspace,
+  })
+  if (persona !== undefined) env[PERSONA_ENV_VAR] = persona
+  return env
 }
 
 export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promise<HarnessClientOptions> {

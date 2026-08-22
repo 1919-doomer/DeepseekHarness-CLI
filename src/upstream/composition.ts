@@ -41,9 +41,34 @@ export async function readCompositionSummary(
 
   const entries: CompositionEntry[] = []
   let current: { id: string; settings: string[] } | undefined
+  // Indent of the key that opened a `|`/`>` block scalar, while its body runs.
+  let blockIndent: number | undefined
+  let blockKey = ''
+  let blockLines = 0
+  let blockOwner: { settings: string[] } | undefined
+
+  const closeBlock = (): void => {
+    blockOwner?.settings.push(`${blockKey}: ${blockLines} line${blockLines === 1 ? '' : 's'}`)
+    blockIndent = undefined
+    blockOwner = undefined
+    blockLines = 0
+  }
 
   for (const raw of text.split('\n')) {
     const line = raw.replace(/\r$/, '')
+    const indent = line.length - line.trimStart().length
+
+    // A block scalar's body is prose — a persona is hundreds of words — and
+    // listing it line by line would bury the settings this summary exists to
+    // show. The key stays; the body is summarised by its line count.
+    if (blockIndent !== undefined) {
+      if (line.trim().length === 0 || indent > blockIndent) {
+        if (line.trim().length > 0) blockLines += 1
+        continue
+      }
+      closeBlock()
+    }
+
     if (line.trim().length === 0 || line.trimStart().startsWith('#')) continue
 
     const entry = /^-\s+id:\s*(.+)$/.exec(line.trim())
@@ -56,13 +81,22 @@ export async function readCompositionSummary(
     if (current === undefined) continue
     // Settings sit deeper than the entry's own keys; anything at four spaces or
     // more belongs to a config block rather than to the entry itself.
-    const indent = line.length - line.trimStart().length
     if (indent < 4) continue
     const setting = line.trim()
     if (setting.startsWith('-')) continue
+
+    const block = /^([^:]+):\s*[|>][-+0-9]*$/.exec(setting)
+    if (block?.[1] !== undefined) {
+      blockIndent = indent
+      blockKey = block[1]
+      blockLines = 0
+      blockOwner = current
+      continue
+    }
     current.settings.push(setting)
   }
 
+  if (blockIndent !== undefined) closeBlock()
   if (current !== undefined) entries.push(current)
   return { path, source, entries }
 }
