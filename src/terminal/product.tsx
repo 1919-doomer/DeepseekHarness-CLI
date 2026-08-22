@@ -571,11 +571,17 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
-      <Box justifyContent="space-between">
+      {/* The chrome is fixed height and must never be compressed: when Yoga
+          shrinks a column it lays children on top of each other, which is how
+          the prompt used to overwrite its own hint. Only the body row absorbs
+          the constraint. */}
+      <Box flexShrink={0} justifyContent="space-between">
         <Text bold>DeepSeek Harness Console</Text>
         <Text dimColor>{DSHC_VERSION}</Text>
       </Box>
-      <Text dimColor>{sanitizeTerminalText(props.metadata.serverName)}/{sanitizeTerminalText(props.metadata.protocolVersion)}</Text>
+      <Box flexShrink={0}>
+        <Text dimColor>{sanitizeTerminalText(props.metadata.serverName)}/{sanitizeTerminalText(props.metadata.protocolVersion)}</Text>
+      </Box>
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden" marginTop={1}>
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
@@ -594,11 +600,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         )}
       </Box>
 
-      <Box borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
+      <Box flexShrink={0} borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
         <Text>{cropTerminalText(status, Math.max(10, size.columns - 4))}</Text>
       </Box>
 
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" flexShrink={0} paddingX={1}>
         {currentView !== undefined
           ? <Text dimColor>Esc / Enter / q · return to transcript</Text>
           : <>

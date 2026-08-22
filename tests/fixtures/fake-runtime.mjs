@@ -29,6 +29,17 @@ function response(id, result) {
 // would let the pairing logic pass here while failing on the wire.
 let nextEventSeq = 0
 
+// A reply long enough to overflow a short frame. Wide characters are included
+// because the sessions that exposed the compression were Chinese, where a line
+// occupies twice the columns its length suggests.
+function verboseAnswer() {
+  const lines = []
+  for (let index = 0; index < 40; index++) {
+    lines.push(`第 ${index} 行：这是一段足够长的中文回答，用来把整帧填满`)
+  }
+  return lines.join('\n')
+}
+
 function sessionEvent(sessionId, type, data, sourceEventSeqs) {
   const seq = nextEventSeq++
   notify('session.event', {
@@ -174,7 +185,7 @@ function emitCompletedTurn(sessionId, turn) {
     step: 2,
     message: {
       role: 'assistant',
-      content: [{ type: 'text', text: 'hello' }],
+      content: [{ type: 'text', text: mode === 'verbose' ? verboseAnswer() : 'hello' }],
     },
   })
   sessionEvent(sessionId, 'step/end', { turn, step: 2 })
