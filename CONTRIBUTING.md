@@ -4,6 +4,10 @@ Thanks for contributing to DeepSeek Harness CLI.
 
 This is an unofficial community frontend for DeepSeek Harness. The project intentionally keeps a narrow boundary: the terminal owns interaction and presentation; DeepSeek Harness owns agent semantics.
 
+New maintainers should read [docs/HANDOVER.md](docs/HANDOVER.md) first. It
+carries the verification ladder, the failure modes this project has actually
+hit, and the environment traps — none of which are visible from the code.
+
 ## Before opening code
 
 1. Check the current roadmap and open GitHub Issues.
