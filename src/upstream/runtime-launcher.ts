@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import { DshcRuntimeError } from './errors.js'
+import { readNetworkFacts } from './network.js'
 import { PERSONA_ENV_VAR, resolvePersona } from './persona.js'
 
 export interface RuntimeLaunchOptions {
@@ -39,6 +40,7 @@ export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): Node
   const persona = resolvePersona(env, {
     platform: process.platform,
     workspace: options.workspace,
+    network: readNetworkFacts(env, options.workspace),
   })
   if (persona !== undefined) env[PERSONA_ENV_VAR] = persona
   return env

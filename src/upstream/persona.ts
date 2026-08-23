@@ -26,11 +26,15 @@
  *    coupling that produced #83 and #84.
  */
 
+import { describeNetwork, type NetworkFacts } from './network.js'
+
 export interface PersonaFacts {
   /** Host platform, as `process.platform` reports it. */
   platform: NodeJS.Platform
   /** Absolute workspace path dshc launched the runtime with. */
   workspace: string
+  /** Proxy and registry configuration observed at launch. */
+  network: NetworkFacts
 }
 
 /** Environment variable a deployment uses to replace the persona wholesale. */
@@ -59,6 +63,7 @@ export function buildPersona(facts: PersonaFacts): string {
     '  will never receive.',
     '- Your output is rendered in a terminal. Prose and short lists read well; wide',
     '  tables, deep nesting and long unbroken lines do not.',
+    ...networkLines(facts.network),
     '',
     'How to work',
     '- Inspect before you change: read the file, then edit it.',
@@ -82,6 +87,30 @@ export function resolvePersona(
   const configured = env[PERSONA_ENV_VAR]
   if (configured !== undefined && configured.trim().length > 0) return undefined
   return buildPersona(facts)
+}
+
+/**
+ * What dshc observed about the host's network configuration — never what it
+ * concluded. dshc does not probe reachability, and a proxy variable being set
+ * is not evidence that the proxy works. Stating the configuration and stopping
+ * there is what keeps this from becoming a confident guess about the internet.
+ */
+function networkLines(network: NetworkFacts): readonly string[] {
+  const observed = describeNetwork(network)
+  if (observed.length === 0) {
+    return [
+      '- No HTTP proxy is configured for this process, and no npm registry override',
+      '  was found. dshc did not probe the network, so reachability is unknown.',
+    ]
+  }
+
+  return [
+    '- Network configuration observed at launch:',
+    ...observed.map(line => `    ${line}`),
+    '  dshc did not probe reachability, so treat these as constraints rather than',
+    '  guarantees. Give network commands an explicit timeout, and when one hangs,',
+    '  report it instead of retrying — a retry that also hangs costs the session.',
+  ]
 }
 
 function hostDescription(platform: NodeJS.Platform): string {

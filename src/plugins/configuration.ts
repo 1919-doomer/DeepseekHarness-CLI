@@ -25,6 +25,9 @@ export const CONFIG_USAGE = [
   '  /reload [path] [--yes]     restart, optionally with another composition file',
   '  /config                    show the composition this runtime was launched with',
   '  /config fork               copy it into the workspace so you can edit it',
+  '',
+  'A composition at <workspace>/.dshc/cordis.yml is picked up on every launch in',
+  'that workspace, with no flag. --runtime-config still wins over it.',
 ].join('\n')
 
 export function configurationPlugin(): TerminalPluginSpec {

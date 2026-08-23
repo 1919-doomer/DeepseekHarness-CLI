@@ -47,7 +47,10 @@ describe('M4 runtime composition', () => {
     ]))
 
     expect(config).toContain('mode: workspace-write')
-    expect(config).toContain('policy: ask')
+    // `never`, not `ask`: no answerer exists on this transport, so `ask` told
+    // the model it might be prompted and then failed closed in silence.
+    expect(config).toContain('policy: never')
+    expect(config).not.toContain('policy: ask')
     expect(config).toContain("disabled: !!js process.platform === 'win32'")
     expect(config).toContain("disabled: !!js process.platform !== 'win32'")
     expect(config).toContain('workspaceContext:\n      maxBytes: 65536')

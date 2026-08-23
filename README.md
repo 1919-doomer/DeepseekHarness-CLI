@@ -43,7 +43,8 @@ Current capabilities:
 - terminal ESC/CSI/OSC/C1/bidi sanitization, secret-redacted diagnostics and exception-safe alternate-screen cleanup;
 - `dshc doctor` compatibility/startup preflight that performs `initialize` only and never issues a model prompt;
 - M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
-- a deployment persona built from the launch itself — host, workspace, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
+- a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
+- a composition at `<workspace>/.dshc/cordis.yml` is used by every launch in that workspace without a flag, and `doctor` reports which of shipped/workspace/override it resolved;
 - `scout` / `planner` / `reviewer` / `oracle` read-only role subagents alongside the general `subagent`, mounted on the upstream delegation seam rather than on a scheduler of our own — see [subagent roles](docs/SUBAGENT-ROLES.md);
 - `/config`, `/config fork`, `/model`, `/provider` and `/reload` for inspecting and replacing the composition, each stating the session loss before it acts.
 
