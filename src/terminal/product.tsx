@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { createSessionId } from '../session/interactive-state.js'
+import { accumulateUsage, initialSessionUsage } from '../session/usage.js'
 import { classifyRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata } from '../upstream/runtime.js'
 import type { CompositionForkResult, CompositionSummary } from '../upstream/composition.js'
@@ -210,6 +211,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [generation, setGeneration] = useState(1)
   const [sessionTurns, setSessionTurns] = useState(0)
   const [totalTurns, setTotalTurns] = useState(0)
+  // Usage is per runtime: a restart genuinely starts new accounting, but /clear
+  // only drops local blocks and must not pretend the tokens were not spent.
+  const [usage, setUsage] = useState(initialSessionUsage)
   const [phase, setPhase] = useState<TerminalRuntimePhase>('idle')
   const [transcript, setTranscript] = useState<TerminalTranscriptState>(initialTerminalTranscript)
   const [eventHistory, setEventHistory] = useState<TerminalEventHistory>(initialTerminalEventHistory)
@@ -291,7 +295,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     session: { sessionId, turnCount: sessionTurns, generation },
     phase,
     totalTurns,
-  }), [generation, phase, props.metadata, sessionId, sessionTurns, totalTurns])
+    usage,
+  }), [generation, phase, props.metadata, sessionId, sessionTurns, totalTurns, usage])
 
   const viewContext = useCallback((): TerminalViewContext => ({
     ...commandContext(),
@@ -552,6 +557,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           ))
           setEventHistory(state => appendTerminalEventHistory(state, event))
           setAgentTopology(state => reduceAgentTopologyHistory(state, event))
+          setUsage(state => accumulateUsage(state, event, rootSessionId))
         },
       })
       setSessionTurns(value => value + 1)

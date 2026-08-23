@@ -622,6 +622,58 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await runtime.close()
     }
   }, 15_000)
+
+  it('shows token usage once a turn has reported it, and never a context percentage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m4-usage-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    output.rows = 44
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      initialSessionId: 'm4-usage-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      // Nothing has reported usage yet, so the segment must be absent rather
+      // than showing a confident zero.
+      expect(await renderedAfterTick(input, readOutput)).not.toContain('ctx ')
+
+      await submitLine(input, 'a turn that reports usage')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      await waitForTurn(readOutput, 1)
+
+      const frame = await renderedAfterTick(input, readOutput)
+      // 4267 input tokens on the root session; the subagent's 900 must not
+      // become the number describing this conversation's size.
+      expect(frame).toContain('ctx 4.3K')
+      expect(frame).not.toContain('ctx 900')
+
+      await submitLine(input, '/status')
+      const status = await renderedAfterTick(input, readOutput)
+      expect(status).toContain('latest request input')
+      // Cumulative output counts every session, root and child alike.
+      expect(status).toContain('cumulative output')
+      expect(status).toContain('will not invent one')
+      expect(status).not.toMatch(/\d+% (of|full|used)/)
+
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 20_000)
 })
 
 async function submitLine(input: TestInput, text: string): Promise<void> {

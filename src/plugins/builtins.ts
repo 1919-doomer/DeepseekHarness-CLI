@@ -1,3 +1,4 @@
+import { formatSessionUsage, describeSessionUsage } from '../session/usage.js'
 import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
 import { findToolActivityDetail, formatActivityElapsed } from '../terminal/tool-activity.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
@@ -79,6 +80,11 @@ function corePlugin(): TerminalPluginSpec {
       { id: 'model', priority: 90, render: context => context.runtime.model },
       { id: 'session', priority: 80, render: context => compactSession(context.session.sessionId) },
       { id: 'turns', priority: 70, render: context => `turns:${context.totalTurns}` },
+      {
+        id: 'usage',
+        priority: 60,
+        render: context => context.usage === undefined ? undefined : formatSessionUsage(context.usage),
+      },
       { id: 'workspace', priority: 10, render: context => context.runtime.workspace },
     ],
   }
@@ -474,7 +480,10 @@ function deriveTopologyFromEvents(events: readonly NormalizedEvent[]): readonly 
 }
 
 function statusMessage(context: TerminalCommandContext): string {
-  return `runtime=${context.runtime.serverName}/${context.runtime.protocolVersion} provider=${context.runtime.provider} model=${context.runtime.model} phase=${context.phase} session=${context.session.sessionId} turns=${context.totalTurns} workspace=${context.runtime.workspace}`
+  const head = `runtime=${context.runtime.serverName}/${context.runtime.protocolVersion} provider=${context.runtime.provider} model=${context.runtime.model} phase=${context.phase} session=${context.session.sessionId} turns=${context.totalTurns} workspace=${context.runtime.workspace}`
+  if (context.usage === undefined) return head
+  const tokens = describeSessionUsage(context.usage).map(line => `  ${line}`)
+  return [head, '', 'Tokens', ...tokens].join('\n')
 }
 
 function scopedTitle(base: string, sessionId: string, rootSessionId: string): string {

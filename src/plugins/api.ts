@@ -1,4 +1,5 @@
 import type { NormalizedEvent } from '../session/projection.js'
+import type { SessionUsage } from '../session/usage.js'
 import type { HarnessRuntimeMetadata } from '../upstream/runtime.js'
 
 export const TERMINAL_PLUGIN_API_VERSION = 1 as const
@@ -16,6 +17,8 @@ export interface TerminalCommandContext {
   session: TerminalSessionSnapshot
   phase: TerminalRuntimePhase
   totalTurns: number
+  /** Token accounting folded from upstream. Optional to keep API v1 compatible. */
+  usage?: SessionUsage
 }
 
 export type TerminalCommandOutcome =
