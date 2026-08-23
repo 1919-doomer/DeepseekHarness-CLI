@@ -52,6 +52,14 @@ import {
   terminalCellWidth,
   wrappedTerminalRows,
 } from './text-metrics.js'
+import {
+  looksLikeMarkdown,
+  parseMarkdown,
+  spanText,
+  tableColumnWidths,
+  type MarkdownLine,
+  type MarkdownSpan,
+} from './markdown.js'
 
 const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
@@ -211,6 +219,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [generation, setGeneration] = useState(1)
   const [sessionTurns, setSessionTurns] = useState(0)
   const [totalTurns, setTotalTurns] = useState(0)
+  // Which suggestion the slash menu has highlighted, and whether Escape has
+  // dismissed it for the current input. Both reset whenever the input changes,
+  // because the list they refer to has changed with it.
+  const [menuIndex, setMenuIndex] = useState(0)
+  const [menuDismissed, setMenuDismissed] = useState(false)
   // Usage is per runtime: a restart genuinely starts new accounting, but /clear
   // only drops local blocks and must not pretend the tokens were not spent.
   const [usage, setUsage] = useState(initialSessionUsage)
@@ -272,11 +285,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const commandRunningRef = useRef(false)
   const interruptingRef = useRef(false)
   const totalTurnsRef = useRef(0)
+  const suggestionsRef = useRef<readonly CommandSuggestion[]>([])
+  const menuIndexRef = useRef(0)
+  const menuDismissedRef = useRef(false)
   const sessionRef = useRef(sessionId)
   const idRef = useRef(0)
 
   sessionRef.current = sessionId
   totalTurnsRef.current = totalTurns
+  menuIndexRef.current = menuIndex
+  menuDismissedRef.current = menuDismissed
 
   useEffect(() => {
     props.onProgress(totalTurns, sessionId)
@@ -289,6 +307,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   }, [stdout])
 
   const nextId = useCallback((prefix: string): string => `${prefix}-${++idRef.current}`, [])
+
+  // The suggestion list is derived from the input, so any edit invalidates both
+  // the highlight and an earlier dismissal. Resetting here rather than at each
+  // setInput site means a new edit path cannot forget to.
+  useEffect(() => {
+    setMenuIndex(0)
+    setMenuDismissed(false)
+  }, [input])
 
   const commandContext = useCallback((): TerminalCommandContext => ({
     runtime: metadata,
@@ -605,6 +631,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     // that changes focus, and the current focus is always stated on screen, so
     // the arrow keys never mean two things at once.
     if (key.tab) {
+      // The menu is transient and explicitly open, so it takes Tab from the
+      // focus switch for as long as it is showing.
+      if (completeFromMenu()) return
       if (!toolFocusRef.current && activityRowKeysRef.current.length === 0) return
       const next = !toolFocusRef.current
       focusTools(next)
@@ -639,6 +668,24 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
 
     if (runningRef.current || commandRunningRef.current) return
+
+    if (menuOpen()) {
+      if (key.escape) {
+        setMenuDismissed(true)
+        return
+      }
+      if (key.upArrow || key.downArrow) {
+        // While the menu is open the arrows belong to it. History is reachable
+        // again the moment the menu closes, and the menu is always on screen
+        // when this applies, so the keys never silently mean two things.
+        const count = suggestionsRef.current.length
+        setMenuIndex(value => (value + (key.downArrow ? 1 : count - 1)) % count)
+        return
+      }
+      // Enter completes an unfinished command and submits a finished one, so
+      // muscle memory for `/help<enter>` still submits in one keystroke.
+      if (key.return && completeFromMenu()) return
+    }
 
     if (key.return) {
       // Submitting returns to the newest activity: a reply arriving off-screen
@@ -703,6 +750,26 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     selectTool(keys[next])
   }
 
+  function menuOpen(): boolean {
+    return !menuDismissedRef.current && suggestionsRef.current.length > 0
+  }
+
+  /**
+   * Put the highlighted command in the prompt. Returns false when there is
+   * nothing to complete — either the menu is closed, or the input already is
+   * exactly that command, in which case the keystroke belongs to submitting.
+   */
+  function completeFromMenu(): boolean {
+    if (!menuOpen()) return false
+    const selected = suggestionsRef.current[menuIndexRef.current]
+    if (selected === undefined) return false
+    const completed = `/${selected.name} `
+    if (input === completed || input === `/${selected.name}`) return false
+    setInput(completed)
+    setCursor(graphemeCount(completed))
+    return true
+  }
+
   function insertInput(text: string): void {
     const edited = insertAtGrapheme(input, cursor, text)
     setInput(edited.value)
@@ -720,15 +787,18 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
   const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
-  const suggestions = currentView === undefined && !toolFocus
+  const suggestions = currentView === undefined && !toolFocus && !menuDismissed
     ? commandSuggestions(input, props.host.listCommands())
     : []
+  suggestionsRef.current = suggestions
   // The menu competes with the transcript for rows, so it takes only what is
   // left after the chrome and a usable body. On a short terminal it shows
   // fewer entries rather than being clipped by the frame.
   const menuCapacity = Math.max(0, Math.min(8, size.rows - 7 - MIN_BODY_ROWS))
-  const menuShown = Math.min(suggestions.length, menuCapacity)
-  const menuRows = menuShown === 0 ? 0 : menuShown + (suggestions.length > menuShown ? 1 : 0)
+  const menuView = menuWindow(suggestions.length, menuCapacity, menuIndex)
+  const menuRows = menuView.shown === 0
+    ? 0
+    : menuView.shown + (menuView.above > 0 ? 1 : 0) + (menuView.below > 0 ? 1 : 0)
   const bodyRows = Math.max(MIN_BODY_ROWS, size.rows - 7 - menuRows)
   // A sidebar takes a fixed column count, never a share of the width, so the
   // transcript rewraps predictably. Below the threshold it collapses rather
@@ -792,8 +862,13 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         <Text>{cropTerminalText(status, Math.max(10, size.columns - 4))}</Text>
       </Box>
 
-      {menuShown > 0 && (
-        <CommandMenu suggestions={suggestions} shown={menuShown} width={size.columns} />
+      {menuView.shown > 0 && (
+        <CommandMenu
+          suggestions={suggestions}
+          view={menuView}
+          selected={menuIndex}
+          width={size.columns}
+        />
       )}
 
       <Box flexDirection="column" flexShrink={0} paddingX={1}>
@@ -805,7 +880,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
                 : phase === 'running'
                   ? 'Harness is running… Ctrl+C closes the whole runtime'
                   : commandBusy ? 'Local terminal command is running…'
-                    : 'Enter submit · ↑/↓ history · PgUp/PgDn scroll · Tab tools · /help'}</Text>
+                    // The arrows and Tab mean something different while the
+                    // menu is open, so the line says which meaning is live
+                    // rather than leaving the reader to discover it.
+                    : menuView.shown > 0
+                      ? '↑/↓ choose · Tab complete · Enter run · Esc close'
+                      : 'Enter submit · ↑/↓ history · PgUp/PgDn scroll · Tab tools · /help'}</Text>
               <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
             </>}
       </Box>
@@ -947,25 +1027,55 @@ export function commandSuggestions(
     .map(command => ({ name: command.name, summary: command.summary }))
 }
 
-function CommandMenu({ suggestions, shown, width }: {
-  suggestions: readonly CommandSuggestion[]
+/**
+ * Which slice of the suggestion list is on screen, and how much is out of sight
+ * on each side. The window follows the selection rather than truncating at the
+ * capacity, so an entry below the fold is reachable instead of merely counted.
+ */
+export function menuWindow(count: number, capacity: number, index: number): {
+  offset: number
   shown: number
+  above: number
+  below: number
+} {
+  const shown = Math.max(0, Math.min(count, capacity))
+  if (shown === 0) return { offset: 0, shown: 0, above: 0, below: 0 }
+  const clamped = Math.max(0, Math.min(count - 1, index))
+  const offset = Math.max(0, Math.min(count - shown, clamped - shown + 1))
+  return { offset, shown, above: offset, below: Math.max(0, count - offset - shown) }
+}
+
+function CommandMenu({ suggestions, view, selected, width }: {
+  suggestions: readonly CommandSuggestion[]
+  view: { offset: number; shown: number; above: number; below: number }
+  selected: number
   width: number
 }): React.ReactElement {
   const nameWidth = Math.max(...suggestions.map(item => item.name.length + 1))
+  const visible = suggestions.slice(view.offset, view.offset + view.shown)
   return (
     <Box flexDirection="column" flexShrink={0} paddingX={1}>
-      {suggestions.slice(0, shown).map(item => (
-        <Box key={item.name} flexShrink={0}>
-          <Text wrap="truncate">{cropTerminalText(
-            `/${item.name.padEnd(nameWidth)} ${item.summary}`,
-            Math.max(10, width - 2),
-          )}</Text>
-        </Box>
-      ))}
-      {suggestions.length > shown && (
+      {view.above > 0 && (
         <Box flexShrink={0}>
-          <Text dimColor>{`… ${suggestions.length - shown} more`}</Text>
+          <Text dimColor>{`↑ ${view.above} more`}</Text>
+        </Box>
+      )}
+      {visible.map((item, position) => {
+        const active = view.offset + position === selected
+        return (
+          <Box key={item.name} flexShrink={0}>
+            {/* Selection is carried by the marker as well as by colour, so it
+                survives a monochrome terminal and a colour-blind reader. */}
+            <Text color={active ? 'cyan' : undefined} bold={active} wrap="truncate">{cropTerminalText(
+              `${active ? '›' : ' '} /${item.name.padEnd(nameWidth)} ${item.summary}`,
+              Math.max(10, width - 2),
+            )}</Text>
+          </Box>
+        )
+      })}
+      {view.below > 0 && (
+        <Box flexShrink={0}>
+          <Text dimColor>{`↓ ${view.below} more`}</Text>
         </Box>
       )}
     </Box>
@@ -1061,10 +1171,135 @@ function TranscriptBlockView({ block, width, condensed = false }: {
           header and the body on the same row, so the colour applies to the
           whole header line instead. */}
       <Text bold={block.kind === 'user' || block.kind === 'assistant'} color={status.color}>{header}</Text>
-      {!collapsed && block.text.length > 0 && <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>}
+      {!collapsed && block.text.length > 0 && (
+        // Prose is rendered as markdown; tool output is not. A tool result is
+        // program output, and a log line containing an asterisk must survive
+        // exactly as the program wrote it.
+        block.kind === 'assistant' && looksLikeMarkdown(block.text)
+          ? <MarkdownBody text={foldTerminalText(block.text, block.foldable === true, bodyWidth)} width={bodyWidth} />
+          : <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>
+      )}
       {!collapsed && block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, bodyWidth)}</Text>}
     </Box>
   )
+}
+
+/**
+ * Draw parsed markdown with Ink props only.
+ *
+ * Every style here is a prop on a `<Text>` element. Nothing in this component,
+ * or in the parser behind it, may emit an escape sequence: the sanitizer strips
+ * those out of upstream text precisely so they cannot reach the terminal, and
+ * re-introducing them on the rendering side would reopen that hole.
+ */
+function MarkdownBody({ text, width }: { text: string; width: number }): React.ReactElement {
+  const lines = parseMarkdown(text)
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {lines.map((line, index) => (
+        <Box key={index} flexShrink={0}>
+          <MarkdownLineView line={line} width={width} />
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+function MarkdownLineView({ line, width }: { line: MarkdownLine; width: number }): React.ReactElement {
+  switch (line.kind) {
+    case 'blank':
+      return <Text> </Text>
+    case 'rule':
+      return <Text dimColor>{'─'.repeat(Math.max(1, Math.min(width, 80)))}</Text>
+    case 'heading':
+      // Level is carried by the prefix as well as the weight, so the structure
+      // survives a monochrome terminal.
+      return (
+        <Text bold color="cyan" wrap="wrap">
+          {`${'#'.repeat(line.level)} `}
+          <Spans spans={line.spans} />
+        </Text>
+      )
+    case 'quote':
+      return (
+        <Text dimColor wrap="wrap">
+          {'│ '}
+          <Spans spans={line.spans} />
+        </Text>
+      )
+    case 'bullet':
+      return (
+        <Text wrap="wrap">
+          {`${' '.repeat(Math.min(line.indent, 8))}${line.marker} `}
+          <Spans spans={line.spans} />
+        </Text>
+      )
+    case 'code':
+      return (
+        <Box flexDirection="column" flexShrink={0} paddingLeft={2}>
+          {line.text.split('\n').map((row, index) => (
+            <Text key={index} color="yellow" dimColor wrap="wrap">{row.length === 0 ? ' ' : row}</Text>
+          ))}
+        </Box>
+      )
+    case 'table':
+      return <MarkdownTable rows={line.rows} headerRows={line.headerRows} width={width} />
+    case 'text':
+      return (
+        <Text wrap="wrap">
+          {' '.repeat(Math.min(line.indent, 8))}
+          <Spans spans={line.spans} />
+        </Text>
+      )
+  }
+}
+
+function MarkdownTable({ rows, headerRows, width }: {
+  rows: readonly (readonly (readonly MarkdownSpan[])[])[]
+  headerRows: number
+  width: number
+}): React.ReactElement {
+  const widths = tableColumnWidths(rows)
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {rows.map((row, rowIndex) => (
+        <Text key={rowIndex} bold={rowIndex < headerRows} wrap="truncate">
+          {cropTerminalText(
+            row
+              .map((cell, column) => padToCells(spanText(cell), widths[column] ?? 0))
+              .join('  '),
+            Math.max(10, width),
+          )}
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
+/**
+ * Inline spans inside one parent Text. Emphasis inside a table cell is dropped
+ * rather than rendered, because a cell has to be padded to a measured width and
+ * a nested element cannot be padded without guessing where it breaks.
+ */
+function Spans({ spans }: { spans: readonly MarkdownSpan[] }): React.ReactElement {
+  return (
+    <>
+      {spans.map((span, index) => (
+        <Text
+          key={index}
+          bold={span.bold === true}
+          italic={span.italic === true}
+          {...(span.code === true ? { color: 'yellow' as const } : {})}
+        >{span.text}</Text>
+      ))}
+    </>
+  )
+}
+
+/** Pad to a cell count rather than a character count, so CJK columns line up. */
+function padToCells(value: string, cells: number): string {
+  const missing = Math.max(0, cells - terminalCellWidth(value))
+  return `${value}${' '.repeat(missing)}`
 }
 
 /**
