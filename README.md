@@ -123,6 +123,13 @@ Useful options:
 --debug
 ```
 
+## Taking this over
+
+[docs/HANDOVER.md](docs/HANDOVER.md) is written for whoever picks this up: how
+to verify a change (a green suite is not enough, and the reasons are specific),
+the failure modes this project has actually hit, what lives where on a working
+machine, and the decisions that are the owner's alone.
+
 ## Protocol truth
 
 The validated baseline remains DeepSeek Harness `0.1.1-rc.1`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.

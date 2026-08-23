@@ -14,6 +14,7 @@
 | [PLUGIN-ISOLATION.md](PLUGIN-ISOLATION.md) | Isolation design required before any third-party terminal plugin may be loaded |
 | [TOOL-ACTIVITY-UI.md](TOOL-ACTIVITY-UI.md) | M4.5 contract for tool activity presentation and runtime configuration |
 | [SUBAGENT-ROLES.md](SUBAGENT-ROLES.md) | What the shipped persona tells the model, and the role subagents mounted beside the general one |
+| [HANDOVER.md](HANDOVER.md) | Operational knowledge for whoever picks this up: how to verify a change, the failure modes that have actually happened, and what only the owner can decide |
 
 Repository-level policies:
 
