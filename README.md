@@ -37,6 +37,9 @@ Current capabilities:
 - upstream approval policy remains `ask`; protocol `0.0.1` has no dshc server-to-client approval transport, so unavailable escalation fails closed;
 - resize-aware transcript, grapheme-safe prompt editor, history navigation and adaptive status line;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
+- a slash menu built from the live registry: arrows choose, Tab completes, Enter runs a finished command and completes an unfinished one, and the window scrolls instead of stopping at the fold;
+- terminal markdown rendering for assistant prose — headings, emphasis, lists, quotes, fenced code and cell-measured tables — applied through Ink props only, never by emitting escape sequences, and never applied to tool output, which is program output and must survive verbatim (the plain one-shot/piped renderer stays unstyled);
+- a token usage readout in the status line and `/status`, in absolute numbers: upstream reports no context window on this transport, so dshc reports no percentage;
 - first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
 - specialized coding-tool/subagent presentation plus a safe generic event fallback;
 - bounded activity/trace/transcript/topology diagnostic retention with explicit eviction disclosure;

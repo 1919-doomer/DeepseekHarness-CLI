@@ -385,7 +385,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await delay(200)
       const menu = readOutput()
       expect(menu).toContain('/agents')
-      expect(menu).toMatch(/… \d+ more/)
+      expect(menu).toMatch(/↓ \d+ more/)
       input.write('')
       await delay(150)
 
@@ -666,6 +666,128 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(status).toContain('cumulative output')
       expect(status).toContain('will not invent one')
       expect(status).not.toMatch(/\d+% (of|full|used)/)
+
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 20_000)
+
+  it('lets the slash menu be navigated, completed and scrolled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m4-menu-'))
+    tempRoots.push(root)
+    const runtime = runtimeFor(root, join(root, 'prompts.jsonl'))
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    output.rows = 30
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      initialSessionId: 'm4-menu-session',
+    })
+
+    const DOWN_ARROW = '\u001b[B'
+    const ESCAPE = '\u001b'
+
+    try {
+      await waitFor(() => input.isRaw)
+      // renderedAfterTick types a character to force a redraw, which would
+      // reset the highlight it is here to observe. Every key below redraws by
+      // itself, so the frame is sliced off the tail instead.
+      let mark = readOutput().length
+      input.write('/')
+      await delay(200)
+      const opened = readOutput().slice(mark)
+      // Something is highlighted from the moment the menu opens, and the marker
+      // carries that as well as the colour.
+      expect(opened).toContain('› /')
+      // More commands exist than fit, and the count below is reachable rather
+      // than merely reported.
+      expect(opened).toMatch(/↓ \d+ more/)
+
+      // Arrowing past the fold scrolls the window instead of stopping.
+      mark = readOutput().length
+      for (let step = 0; step < 9; step += 1) {
+        input.write(DOWN_ARROW)
+        await delay(30)
+      }
+      await delay(120)
+      const scrolled = readOutput().slice(mark)
+      expect(scrolled).toMatch(/↑ \d+ more/)
+
+      // Escape closes it and hands the arrows back to history.
+      mark = readOutput().length
+      input.write(ESCAPE)
+      await delay(200)
+      const dismissed = readOutput().slice(mark)
+      expect(dismissed.length).toBeGreaterThan(0)
+      expect(dismissed).not.toContain('› /')
+
+      // The slash is still in the prompt; leaving it would make the next
+      // line `//exit`, which is the escape for a literal prompt.
+      input.write('\u007f')
+      await delay(60)
+      await submitLine(input, '/exit')
+      await product
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 30_000)
+
+  it('renders markdown instead of printing its markers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m4-markdown-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath, 'markdown')
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    output.rows = 46
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      initialSessionId: 'm4-markdown-session',
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'answer in markdown')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      await waitFor(() => readOutput().includes('Findings'), 5_000, 'markdown answer')
+
+      const frame = await renderedAfterTick(input, readOutput)
+      // The emphasis markers are consumed, not printed.
+      expect(frame).toContain('The parser is fine')
+      expect(frame).not.toContain('**parser**')
+      expect(frame).not.toContain('`pnpm check`')
+      expect(frame).toContain('pnpm check')
+      // A bullet becomes a bullet.
+      expect(frame).toContain('• first point')
+      // A fenced block keeps its contents exactly, markers and all: quoting
+      // something is a request to leave it alone.
+      expect(frame).toContain('const literal = "**not bold**"')
+      expect(frame).not.toContain('```')
+      // CJK table columns are padded by cell width, so the second column starts
+      // at the same place on both rows.
+      const lines = frame.split('\n')
+      const header = lines.find(line => line.includes('文件'))
+      const row = lines.find(line => line.includes('a.ts'))
+      expect(header).toBeDefined()
+      expect(row).toBeDefined()
 
       await submitLine(input, '/exit')
       await product

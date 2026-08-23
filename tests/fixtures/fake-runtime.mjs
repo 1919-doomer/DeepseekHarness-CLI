@@ -40,6 +40,34 @@ function verboseAnswer() {
   return lines.join('\n')
 }
 
+function finalAnswer() {
+  if (mode === 'verbose') return verboseAnswer()
+  if (mode === 'markdown') return markdownAnswer()
+  return 'hello'
+}
+
+// What a model actually emits into a chat reply: emphasis, a list, a fenced
+// block whose contents must survive verbatim, and a CJK table whose columns
+// only line up if width is measured in cells.
+function markdownAnswer() {
+  return [
+    '## Findings',
+    '',
+    'The **parser** is fine; the *caller* is not. Run `pnpm check` first.',
+    '',
+    '- first point',
+    '- second point',
+    '',
+    '```ts',
+    'const literal = "**not bold**"',
+    '```',
+    '',
+    '| 文件 | 说明 |',
+    '| --- | --- |',
+    '| a.ts | 入口 |',
+  ].join('\n')
+}
+
 function sessionEvent(sessionId, type, data, sourceEventSeqs) {
   const seq = nextEventSeq++
   notify('session.event', {
@@ -190,7 +218,7 @@ function emitCompletedTurn(sessionId, turn) {
     step: 2,
     message: {
       role: 'assistant',
-      content: [{ type: 'text', text: mode === 'verbose' ? verboseAnswer() : 'hello' }],
+      content: [{ type: 'text', text: finalAnswer() }],
     },
   })
   sessionEvent(sessionId, 'step/end', { turn, step: 2 })
