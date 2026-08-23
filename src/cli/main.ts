@@ -1,8 +1,7 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
 import { runTerminalProduct } from '../terminal/product.js'
-import { join } from 'node:path'
-import { forkComposition, readCompositionSummary } from '../upstream/composition.js'
+import { forkComposition, readCompositionSummary, resolveComposition, workspaceCompositionPath } from '../upstream/composition.js'
 import { defaultRuntimeConfigPath } from '../upstream/runtime-launcher.js'
 import { sanitizeTerminalText, stringifyTerminalSafeJson } from '../terminal/sanitize.js'
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
@@ -123,7 +122,15 @@ async function runDoctorCommand(options: CliOptions): Promise<number> {
   }
 }
 
-async function runInteractiveMode(options: CliOptions): Promise<number> {
+async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
+  // Resolve once: the runtime must launch with the same composition that /config
+  // reports, and a workspace fork nothing launches with is not a fork.
+  const resolved = await resolveComposition(
+    cliOptions.workspace ?? process.cwd(),
+    cliOptions.runtimeConfig,
+    defaultRuntimeConfigPath(),
+  )
+  const options: CliOptions = { ...cliOptions, runtimeConfig: resolved.path }
   const runtime = createRuntime(options)
   let primaryFailure = false
   let exitCode = 0
@@ -140,11 +147,7 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
         },
       })
       try {
-        const configPath = options.runtimeConfig ?? defaultRuntimeConfigPath()
-        const composition = await readCompositionSummary(
-          configPath,
-          options.runtimeConfig === undefined ? 'shipped-default' : 'override',
-        )
+        const composition = await readCompositionSummary(resolved.path, resolved.source)
         const result = await runTerminalProduct(runtime, {
           initialSessionId: options.sessionId,
           debug: options.debug,
@@ -153,7 +156,7 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
           // rather than with this machine.
           forkComposition: (from) => forkComposition(
             from,
-            join(options.workspace ?? process.cwd(), '.dshc', 'cordis.yml'),
+            workspaceCompositionPath(options.workspace ?? process.cwd()),
           ),
           // Construction and startup live here; the product owns presentation
           // and lifecycle, not how a runtime is built.
@@ -206,7 +209,13 @@ async function runInteractiveMode(options: CliOptions): Promise<number> {
   return exitCode
 }
 
-async function runOneShot(options: CliOptions, prompt: string): Promise<number> {
+async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<number> {
+  const resolved = await resolveComposition(
+    cliOptions.workspace ?? process.cwd(),
+    cliOptions.runtimeConfig,
+    defaultRuntimeConfigPath(),
+  )
+  const options: CliOptions = { ...cliOptions, runtimeConfig: resolved.path }
   const runtime = createRuntime(options)
   const renderer = options.json ? undefined : new PlainRenderer({
     debugUnknownEvents: options.debug,

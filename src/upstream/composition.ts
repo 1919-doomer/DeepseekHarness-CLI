@@ -1,6 +1,5 @@
-import { copyFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, readFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 
 export interface CompositionEntry {
   /** Plugin id as written in the composition file. */
@@ -9,10 +8,56 @@ export interface CompositionEntry {
   settings: readonly string[]
 }
 
+/**
+ * Where the composition dshc launched with came from.
+ *
+ * `workspace` exists because a fork that nothing ever reads is not a fork. Until
+ * this was distinguished, `/config fork` wrote a file into the workspace and
+ * every later launch silently used the shipped one instead unless the person
+ * remembered `--runtime-config` by hand.
+ */
+export type CompositionSource = 'shipped-default' | 'workspace' | 'override'
+
 export interface CompositionSummary {
   path: string
-  source: 'shipped-default' | 'override'
+  source: CompositionSource
   entries: readonly CompositionEntry[]
+}
+
+/** Composition a workspace may carry, relative to its root. */
+export const WORKSPACE_COMPOSITION_PATH = ['.dshc', 'cordis.yml'] as const
+
+export function workspaceCompositionPath(workspace: string): string {
+  return join(workspace, ...WORKSPACE_COMPOSITION_PATH)
+}
+
+export interface ResolvedComposition {
+  path: string
+  source: CompositionSource
+}
+
+/**
+ * Decide which composition a launch uses: an explicit `--runtime-config` first,
+ * then the workspace's own, then the shipped default.
+ *
+ * An explicit path is never second-guessed — if it does not exist the launch
+ * must fail naming that path, rather than quietly falling back to a different
+ * composition than the one that was asked for.
+ */
+export async function resolveComposition(
+  workspace: string,
+  explicit: string | undefined,
+  shippedPath: string,
+): Promise<ResolvedComposition> {
+  if (explicit !== undefined) return { path: resolve(explicit), source: 'override' }
+
+  const candidate = workspaceCompositionPath(workspace)
+  try {
+    await access(candidate)
+    return { path: candidate, source: 'workspace' }
+  } catch {
+    return { path: shippedPath, source: 'shipped-default' }
+  }
 }
 
 /**
@@ -30,7 +75,7 @@ export interface CompositionSummary {
  */
 export async function readCompositionSummary(
   path: string,
-  source: 'shipped-default' | 'override',
+  source: CompositionSource,
 ): Promise<CompositionSummary | undefined> {
   let text: string
   try {

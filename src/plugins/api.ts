@@ -126,7 +126,7 @@ export interface TerminalViewContext extends TerminalCommandContext {
    */
   composition?: {
     path: string
-    source: 'shipped-default' | 'override'
+    source: 'shipped-default' | 'workspace' | 'override'
     entries: readonly { id: string; settings: readonly string[] }[]
   }
   /** Tool activity entry the sidebar has selected, when one is focused. */

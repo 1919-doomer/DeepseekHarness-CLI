@@ -360,9 +360,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               ? [
                   `Copied the composition to ${result.path}.`,
                   '',
-                  'Edit it, then run  /reload ' + result.path + ' --yes  to start a runtime',
-                  'with it. dshc does not interpret the file; run dshc doctor afterwards to',
-                  'see what Harness reports about the result.',
+                  'Every later launch in this workspace picks it up automatically; pass',
+                  '--runtime-config to point elsewhere.',
+                  '',
+                  'Edit it, then run  /reload ' + result.path + ' --yes  to use it in this',
+                  'session too. dshc does not interpret the file; run dshc doctor afterwards',
+                  'to see what Harness reports about the result.',
                 ].join('\n')
               : [
                   `${result.path} already exists, so nothing was written.`,

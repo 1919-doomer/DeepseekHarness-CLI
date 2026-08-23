@@ -1,16 +1,23 @@
 # dshc M4 coding runtime composition.
 #
 # This is a complete stdio JSON-RPC Harness process composition aligned with
-# DeepSeek Harness 0.1.0-rc.8 `examples/jsonrpc-agent/cordis.yml` plus the
+# DeepSeek Harness 0.1.1-rc.1 `examples/jsonrpc-agent/cordis.yml` plus the
 # repository workflow and security additions validated in M4.
 # Harness owns agent/tool/session/sandbox/approval semantics; dshc owns only the
 # terminal front end. stdout belongs exclusively to JSON-RPC.
 #
 # The default file-effect policy is workspace-write. It is intentionally not
 # danger-full-access: writes outside the session workspace must fail closed.
-# Approval policy remains `ask`, but SDK protocol 0.0.1 sends no server→client
-# approval requests. Without a Harness-side answerer, wider escalation therefore
-# resolves unavailable/rejected and the requested action must not execute.
+#
+# Approval policy is `never`, and that is a truthfulness decision rather than a
+# security one. SDK protocol 0.0.1 sends no server→client approval request, and
+# dshc — the client attached to this runtime — has no way to answer one, so no
+# answerer exists at all. Under `ask`, upstream tells the model it may ask
+# through configured answerers, and every escalation then fails closed in
+# silence: the model spends a round trip discovering that the prompt it was
+# promised does not exist. Under `never`, upstream states plainly that approval
+# is disabled and that sandbox escalation must not be requested. Revisit when a
+# real answerer becomes possible (#36).
 
 - id: sdk-jsonrpc-server
   name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
@@ -36,7 +43,7 @@
 - id: approval
   name: '@deepseek-ai/dsh-user-approval'
   config:
-    policy: ask
+    policy: never
 
 # Managed process groups shared by platform shell providers and ripgrep search.
 - id: subprocess

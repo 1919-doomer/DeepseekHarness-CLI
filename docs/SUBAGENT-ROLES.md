@@ -22,7 +22,11 @@ system that decides it:
   reaching the person;
 - that there is **no per-request cancel** — interrupting ends the runtime and
   the session with it, so a hung command costs the whole conversation;
-- that the output is read in a terminal.
+- that the output is read in a terminal;
+- the proxy and npm registry configuration observed at launch — stated as
+  configuration, never as reachability, because dshc does not probe the network
+  and a proxy variable being set is not evidence that the proxy works. A proxy
+  URL's credentials are stripped where it is read, not where it is displayed.
 
 Left unsaid, a model infers a friendlier deployment than this one. It asks for
 sandbox escalation nobody can answer, or starts a command that can only be
@@ -30,6 +34,29 @@ stopped by killing the session.
 
 The text is built in [`src/upstream/persona.ts`](../src/upstream/persona.ts) and
 reaches the child through `DSH_SYSTEM_PROMPT`, which the composition reads.
+
+### Where the composition comes from
+
+A composition at `<workspace>/.dshc/cordis.yml` — which is what `/config fork`
+writes — is used by every launch in that workspace, with no flag. `--runtime-config`
+still wins, and `dshc doctor` labels which of the three sources it resolved:
+`shipped-default`, `workspace`, or `override`.
+
+An explicit `--runtime-config` is never second-guessed. If the named file does
+not exist the launch fails naming it, rather than quietly starting a different
+composition than the one that was asked for.
+
+### Approval policy
+
+The shipped composition sets `approval: never`, and that is a truthfulness
+decision rather than a security one. Protocol 0.0.1 carries no server-to-client
+approval request and dshc cannot answer one, so no answerer exists at all. Under
+`ask`, upstream tells the model it may ask through configured answerers and every
+escalation then fails closed in silence — the model spends a round trip finding
+out that the prompt it was promised does not exist. Under `never`, upstream says
+plainly that approval is disabled and that escalation must not be requested.
+
+Revisit when a real answerer becomes possible (#36).
 
 ### Replacing it
 

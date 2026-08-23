@@ -18,12 +18,20 @@ import {
   TESTED_DSH_BASELINE,
   type InstalledDshVersions,
 } from '../upstream/compatibility.js'
+import { resolveComposition, type CompositionSource } from '../upstream/composition.js'
 import { classifyRuntimeError, type RuntimeErrorCode } from '../upstream/errors.js'
+import { describeNetwork, readNetworkFacts, type NetworkFacts } from '../upstream/network.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata, type HarnessRuntimeOptions } from '../upstream/runtime.js'
 import { defaultRuntimeConfigPath, effectiveRuntimeEnvironment } from '../upstream/runtime-launcher.js'
 import { DSHC_VERSION } from '../version.js'
 
 export type DoctorStatus = 'PASS' | 'WARN' | 'FAIL' | 'UNKNOWN'
+
+const COMPOSITION_LABEL: Record<CompositionSource, string> = {
+  'shipped-default': 'Shipped',
+  workspace: 'Workspace',
+  override: 'Override',
+}
 
 export interface DoctorFinding {
   id: string
@@ -66,7 +74,7 @@ export interface DoctorReport {
   workspace: string
   runtimeConfig: {
     path: string
-    source: 'shipped-default' | 'override'
+    source: CompositionSource
   }
   selection: {
     provider: string
@@ -78,6 +86,7 @@ export interface DoctorReport {
     present: boolean | null
   }
   tty: DoctorTtyFacts
+  network: NetworkFacts
   testedBaseline: typeof TESTED_DSH_BASELINE
   retention: DoctorRetentionFacts
   runtime?: HarnessRuntimeMetadata
@@ -107,11 +116,12 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const workspace = resolve(options.workspace ?? process.cwd())
   const provider = options.provider ?? 'deepseek-official'
   const model = options.model ?? 'deepseek-v4-flash'
-  const runtimeConfigPath = resolve(options.configPath ?? defaultRuntimeConfigPath())
-  const runtimeConfigSource = options.configPath === undefined ? 'shipped-default' : 'override'
+  const resolved = await resolveComposition(workspace, options.configPath, defaultRuntimeConfigPath())
+  const runtimeConfigPath = resolve(resolved.path)
+  const runtimeConfigSource = resolved.source
   const childEnv = effectiveRuntimeEnvironment({
     workspace,
-    configPath: options.configPath,
+    configPath: runtimeConfigPath,
     env: options.env,
     requestTimeoutMs: options.requestTimeoutMs,
     shutdownTimeoutMs: options.shutdownTimeoutMs,
@@ -166,18 +176,22 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
         id: 'composition.approval',
         status: 'PASS',
         category: 'capability',
-        summary: 'Shipped approval policy is ask; without an upstream answerer, wider escalation fails closed.',
+        summary: 'Shipped approval policy is never; this deployment has no answerer, so the model is told plainly that escalation is unavailable rather than that it might be granted.',
       },
     )
   } else {
     findings.push({
-      id: 'composition.override',
+      id: runtimeConfigSource === 'workspace' ? 'composition.workspace' : 'composition.override',
       status: 'WARN',
       category: 'configuration',
-      summary: 'A runtime config override is selected; shipped M4 coding/sandbox/approval composition facts may not apply.',
+      summary: runtimeConfigSource === 'workspace'
+        ? 'This workspace carries its own runtime config, which takes precedence over the shipped one; shipped coding/sandbox/approval composition facts may not apply.'
+        : 'A runtime config override is selected; shipped M4 coding/sandbox/approval composition facts may not apply.',
       detail: runtimeConfigPath,
     })
   }
+
+  networkFacts(childEnv, workspace, findings)
 
   findings.push({
     id: 'retention',
@@ -188,7 +202,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   let runtimeMetadata: HarnessRuntimeMetadata | undefined
   if (nodeReady && workspaceReady && configReady && packageReady) {
-    const runtime = new HarnessRuntime(options)
+    const runtime = new HarnessRuntime({ ...options, workspace, configPath: runtimeConfigPath })
     try {
       runtimeMetadata = await runtime.start()
       findings.push(
@@ -260,6 +274,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
     selection: { provider, model },
     credential,
     tty,
+    network: readNetworkFacts(childEnv, workspace),
     testedBaseline: TESTED_DSH_BASELINE,
     retention: retentionFacts(),
     ...(runtimeMetadata === undefined ? {} : { runtime: runtimeMetadata }),
@@ -327,7 +342,7 @@ async function checkWorkspace(workspace: string, findings: DoctorFinding[]): Pro
 
 async function checkRuntimeConfig(
   path: string,
-  source: 'shipped-default' | 'override',
+  source: CompositionSource,
   findings: DoctorFinding[],
 ): Promise<boolean> {
   try {
@@ -336,7 +351,7 @@ async function checkRuntimeConfig(
       id: 'runtime.config',
       status: 'PASS',
       category: 'configuration',
-      summary: `${source === 'shipped-default' ? 'Shipped' : 'Override'} runtime config is readable.`,
+      summary: `${COMPOSITION_LABEL[source]} runtime config is readable.`,
       detail: path,
     })
     return true
@@ -481,6 +496,33 @@ export function shellTempRootFacts(
  * win32 normalization so the rule is decided by Windows semantics rather than
  * by whichever platform happens to be running the check.
  */
+/**
+ * Report the network configuration the Harness child will inherit.
+ *
+ * Deliberately does not probe anything. A reachability test would make `doctor`
+ * depend on the internet, which would make it flaky in CI and slow on a bad
+ * link, for a verdict that is stale the moment it is printed. Configuration is
+ * what dshc can state as fact; reachability is what the person finds out when a
+ * command runs.
+ */
+function networkFacts(
+  env: NodeJS.ProcessEnv,
+  workspace: string,
+  findings: DoctorFinding[],
+): void {
+  const facts = readNetworkFacts(env, workspace)
+  const observed = describeNetwork(facts)
+  findings.push({
+    id: 'network',
+    status: 'PASS',
+    category: 'environment',
+    summary: observed.length === 0
+      ? 'No proxy or registry override is configured; reachability is not probed.'
+      : 'Proxy/registry configuration detected and passed to the Harness child; reachability is not probed.',
+    ...(observed.length === 0 ? {} : { detail: observed.join('; ') }),
+  })
+}
+
 function realPathOrSelf(target: string): string {
   try {
     return realpathSync.native(target)

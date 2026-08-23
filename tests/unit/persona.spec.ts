@@ -3,7 +3,11 @@ import { readCompositionSummary } from '../../src/upstream/composition.js'
 import { buildPersona, PERSONA_ENV_VAR, resolvePersona } from '../../src/upstream/persona.js'
 import { defaultRuntimeConfigPath, effectiveRuntimeEnvironment } from '../../src/upstream/runtime-launcher.js'
 
-const facts = { platform: 'win32' as NodeJS.Platform, workspace: String.raw`C:\work\repo` }
+const facts = {
+  platform: 'win32' as NodeJS.Platform,
+  workspace: String.raw`C:\work\repo`,
+  network: { proxies: [] },
+}
 
 describe('deployment persona', () => {
   it('carries no {{variable}} reference, which upstream renders strictly', () => {
