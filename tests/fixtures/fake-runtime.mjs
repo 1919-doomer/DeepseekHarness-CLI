@@ -90,6 +90,10 @@ function emitCompletedTurn(sessionId, turn) {
         { type: 'tool-call', id: `call-${turn}`, name: 'read', arguments: '{"path":"README.md"}' },
       ],
     },
+    // Sibling of `message`, matching a payload captured from a live rc.1
+    // runtime. A fixture that agreed with a guess is what kept the suite green
+    // while every tool result projected as a success (#84).
+    usage: { inputTokens: 4267, outputTokens: 2, cacheReadTokens: 384, reasoningTokens: 0 },
   })
 
   const rootCallSeq = sessionEvent(sessionId, 'tool/call', {
@@ -119,6 +123,7 @@ function emitCompletedTurn(sessionId, turn) {
       role: 'assistant',
       content: [{ type: 'text', text: 'child' }],
     },
+    usage: { inputTokens: 900, outputTokens: 5 },
   })
   const childCallSeq = sessionEvent(childSessionId, 'tool/call', {
     turn: 1,

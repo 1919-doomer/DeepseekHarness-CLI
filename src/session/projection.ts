@@ -16,11 +16,27 @@ export interface UpstreamEventEnvelope {
   sourceEventSeqs?: readonly number[]
 }
 
+/**
+ * Token accounting one model request reported, exactly as upstream sends it.
+ *
+ * There is no context-window total here, and the protocol does not expose the
+ * model catalog where `contextWindow` lives, so dshc cannot honestly render a
+ * percentage. `inputTokens` of the latest request is the closest true statement
+ * about how large the context currently is.
+ */
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
 export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'session-status'; sessionId: string; status: 'running' | 'idle' }
   | { sequence: number; kind: 'user-message'; sessionId: string; text: string }
   | { sequence: number; kind: 'assistant-delta'; sessionId: string; text: string }
-  | { sequence: number; kind: 'assistant-message'; sessionId: string; text: string }
+  | { sequence: number; kind: 'assistant-message'; sessionId: string; text: string; usage?: TokenUsage }
   | { sequence: number; kind: 'tool-call'; sessionId: string; callId: string; name: string; arguments: string }
   | { sequence: number; kind: 'tool-result'; sessionId: string; callId: string; text: string; isError: boolean }
   | { sequence: number; kind: 'subagent-started'; parentSessionId: string; childSessionId: string; provider?: string }
@@ -303,11 +319,17 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
 
   if (type === 'assistant/message') {
     const message = data === undefined ? undefined : recordField(data, 'message')
+    // `usage` is a sibling of `message`, not a field inside it. The same numbers
+    // also stream as an `assistant/chunk` of type `usage`; this durable surface
+    // event is authoritative, so the chunk deliberately stays internal and the
+    // totals are not counted twice.
+    const usage = data === undefined ? undefined : readTokenUsage(recordField(data, 'usage'))
     return {
       sequence,
       kind: 'assistant-message',
       sessionId,
       text: extractContentText(message?.content),
+      ...(usage === undefined ? {} : { usage }),
     }
   }
 
@@ -450,6 +472,26 @@ function extractContentText(value: unknown): string {
     text.push(block.text)
   }
   return text.join('')
+}
+
+/** Read usage, keeping only the fields upstream actually reported. */
+function readTokenUsage(source: Record<string, unknown> | undefined): TokenUsage | undefined {
+  if (source === undefined) return undefined
+  const inputTokens = numberField(source, 'inputTokens')
+  const outputTokens = numberField(source, 'outputTokens')
+  if (inputTokens === undefined && outputTokens === undefined) return undefined
+
+  const optional = (name: string): Record<string, number> => {
+    const value = numberField(source, name)
+    return value === undefined ? {} : { [name]: value }
+  }
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    ...optional('cacheReadTokens'),
+    ...optional('cacheWriteTokens'),
+    ...optional('reasoningTokens'),
+  }
 }
 
 function numberField(value: Record<string, unknown> | undefined, key: string): number | undefined {
