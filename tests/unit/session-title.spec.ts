@@ -8,8 +8,8 @@ const ESCAPE = ''
 const BELL = ''
 const RIGHT_TO_LEFT_OVERRIDE = '‮'
 
-// Captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.1, which introduced the
-// event. It names the session; it is not agent activity.
+// Re-captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.2. The event was
+// introduced in rc.1; it names the session and is not agent activity.
 function titleEvent(data: Record<string, unknown>): HarnessNotification {
   return {
     method: 'session.event',

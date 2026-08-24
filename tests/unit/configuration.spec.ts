@@ -1,10 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
 import { CONFIRM_TOKEN } from '../../src/plugins/configuration.js'
-import { readCompositionSummary } from '../../src/upstream/composition.js'
+import { forkComposition, readCompositionSummary } from '../../src/upstream/composition.js'
 import { defaultRuntimeConfigPath } from '../../src/upstream/runtime-launcher.js'
 
 const host = createDefaultTerminalHost()
@@ -117,5 +117,28 @@ describe('composition summary', () => {
     expect(summary?.entries.map(entry => entry.id)).toEqual(['first', 'second'])
     expect(summary?.entries[0]?.settings).toEqual(['alpha: 1'])
     expect(summary?.entries[1]?.settings).toEqual([])
+  })
+
+  it('shows base, workspace patch and effective entries separately', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dshc-composition-'))
+    const base = join(dir, 'cordis.yml')
+    const patch = join(dir, 'cordis.patch.yml')
+    await writeFile(base, "- id: base\n  name: '@deepseek-ai/base'\n", 'utf8')
+    await writeFile(patch, "- insert:\n    - id: added\n      name: '@deepseek-ai/added'\n", 'utf8')
+
+    const summary = await readCompositionSummary(base, 'shipped-default', patch)
+    expect(summary?.base.entries.map(entry => entry.id)).toEqual(['base'])
+    expect(summary?.patch).toEqual({ path: patch, patchCount: 1 })
+    expect(summary?.effective.entries.map(entry => entry.id)).toEqual(['base', 'added'])
+  })
+
+  it('fork creates an empty patch and refuses to overwrite it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dshc-composition-'))
+    const target = join(dir, '.dshc', 'cordis.patch.yml')
+    expect(await forkComposition('/unused/base.yml', target)).toEqual({ path: target, created: true })
+    expect(await readFile(target, 'utf8')).toBe('[]\n')
+    await writeFile(target, '- id: keep-me\n', 'utf8')
+    expect(await forkComposition('/unused/base.yml', target)).toEqual({ path: target, created: false })
+    expect(await readFile(target, 'utf8')).toBe('- id: keep-me\n')
   })
 })

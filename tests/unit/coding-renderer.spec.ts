@@ -160,6 +160,33 @@ describe('M4.2 coding activity presentation', () => {
     })
   })
 
+  it('keeps Web and MCP provenance visible in tool activity', () => {
+    const host = createDefaultTerminalHost()
+    let state = initialTerminalTranscript()
+    state = reduceTerminalEvent(state, {
+      sequence: 0,
+      kind: 'tool-call',
+      sessionId: 'root',
+      callId: 'web-1',
+      name: 'web_fetch',
+      arguments: JSON.stringify({ url: 'https://example.com' }),
+    }, host, activity, 'root')
+    state = reduceTerminalEvent(state, {
+      sequence: 1,
+      kind: 'tool-call',
+      sessionId: 'root',
+      callId: 'mcp-1',
+      name: 'mcp__everything__echo',
+      arguments: JSON.stringify({ message: 'ok' }),
+    }, host, activity, 'root')
+
+    expect(state.blocks.find(block => block.id.includes('web-1'))?.title).toBe('web fetch · https://example.com')
+    expect(state.blocks.find(block => block.id.includes('mcp-1'))).toMatchObject({
+      title: 'mcp · everything · echo',
+      text: 'External MCP server call · 1 argument field',
+    })
+  })
+
   it('labels the shipped coding baseline as local validation, not discovered runtime inventory', () => {
     const host = createDefaultTerminalHost()
     const capabilities = host.resolveView('capabilities')?.render({

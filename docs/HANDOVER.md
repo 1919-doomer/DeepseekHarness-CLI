@@ -9,10 +9,10 @@ defects and would otherwise be lost.
 
 ## Where things stand
 
-`0.1.0-preview.5`, five developer previews, 48 merged pull requests, 173
-commits. M0 through M4.5 complete; M4.6 batch 1 complete. 253 unit and
-integration tests plus 6 credential-free runtime smokes, green on
-Windows/macOS/Ubuntu against Node 22.19 and 24.
+`0.1.0-preview.7` is the M4.6 working release. M0 through M4.6, including the
+`0.1.1-rc.2` compatibility pass, are implemented. The established
+cross-platform gate remains Windows/macOS/Ubuntu against Node 22.19 and 24;
+rerun it before merging this working release.
 
 `main` is protected: five required status checks, strict up-to-date merges,
 `enforce_admins` on, no force push, no branch deletion, zero required reviewing
@@ -128,7 +128,7 @@ Three separate copies of DSH exist there, and only one drives dshc.
 | What | Where | Version |
 |---|---|---|
 | dshc's runtime (the live one) | `%APPDATA%\npm\node_modules\deepseek-harness-cli\node_modules\@deepseek-ai\` | `0.1.1-rc.1` |
-| dshc dev tree | `E:\ClaudeCodeUse\projects\dshc\node_modules\` | `0.1.1-rc.1` |
+| dshc dev tree | `E:\ClaudeCodeUse\projects\dshc\node_modules\` | `0.1.1-rc.2` |
 | Official `dsh`, unrelated to dshc | npx cache, symlinked from `~\.dsh\profiles\` | `0.1.1-rc.2` |
 
 `~\.dsh\` belongs to the official app, not to dshc. dshc touches it at exactly
@@ -136,22 +136,33 @@ one point: `dsh-agent-instructions` loads `~/.dsh/AGENTS.md` alongside the
 workspace's `AGENTS.md` / `CLAUDE.md`. Sessions land in
 `$HOME/sessions/dshc/` unless `DSH_SESSION_ROOT` says otherwise.
 
-The official app's configuration model is worth copying and is what #120 is
-about: its profile root is an empty array, bundles layer into it, and the user
-edits only `cordis.patch.yml` — an id-targeted list of overrides. dshc still
-forks whole files, which freezes the shipped composition at the moment of the
-fork.
+The official app's configuration model now backs #120: the shipped file stays
+authoritative and the workspace edits only `.dshc/cordis.patch.yml`, an
+id-targeted Include patch list. `/config fork` creates `[]` and never copies the
+base.
 
-## The next work, and the one lever
+## The completed compatibility pass, and the next lever
 
-Batch 2 of #114 is the plugin layer: #120 (patch layer, the foundation the rest
-stands on), #121 (vision subagent), #122 (web search and the researcher role),
-#123 (MCP client), #124 (self-service plugin install). Batch 3 is #125, the
-`0.1.1-rc.2` compatibility pass — a real pass, not a version bump, because
-`rc.8 → rc.1` is what produced #84.
+Batch 2 of #114 is implemented: #120 patch layer, #121 vision subagent, #122 web
+search/researcher, #123 MCP client and #124 restricted self-service plugin
+install. Batch 3 (#125) then moved the complete runtime closure to
+`0.1.1-rc.2`. This was a real compatibility pass, not a version edit:
 
-Every package batch 2 needs already publishes at the pinned `0.1.1-rc.1`, so
-none of it requires moving the version pin.
+- the official rc.1/rc.2 tag diff showed no source change in the SDK wire or
+  core event producers, while image normalization, Files API upload/reuse and
+  `read_image.originalDimensions` did change;
+- a published-runtime integration test now captures one successful and one
+  failed tool result from the raw rc.2 SDK notifications, including causal
+  envelope fields and sibling assistant usage;
+- 45 foundational auto-peers that pnpm had retained at `0.1.0-rc.8` are now
+  exact direct rc.2 dependencies; the lockfile has no rc.8 residue and
+  `pnpm peers check` is blocking CI.
+
+The Batch 2 live gates were repeated against rc.2 on 2026-08-24: Web Search,
+Web Fetch, a real JPEG through the vision model, `mcp__everything__echo`
+through the official stdio server, and a trial-booted
+`dsh-repeat-tool-reminder@0.1.1-rc.2` installation all passed. Re-run these
+against the pinned closure whenever the upstream baseline moves again.
 
 **#36 is the lever.** A DSH-side bridge plugin that dshc ships and mounts is the
 single unblock for three things that are all stuck against the same wall:
@@ -176,7 +187,6 @@ plugins refused in #37.
   was discovered in the first place. The name needs checking for availability
   and for its relationship to DeepSeek's marks; the README's unofficial notice
   is necessary but may not be sufficient.
-- **Whether to take `0.1.1-rc.2`** now or after batch 2.
 - **Stale remote branches.** Around twenty from merged pull requests are still
   on the remote. Deleting them is safe but is the owner's call, not a
   housekeeping task to perform unasked.

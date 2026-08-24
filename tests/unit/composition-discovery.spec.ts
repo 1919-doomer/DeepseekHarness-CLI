@@ -27,13 +27,12 @@ describe('composition discovery', () => {
     })
   })
 
-  it('finds the composition a fork left in the workspace', async () => {
-    // Before this, /config fork wrote a file that nothing ever launched with:
-    // every later start silently used the shipped one instead.
+  it('keeps the shipped base and finds the workspace patch layer', async () => {
     const dir = await workspaceWithComposition()
     expect(await resolveComposition(dir, undefined, shipped)).toEqual({
-      path: workspaceCompositionPath(dir),
-      source: 'workspace',
+      path: shipped,
+      source: 'shipped-default',
+      patchPath: workspaceCompositionPath(dir),
     })
   })
 
@@ -42,6 +41,7 @@ describe('composition discovery', () => {
     const resolved = await resolveComposition(dir, './elsewhere.yml', shipped)
     expect(resolved.source).toBe('override')
     expect(resolved.path).not.toBe(workspaceCompositionPath(dir))
+    expect(resolved.patchPath).toBeUndefined()
   })
 
   it('does not fall back when an explicit path is missing', async () => {

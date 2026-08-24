@@ -9,7 +9,7 @@ import {
 } from '../../src/session/usage.js'
 
 /**
- * Payload captured from a live 0.1.1-rc.1 runtime, not invented here. `usage` is
+ * Payload re-captured from a live 0.1.1-rc.2 runtime, not invented here. `usage` is
  * a sibling of `message`, one level above where a reasonable guess would put it
  * — the same mistake that made every tool result project as a success in #84.
  */

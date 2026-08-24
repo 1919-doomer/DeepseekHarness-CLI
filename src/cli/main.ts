@@ -1,8 +1,19 @@
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
 import { runTerminalProduct } from '../terminal/product.js'
-import { forkComposition, readCompositionSummary, resolveComposition, workspaceCompositionPath } from '../upstream/composition.js'
-import { defaultRuntimeConfigPath } from '../upstream/runtime-launcher.js'
+import {
+  forkComposition,
+  readCompositionSummary,
+  resolveComposition,
+  workspaceCompositionPath,
+  type ResolvedComposition,
+} from '../upstream/composition.js'
+import { defaultRuntimeConfigPath, defaultRuntimeInstallAnchor } from '../upstream/runtime-launcher.js'
+import {
+  installWorkspacePlugin,
+  resolveDeepseekPlugin,
+  searchDeepseekPlugins,
+} from '../upstream/plugin-management.js'
 import { sanitizeTerminalText, stringifyTerminalSafeJson } from '../terminal/sanitize.js'
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
@@ -91,13 +102,19 @@ function validateModeOptions(options: CliOptions): void {
   }
 }
 
-function createRuntime(options: CliOptions): HarnessRuntime {
+function createRuntime(
+  options: CliOptions,
+  composition: ResolvedComposition,
+  moduleBasePath?: string,
+): HarnessRuntime {
   return new HarnessRuntime({
     workspace: options.workspace,
     provider: options.provider,
     model: options.model,
     maxTokens: options.maxTokens,
-    configPath: options.runtimeConfig,
+    configPath: composition.path,
+    patchPaths: composition.patchPath === undefined ? [] : [composition.patchPath],
+    ...(moduleBasePath === undefined ? {} : { moduleBasePath }),
     activityTimeoutMs: options.activityTimeoutMs,
     requestTimeoutMs: options.requestTimeoutMs,
   })
@@ -123,15 +140,14 @@ async function runDoctorCommand(options: CliOptions): Promise<number> {
 }
 
 async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
-  // Resolve once: the runtime must launch with the same composition that /config
-  // reports, and a workspace fork nothing launches with is not a fork.
+  let activeOptions = { ...cliOptions }
   const resolved = await resolveComposition(
     cliOptions.workspace ?? process.cwd(),
     cliOptions.runtimeConfig,
     defaultRuntimeConfigPath(),
   )
-  const options: CliOptions = { ...cliOptions, runtimeConfig: resolved.path }
-  const runtime = createRuntime(options)
+  const options = activeOptions
+  const runtime = createRuntime(activeOptions, resolved)
   let primaryFailure = false
   let exitCode = 0
 
@@ -147,7 +163,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
         },
       })
       try {
-        const composition = await readCompositionSummary(resolved.path, resolved.source)
+        const composition = await readCompositionSummary(resolved.path, resolved.source, resolved.patchPath)
         const result = await runTerminalProduct(runtime, {
           initialSessionId: options.sessionId,
           debug: options.debug,
@@ -161,15 +177,87 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
           // Construction and startup live here; the product owns presentation
           // and lifecycle, not how a runtime is built.
           restart: async (selection) => {
-            const next = createRuntime({
-              ...options,
+            const nextOptions: CliOptions = {
+              ...activeOptions,
               ...(selection.provider === undefined ? {} : { provider: selection.provider }),
               ...(selection.model === undefined ? {} : { model: selection.model }),
               ...(selection.maxTokens === undefined ? {} : { maxTokens: selection.maxTokens }),
               ...(selection.runtimeConfig === undefined ? {} : { runtimeConfig: selection.runtimeConfig }),
+            }
+            const nextResolved = await resolveComposition(
+              nextOptions.workspace ?? process.cwd(),
+              nextOptions.runtimeConfig,
+              defaultRuntimeConfigPath(),
+            )
+            const next = createRuntime(nextOptions, nextResolved)
+            try {
+              const metadata = await next.start()
+              const nextComposition = await readCompositionSummary(
+                nextResolved.path,
+                nextResolved.source,
+                nextResolved.patchPath,
+              )
+              activeOptions = nextOptions
+              return {
+                runtime: next,
+                metadata,
+                ...(nextComposition === undefined ? {} : { composition: nextComposition }),
+              }
+            } catch (error) {
+              await next.close().catch(() => undefined)
+              throw error
+            }
+          },
+          searchPlugins: query => searchDeepseekPlugins(
+            query,
+            activeOptions.workspace ?? process.cwd(),
+          ),
+          resolvePlugin: spec => resolveDeepseekPlugin(
+            spec,
+            activeOptions.workspace ?? process.cwd(),
+          ),
+          installPlugin: async (exactSpec) => {
+            if (activeOptions.runtimeConfig !== undefined) {
+              throw new DshcRuntimeError(
+                'Workspace plugin installation requires the shipped base composition; remove --runtime-config first.',
+                'configuration',
+              )
+            }
+            const workspace = activeOptions.workspace ?? process.cwd()
+            const installed = await installWorkspacePlugin({
+              workspace,
+              exactSpec,
+              patchPath: workspaceCompositionPath(workspace),
+              installAnchor: defaultRuntimeInstallAnchor(),
+              trial: async (moduleBasePath) => {
+                const nextResolved = await resolveComposition(
+                  workspace,
+                  undefined,
+                  defaultRuntimeConfigPath(),
+                )
+                const next = createRuntime(activeOptions, nextResolved, moduleBasePath)
+                try {
+                  const metadata = await next.start()
+                  const nextComposition = await readCompositionSummary(
+                    nextResolved.path,
+                    nextResolved.source,
+                    nextResolved.patchPath,
+                  )
+                  return {
+                    runtime: next,
+                    metadata,
+                    ...(nextComposition === undefined ? {} : { composition: nextComposition }),
+                  }
+                } catch (error) {
+                  await next.close().catch(() => undefined)
+                  throw error
+                }
+              },
             })
-            const metadata = await next.start()
-            return { runtime: next, metadata }
+            return {
+              ...installed.value,
+              message: `Installed ${installed.exactSpec}; workspace patch ${installed.patchPath} passed trial initialization.`,
+            }
           },
         })
         exitCode = result.exitCode
@@ -215,8 +303,8 @@ async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<numbe
     cliOptions.runtimeConfig,
     defaultRuntimeConfigPath(),
   )
-  const options: CliOptions = { ...cliOptions, runtimeConfig: resolved.path }
-  const runtime = createRuntime(options)
+  const options = cliOptions
+  const runtime = createRuntime(options, resolved)
   const renderer = options.json ? undefined : new PlainRenderer({
     debugUnknownEvents: options.debug,
     rootSessionId: options.sessionId,

@@ -1,5 +1,6 @@
-import { access, copyFile, mkdir, readFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { loadOptionalPatches, renderConfigDump } from '@deepseek-ai/dsh-app-boot'
 
 export interface CompositionEntry {
   /** Plugin id as written in the composition file. */
@@ -19,13 +20,30 @@ export interface CompositionEntry {
 export type CompositionSource = 'shipped-default' | 'workspace' | 'override'
 
 export interface CompositionSummary {
+  /** Backward-compatible effective view used by terminal adapters. */
+  path: string
+  source: CompositionSource
+  entries: readonly CompositionEntry[]
+  base: CompositionLayerSummary
+  patch?: CompositionPatchSummary
+  effective: {
+    entries: readonly CompositionEntry[]
+  }
+}
+
+export interface CompositionLayerSummary {
   path: string
   source: CompositionSource
   entries: readonly CompositionEntry[]
 }
 
+export interface CompositionPatchSummary {
+  path: string
+  patchCount: number
+}
+
 /** Composition a workspace may carry, relative to its root. */
-export const WORKSPACE_COMPOSITION_PATH = ['.dshc', 'cordis.yml'] as const
+export const WORKSPACE_COMPOSITION_PATH = ['.dshc', 'cordis.patch.yml'] as const
 
 export function workspaceCompositionPath(workspace: string): string {
   return join(workspace, ...WORKSPACE_COMPOSITION_PATH)
@@ -34,11 +52,14 @@ export function workspaceCompositionPath(workspace: string): string {
 export interface ResolvedComposition {
   path: string
   source: CompositionSource
+  patchPath?: string
 }
 
 /**
- * Decide which composition a launch uses: an explicit `--runtime-config` first,
- * then the workspace's own, then the shipped default.
+ * Decide which composition a launch uses. The shipped composition remains the
+ * base contract; a workspace may only add an Include patch layer. An explicit
+ * `--runtime-config` replaces the base and intentionally does not inherit a
+ * workspace patch.
  *
  * An explicit path is never second-guessed — if it does not exist the launch
  * must fail naming that path, rather than quietly falling back to a different
@@ -54,7 +75,7 @@ export async function resolveComposition(
   const candidate = workspaceCompositionPath(workspace)
   try {
     await access(candidate)
-    return { path: candidate, source: 'workspace' }
+    return { path: shippedPath, source: 'shipped-default', patchPath: candidate }
   } catch {
     return { path: shippedPath, source: 'shipped-default' }
   }
@@ -76,6 +97,7 @@ export async function resolveComposition(
 export async function readCompositionSummary(
   path: string,
   source: CompositionSource,
+  patchPath?: string,
 ): Promise<CompositionSummary | undefined> {
   let text: string
   try {
@@ -84,6 +106,28 @@ export async function readCompositionSummary(
     return undefined
   }
 
+  const baseEntries = parseCompositionEntries(text)
+  let effectiveEntries = baseEntries
+  let patch: CompositionPatchSummary | undefined
+  if (patchPath !== undefined) {
+    const patches = loadOptionalPatches('dshc', patchPath) ?? []
+    const effective = renderConfigDump('dshc', path, [{ label: patchPath, patches }])
+    effectiveEntries = parseCompositionEntries(effective)
+    patch = { path: patchPath, patchCount: patches.length }
+  }
+
+  const base: CompositionLayerSummary = { path, source, entries: baseEntries }
+  return {
+    path,
+    source,
+    entries: effectiveEntries,
+    base,
+    ...(patch === undefined ? {} : { patch }),
+    effective: { entries: effectiveEntries },
+  }
+}
+
+function parseCompositionEntries(text: string): CompositionEntry[] {
   const entries: CompositionEntry[] = []
   let current: { id: string; settings: string[] } | undefined
   // Indent of the key that opened a `|`/`>` block scalar, while its body runs.
@@ -143,7 +187,7 @@ export async function readCompositionSummary(
 
   if (blockIndent !== undefined) closeBlock()
   if (current !== undefined) entries.push(current)
-  return { path, source, entries }
+  return entries
 }
 
 export interface CompositionForkResult {
@@ -152,19 +196,19 @@ export interface CompositionForkResult {
 }
 
 /**
- * Copy a composition so it can be edited without touching the shipped one.
+ * Create an empty workspace patch so local edits never fork or shadow the
+ * shipped composition.
  *
  * Refuses to overwrite: a fork that silently replaced local edits would lose
  * work, and there is no undo in a terminal.
  */
 export async function forkComposition(
-  from: string,
+  _from: string,
   to: string,
 ): Promise<CompositionForkResult> {
   await mkdir(dirname(to), { recursive: true })
   try {
-    // COPYFILE_EXCL: fail rather than clobber an existing file.
-    await copyFile(from, to, 1)
+    await writeFile(to, '[]\n', { encoding: 'utf8', flag: 'wx' })
     return { path: to, created: true }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { path: to, created: false }

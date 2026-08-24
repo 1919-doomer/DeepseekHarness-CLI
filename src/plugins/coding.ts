@@ -14,14 +14,20 @@ export const VALIDATED_DEFAULT_CODING_TOOLS = [
   'edit',
   'glob',
   'grep',
+  'read_image',
   'bash',
   'pwsh',
   'subagent',
+  'vision',
+  'researcher',
+  'web_search',
+  'web_fetch',
   'todo_write',
 ] as const
 
 const SPECIALIZED_TOOLS = new Set<string>([
-  'read', 'write', 'edit', 'glob', 'grep', 'bash', 'pwsh', 'todo_write',
+  'read', 'read_image', 'write', 'edit', 'glob', 'grep', 'bash', 'pwsh',
+  'todo_write', 'web_search', 'web_fetch',
 ])
 
 export function codingActivityPlugin(): TerminalPluginSpec {
@@ -42,7 +48,8 @@ export function codingActivityPlugin(): TerminalPluginSpec {
 }
 
 function isSpecializableCodingCall(event: NormalizedEvent): boolean {
-  if (event.kind !== 'tool-call' || !SPECIALIZED_TOOLS.has(event.name)) return false
+  if (event.kind !== 'tool-call'
+    || (!SPECIALIZED_TOOLS.has(event.name) && !event.name.startsWith('mcp__'))) return false
   const args = parseArguments(event.arguments)
   return args !== undefined && presentCodingCall(event.name, args) !== undefined
 }
@@ -88,11 +95,23 @@ export function describeToolCall(name: string, argumentsJson: string): string | 
 }
 
 function presentCodingCall(name: string, args: Record<string, unknown>): ToolPresentation | undefined {
+  if (name.startsWith('mcp__')) {
+    const [, server = 'unknown', ...toolParts] = name.split('__')
+    return {
+      title: `mcp · ${safeInline(server)} · ${safeInline(toolParts.join('__') || 'tool')}`,
+      text: `External MCP server call · ${Object.keys(args).length} argument field${Object.keys(args).length === 1 ? '' : 's'}`,
+    }
+  }
   switch (name) {
     case 'read': {
       const path = stringArg(args, 'file_path')
       if (path === undefined) return undefined
       return { title: `read · ${safeInline(path)}`, text: 'Inspect file' }
+    }
+    case 'read_image': {
+      const path = stringArg(args, 'file_path') ?? stringArg(args, 'path')
+      if (path === undefined) return undefined
+      return { title: `read image · ${safeInline(path)}`, text: 'Inspect image attachment' }
     }
     case 'write': {
       const path = stringArg(args, 'file_path')
@@ -135,6 +154,19 @@ function presentCodingCall(name: string, args: Record<string, unknown>): ToolPre
       const todos = args['todos']
       if (!Array.isArray(todos)) return undefined
       return { title: `todo · ${todos.length} item${todos.length === 1 ? '' : 's'}`, text: summarizeTodos(todos) }
+    }
+    case 'web_search': {
+      const queries = args['queries']
+      if (!Array.isArray(queries) || queries.some(query => typeof query !== 'string')) return undefined
+      return {
+        title: `web search · ${queries.length} quer${queries.length === 1 ? 'y' : 'ies'}`,
+        text: queries.map(query => safeInline(String(query))).join(' · '),
+      }
+    }
+    case 'web_fetch': {
+      const url = stringArg(args, 'url')
+      if (url === undefined) return undefined
+      return { title: `web fetch · ${safeInline(url)}`, text: 'Fetch public HTTP(S) source' }
     }
     default:
       return undefined

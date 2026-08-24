@@ -5,6 +5,7 @@ import { accumulateUsage, initialSessionUsage } from '../session/usage.js'
 import { classifyRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata } from '../upstream/runtime.js'
 import type { CompositionForkResult, CompositionSummary } from '../upstream/composition.js'
+import type { PluginSearchResult, ResolvedPluginSpec } from '../upstream/plugin-management.js'
 import { DSHC_VERSION } from '../version.js'
 import type {
   TerminalCommandContext,
@@ -77,13 +78,18 @@ export interface RuntimeSelection {
 export interface RuntimeRestart {
   runtime: HarnessRuntime
   metadata: HarnessRuntimeMetadata
+  composition?: CompositionSummary
+}
+
+export interface PluginInstallRestart extends RuntimeRestart {
+  message: string
 }
 
 export interface TerminalProductOptions {
   debug?: boolean
   /** Composition summary for `/config`; display only. */
   composition?: CompositionSummary
-  /** Copies the composition into the workspace so it can be edited. */
+  /** Creates the workspace patch layer without overwriting an existing one. */
   forkComposition?: (from: string) => Promise<CompositionForkResult>
   /**
    * Starts a fresh runtime with the given selection. Protocol 0.0.1 has no way
@@ -91,6 +97,9 @@ export interface TerminalProductOptions {
    * and a restart starts a new session.
    */
   restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
+  searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
+  resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
+  installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
   initialSessionId?: string
   host?: TerminalPluginHost
   useAlternateScreen?: boolean
@@ -167,6 +176,9 @@ export async function runTerminalProduct(
         {...(options.restart === undefined ? {} : { restart: options.restart })}
         {...(options.composition === undefined ? {} : { composition: options.composition })}
         {...(options.forkComposition === undefined ? {} : { forkComposition: options.forkComposition })}
+        {...(options.searchPlugins === undefined ? {} : { searchPlugins: options.searchPlugins })}
+        {...(options.resolvePlugin === undefined ? {} : { resolvePlugin: options.resolvePlugin })}
+        {...(options.installPlugin === undefined ? {} : { installPlugin: options.installPlugin })}
         host={host}
         debug={options.debug ?? false}
         initialSessionId={initialSessionId}
@@ -194,6 +206,7 @@ export async function runTerminalProduct(
     process.off('SIGTERM', onTerm)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
+    await runtimeRef.current.close()
   }
 }
 
@@ -204,6 +217,9 @@ interface AppProps {
   restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
   composition?: CompositionSummary
   forkComposition?: (from: string) => Promise<CompositionForkResult>
+  searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
+  resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
+  installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
   host: TerminalPluginHost
   debug: boolean
   initialSessionId: string
@@ -236,6 +252,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
   const [metadata, setMetadata] = useState(props.metadata)
+  const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
   // Scroll position in blocks from the newest, mirrored in a ref for the same
   // within-chunk ordering reason focus needs one.
@@ -330,7 +347,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     renderers: props.host.listRenderers(),
     plugins: props.host.listPlugins(),
     events: eventHistory.items,
-    ...(props.composition === undefined ? {} : { composition: props.composition }),
+    ...(composition === undefined ? {} : { composition }),
     ...(selectedToolKeyRef.current === undefined ? {} : { selectedToolKey: selectedToolKeyRef.current }),
     retention: {
       totalEventCount: eventHistory.total,
@@ -339,7 +356,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       droppedTopologyEntryCount: agentTopology.dropped,
     },
     agentTopology: [...agentTopology.entries.values()],
-  }), [agentTopology, commandContext, eventHistory, props.host, transcript.droppedBlockCount])
+  }), [agentTopology, commandContext, composition, eventHistory, props.host, transcript.droppedBlockCount])
 
   const finish = useCallback((exitCode: number, interrupted: boolean): void => {
     props.onFinish({
@@ -372,7 +389,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
         return
       case 'fork-composition': {
-        const source = props.composition
+        const source = composition
         const fork = props.forkComposition
         if (source === undefined || fork === undefined) {
           setTranscript(state => appendSystemMessage(
@@ -389,20 +406,18 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             state,
             result.created
               ? [
-                  `Copied the composition to ${result.path}.`,
+                  `Created the workspace patch layer at ${result.path}.`,
                   '',
-                  'Every later launch in this workspace picks it up automatically; pass',
-                  '--runtime-config to point elsewhere.',
+                  'The shipped composition remains authoritative; this file only contains',
+                  'Cordis Include patches applied on top of it.',
                   '',
-                  'Edit it, then run  /reload ' + result.path + ' --yes  to use it in this',
-                  'session too. dshc does not interpret the file; run dshc doctor afterwards',
-                  'to see what Harness reports about the result.',
+                  'Edit it, then run  /reload --yes  to apply it in a new session.',
                 ].join('\n')
               : [
                   `${result.path} already exists, so nothing was written.`,
                   '',
                   'Overwriting would discard edits with no way back. Move or delete it first',
-                  'if you want a fresh copy.',
+                  'if you want a fresh patch layer.',
                 ].join('\n'),
             'configuration',
             nextId('fork'),
@@ -411,10 +426,82 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           const failure = classifyRuntimeError(error)
           setTranscript(state => appendSystemMessage(
             state,
-            `Could not copy the composition: ${failure.message}`,
+            `Could not create the composition patch: ${failure.message}`,
             `configuration error · ${failure.code}`,
             nextId('fork-error'),
           ))
+        }
+        return
+      }
+      case 'plugin-search': {
+        if (props.searchPlugins === undefined) {
+          setTranscript(state => appendSystemMessage(state, 'Plugin search is unavailable in this session.', 'plugin', nextId('plugin')))
+          return
+        }
+        try {
+          const results = await props.searchPlugins(outcome.query)
+          const text = results.length === 0
+            ? `No @deepseek-ai packages matched ${sanitizeTerminalText(outcome.query)}.`
+            : results.map(result => [
+                `${sanitizeTerminalText(result.name)}@${sanitizeTerminalText(result.version)}`,
+                result.description.length === 0 ? '' : `  ${sanitizeTerminalText(result.description)}`,
+              ].filter(Boolean).join('\n')).join('\n')
+          setTranscript(state => appendSystemMessage(state, text, 'plugin search', nextId('plugin-search')))
+        } catch (error) {
+          const failure = classifyRuntimeError(error)
+          setTranscript(state => appendSystemMessage(state, failure.message, `plugin search error · ${failure.code}`, nextId('plugin-error')))
+        }
+        return
+      }
+      case 'plugin-install': {
+        if (!outcome.confirmed) {
+          if (props.resolvePlugin === undefined) {
+            setTranscript(state => appendSystemMessage(state, 'Plugin resolution is unavailable in this session.', 'plugin', nextId('plugin')))
+            return
+          }
+          try {
+            const candidate = await props.resolvePlugin(outcome.spec)
+            setTranscript(state => appendSystemMessage(
+              state,
+              [
+                `Install ${sanitizeTerminalText(candidate.exactSpec)} into this workspace.`,
+                '',
+                'This downloads executable plugin code, appends one Cordis patch entry,',
+                'and trial-starts a replacement runtime. The live runtime is replaced only',
+                'after initialization succeeds; a failed trial restores the prior patch.',
+                '',
+                `Run  /plugin install ${sanitizeTerminalText(candidate.exactSpec)} --yes  to proceed.`,
+              ].join('\n'),
+              'plugin confirmation',
+              nextId('plugin-confirm'),
+            ))
+          } catch (error) {
+            const failure = classifyRuntimeError(error)
+            setTranscript(state => appendSystemMessage(state, failure.message, `plugin error · ${failure.code}`, nextId('plugin-error')))
+          }
+          return
+        }
+        if (props.installPlugin === undefined) {
+          setTranscript(state => appendSystemMessage(state, 'Plugin installation is unavailable in this session.', 'plugin', nextId('plugin')))
+          return
+        }
+        try {
+          const next = await props.installPlugin(outcome.spec)
+          const previous = props.runtimeRef.current
+          props.runtimeRef.current = next.runtime
+          setMetadata(next.metadata)
+          setComposition(next.composition)
+          void previous.close().catch(() => undefined)
+          const fresh = createSessionId()
+          setSessionId(fresh)
+          setGeneration(value => value + 1)
+          setSessionTurns(0)
+          setAgentTopology(initialAgentTopologyHistory())
+          jumpToNewest()
+          setTranscript(state => appendSystemMessage(state, `${next.message}\nNew session ${fresh}.`, 'plugin installed', nextId('plugin-install')))
+        } catch (error) {
+          const failure = classifyRuntimeError(error)
+          setTranscript(state => appendSystemMessage(state, failure.message, `plugin install error · ${failure.code}`, nextId('plugin-error')))
         }
         return
       }
@@ -442,6 +529,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           const previous = props.runtimeRef.current
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
+          setComposition(next.composition)
           void previous.close().catch(() => undefined)
           const fresh = createSessionId()
           setSessionId(fresh)

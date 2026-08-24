@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import { DshcRuntimeError } from './errors.js'
 import { readNetworkFacts } from './network.js'
@@ -9,6 +10,8 @@ import { PERSONA_ENV_VAR, resolvePersona } from './persona.js'
 export interface RuntimeLaunchOptions {
   workspace: string
   configPath?: string
+  patchPaths?: readonly string[]
+  moduleBasePath?: string
   /** Incremental environment patch for the default Harness launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
@@ -33,6 +36,10 @@ export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): Node
     ...process.env,
     ...options.env,
     DSH_CWD: options.workspace,
+    DSHC_CORDIS_PATCHES: JSON.stringify(options.patchPaths ?? []),
+    DSHC_MODULE_BASE_URL: pathToFileURL(
+      options.moduleBasePath ?? defaultRuntimeModuleBasePath(options.workspace),
+    ).href,
   }
   // The composition reads the persona from this variable, so resolving it here
   // keeps the launch facts (host, workspace) with the launch, and leaves an
@@ -56,15 +63,13 @@ export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promi
     throw new DshcRuntimeError(`Harness runtime config does not exist: ${configPath}`, 'configuration')
   }
 
-  let runtimeBin: string
+  const runtimeBin = fileURLToPath(new URL('../../runtime/jsonrpc-agent.mjs', import.meta.url))
   try {
-    runtimeBin = fileURLToPath(import.meta.resolve('@deepseek-ai/dsh-sdk-jsonrpc-demo/bin'))
+    await access(runtimeBin)
   } catch (error) {
-    throw new DshcRuntimeError(
-      `Unable to resolve the official dsh-jsonrpc-agent runtime package: ${errorMessage(error)}`,
-      'configuration',
-      { cause: error instanceof Error ? error : undefined },
-    )
+    throw new DshcRuntimeError(`Unable to resolve the dshc JSON-RPC runtime wrapper: ${errorMessage(error)}`, 'configuration', {
+      cause: error instanceof Error ? error : undefined,
+    })
   }
 
   return {
@@ -81,6 +86,17 @@ export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promi
 
 export function defaultRuntimeConfigPath(): string {
   return fileURLToPath(new URL('../../runtime/cordis.yml', import.meta.url))
+}
+
+export function defaultRuntimeInstallAnchor(): string {
+  return fileURLToPath(new URL('../../package.json', import.meta.url))
+}
+
+export function defaultRuntimeModuleBasePath(workspace: string): string {
+  const profilePackage = join(workspace, '.dshc', 'profiles', 'default', 'package.json')
+  return existsSync(profilePackage)
+    ? join(workspace, '.dshc', 'profiles', 'default', 'runtime-anchor.mjs')
+    : defaultRuntimeInstallAnchor()
 }
 
 function errorMessage(error: unknown): string {

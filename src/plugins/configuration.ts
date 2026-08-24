@@ -23,11 +23,12 @@ export const CONFIG_USAGE = [
   '  /model <id> [--yes]        select a different model',
   '  /provider <id> [--yes]     select a different provider',
   '  /reload [path] [--yes]     restart, optionally with another composition file',
-  '  /config                    show the composition this runtime was launched with',
-  '  /config fork               copy it into the workspace so you can edit it',
+  '  /config                    show shipped, patched and effective configuration',
+  '  /config fork               create an empty workspace patch layer',
   '',
-  'A composition at <workspace>/.dshc/cordis.yml is picked up on every launch in',
-  'that workspace, with no flag. --runtime-config still wins over it.',
+  'Patches at <workspace>/.dshc/cordis.patch.yml are applied over the shipped',
+  'composition on every launch. --runtime-config selects an explicit base and',
+  'does not inherit the workspace patch.',
 ].join('\n')
 
 export function configurationPlugin(): TerminalPluginSpec {
@@ -38,7 +39,7 @@ export function configurationPlugin(): TerminalPluginSpec {
     commands: [
       {
         name: 'config',
-        summary: 'Show the composition this runtime was launched with; /config fork copies it for editing',
+        summary: 'Show base, patch and effective requested configuration; /config fork creates the patch',
         usage: '/config [fork]',
         execute: (context, args) => {
           if (args.length === 0) return { kind: 'view', viewId: 'config' }
@@ -170,12 +171,13 @@ function renderConfiguration(context: TerminalViewContext): string {
   }
 
   lines.push(
-    `Composition file (${composition.source})`,
-    `  ${sanitizeTerminalText(composition.path)}`,
+    `Base composition (${composition.base.source})`,
+    `  ${sanitizeTerminalText(composition.base.path)}`,
+    `Workspace patch: ${composition.patch === undefined ? 'none' : `${sanitizeTerminalText(composition.patch.path)} (${composition.patch.patchCount} patch entries)`}`,
     '',
-    'These are the settings dshc launched with. Protocol 0.0.1 exposes no',
-    'runtime plugin inventory, so this is what was requested, not confirmation',
-    'of what loaded. dshc does not interpret these values; Harness owns them.',
+    'Effective requested configuration',
+    'Protocol 0.0.1 exposes no runtime plugin inventory, so this is the composed',
+    'request, not confirmation of what actually loaded. Harness owns the values.',
     '',
   )
 
