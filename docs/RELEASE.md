@@ -64,6 +64,14 @@ After the bootstrap version exists:
 The staged path requires npm CLI 11.15 or newer. The workflow pins npm 11.19.0
 and immutable commits for all third-party GitHub Actions.
 
+The tarball argument to `npm stage publish` must remain an explicit relative
+file path (`./package-artifact/*.tgz`). Without the `./`, npm interprets the
+slash-containing value as a hosted Git package spec instead of the workflow
+artifact. If staging fails after the verified matrix, fix the workflow and use
+its manual `tag` input: it checks out that immutable tag, rebuilds and repeats
+every gate, and may replace assets only while the matching GitHub release is
+still a draft.
+
 ## Failure and rollback
 
 - before npm approval, reject the staged version and leave/delete the draft;
