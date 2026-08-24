@@ -9,10 +9,10 @@ defects and would otherwise be lost.
 
 ## Where things stand
 
-`0.1.0-preview.7` is the M4.6 working release. M0 through M4.6, including the
+`0.1.0-alpha.1` is the M5 public-alpha candidate. M0 through M4.6, including the
 `0.1.1-rc.2` compatibility pass, are implemented. The established
-cross-platform gate remains Windows/macOS/Ubuntu against Node 22.19 and 24;
-rerun it before merging this working release.
+cross-platform gate remains Windows/macOS/Ubuntu against Node 22.19 and 24 and
+now installs, repairs, diagnoses and uninstalls the packed npm tarball.
 
 `main` is protected: five required status checks, strict up-to-date merges,
 `enforce_admins` on, no force push, no branch deletion, zero required reviewing
@@ -20,7 +20,10 @@ approvals. `enforce_admins` is deliberate — it exists because the owner merged
 pull request with four of five checks red (#95, fixed in #96), and protection is
 worth nothing if the person most likely to be in a hurry can walk past it.
 
-Distribution is GitHub Releases only. Nothing is published to npm.
+The release target is `@1919-doomer/dshc` under the npm `alpha` dist-tag, paired
+with a GitHub prerelease carrying the same tested tarball and checksum. At this
+candidate stage the package still needs the owner-side first-publication 2FA
+bootstrap described in `docs/RELEASE.md`.
 
 ## The rule that explains most of the code
 
@@ -180,13 +183,14 @@ plugins refused in #37.
 
 ## Decisions only the owner can make
 
-- **npm publication and the package name.** `package.json` says
-  `deepseek-harness-cli` with `"private": true`. M5 (#14) is unreachable in
-  practice without npm: GitHub-Releases-only distribution cannot be installed
-  from the owner's own network, which is how the mirror-versus-github timeout
-  was discovered in the first place. The name needs checking for availability
-  and for its relationship to DeepSeek's marks; the README's unofficial notice
-  is necessary but may not be sufficient.
+- **The first npm publication.** The old unscoped `deepseek-harness-cli` name is
+  occupied by an unrelated package. M5 therefore targets the scoped public
+  package `@1919-doomer/dshc`, with the executable still named `dshc`. The owner
+  must control that npm scope, enable 2FA and perform the first interactive
+  publication from the exact verified workflow artifact. After it exists,
+  releases use stage-only Trusted Publisher/OIDC plus human 2FA approval. The
+  README's unofficial notice is necessary but does not settle any trademark
+  question for the owner.
 - **Stale remote branches.** Around twenty from merged pull requests are still
   on the remote. Deleting them is safe but is the owner's call, not a
   housekeeping task to perform unasked.

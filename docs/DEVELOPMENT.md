@@ -210,4 +210,22 @@ The first public alpha requires at minimum:
 - unofficial/community status clear in package/repository docs;
 - update/uninstall and diagnostics instructions.
 
+`pnpm pack:check` enforces the public tarball allowlist. `pnpm test:package`
+packs that candidate, installs it globally into an isolated prefix, runs the
+installed `--version`, `--help` and initialize-only doctor paths, reinstalls it
+as the supported repair/update operation, uninstalls it and verifies the
+executable is gone. Required CI runs that installed-package gate on the complete
+platform matrix. `pnpm audit:prod` queries the official npm audit endpoint and
+blocks known high-severity production dependency advisories; the explicit
+registry is intentional because some configured mirrors do not implement the
+audit API.
+
+Alpha tags invoke `.github/workflows/release.yml`. It builds one tarball, tests
+that exact artifact on every blocking platform, stages subsequent npm versions
+through OIDC for human 2FA approval, and creates a draft GitHub prerelease.
+`.github/workflows/release-finalize.yml` makes the GitHub prerelease public only
+after the exact npm version and `alpha` dist-tag are visible. The first package
+version requires the documented interactive 2FA bootstrap because npm cannot
+configure trusted or staged publishing for a package that does not yet exist.
+
 Use GitHub Issues for live execution state; do not duplicate task checklists across more documents.

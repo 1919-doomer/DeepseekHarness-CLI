@@ -66,6 +66,13 @@ Do not post real API keys, access tokens, private repository content or credenti
 
 Security-sensitive bugs involving credential leakage, terminal escape injection or unintended command execution should not be demonstrated with real secrets.
 
+Changes that affect package contents, installation or runtime dependencies must
+also pass `pnpm pack:check` and `pnpm test:package`. The latter performs a real
+global install from the packed tarball and may download the exact pinned
+dependencies from the official npm registry.
+
 ## Project status
 
-The project is pre-alpha. Interfaces and source layout may change rapidly until the first public alpha. Compatibility with upstream DeepSeek Harness is intentionally pinned and tested rather than assumed.
+The project is a public-alpha release candidate. Interfaces and source layout
+may still change rapidly. Compatibility with upstream DeepSeek Harness is
+intentionally pinned and tested rather than assumed.

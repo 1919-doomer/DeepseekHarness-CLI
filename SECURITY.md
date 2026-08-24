@@ -1,6 +1,6 @@
 # Security policy
 
-DeepSeek Harness CLI is pre-alpha and not yet ready for security-sensitive production use.
+DeepSeek Harness CLI is a public-alpha release candidate and is not ready for security-sensitive production use.
 
 ## Sensitive bug classes
 

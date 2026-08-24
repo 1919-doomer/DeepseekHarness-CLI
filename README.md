@@ -2,9 +2,23 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: pre-alpha. M1-M4.6 are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging and restricted self-service Harness plugin installation. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`. **M5 is next; not published to npm yet.**
+**Status: public-alpha release candidate (`0.1.0-alpha.1`). M1-M4.6 are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging and restricted self-service Harness plugin installation. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
 
-[简体中文](README.zh-CN.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
+[简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
+
+## Install the public alpha
+
+```bash
+npm install --global @1919-doomer/dshc@alpha
+dshc doctor
+cd /path/to/repository
+dshc
+```
+
+The npm package is `@1919-doomer/dshc`; the installed command is `dshc`. The
+unscoped package `deepseek-harness-cli` is unrelated to this repository. See
+[installation and lifecycle](docs/INSTALLATION.md) for provider configuration,
+pinning, update, uninstall and diagnostics.
 
 ## The idea
 
@@ -198,7 +212,7 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M5** — public alpha: package/binary naming, release automation, install/update docs and a compatibility statement;
+- **M5** — publish the verified `0.1.0-alpha.1` candidate through the owner-side npm 2FA gate;
 - **M6** — safe community extension ecosystem and advanced capability views.
 
 ## License and affiliation

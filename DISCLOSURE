@@ -1,0 +1,20 @@
+Dual-use functionality disclosure
+
+@1919-doomer/dshc is an unofficial terminal frontend for DeepSeek Harness. Its
+intended legitimate use is software development inside repositories selected by
+the operator. Through the upstream Harness runtime it can inspect and modify
+files, search source code, run shell commands, use skills, and delegate work to
+subagents.
+
+Those capabilities can affect the local filesystem and execute programs with
+the authority granted to the Harness child process. The shipped configuration
+uses the upstream workspace-write sandbox and approval policy, fails closed when
+the configured sandbox is unavailable, and does not silently promote itself to
+unconfined execution. Operators remain responsible for reviewing requests and
+using the package only on systems and repositories they are authorized to
+access.
+
+The project is not designed for credential theft, unauthorized access,
+persistence, exploitation, evasion, or destructive activity. Security issues
+should be reported according to SECURITY.md without posting real secrets or
+private repository content in public issues.

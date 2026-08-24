@@ -107,7 +107,7 @@ Shipped as `0.1.0-preview.4`. Every defect this milestone fixed was found by run
 product, not by reading it; the recurring lesson is recorded in #97 and
 [SUBAGENT-ROLES.md](SUBAGENT-ROLES.md).
 
-## M5 — Public alpha — next — #14
+## M5 — Public alpha — release candidate — #14
 
 Ship the first installable community preview:
 
@@ -120,6 +120,11 @@ Ship the first installable community preview:
 - public alpha tag.
 
 Release requires the gates in `DEVELOPMENT.md` to pass.
+
+The repository candidate is `@1919-doomer/dshc@0.1.0-alpha.1`, exposing the
+`dshc` binary. Package contents, installed lifecycle and staged release
+automation are blocking; #14 remains open until the version is visible under
+the npm `alpha` tag and the matching GitHub prerelease is public.
 
 ## M6 — Post-alpha capability growth — #16
 
