@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v0.1.0-alpha.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing verified alpha tag to rebuild and stage
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: read
@@ -16,6 +25,8 @@ jobs:
       package-exists: ${{ steps.registry.outputs.exists }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.x'
@@ -30,7 +41,7 @@ jobs:
       - run: pnpm check
       - run: pnpm test:official-runtime
       - name: Verify tag and release identity
-        run: pnpm release:verify -- "${GITHUB_REF_NAME}"
+        run: pnpm release:verify -- "${RELEASE_TAG}"
       - name: Create the release tarball and checksum
         run: |
           mkdir package-artifact
@@ -69,6 +80,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
@@ -93,6 +106,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.x'
@@ -104,7 +119,7 @@ jobs:
           path: package-artifact
       - run: npm install --global npm@11.19.0
       - name: Stage the exact tested tarball
-        run: npm stage publish package-artifact/*.tgz --access public --tag alpha --provenance
+        run: npm stage publish ./package-artifact/*.tgz --access public --tag alpha --provenance
 
   draft-release:
     name: Create draft GitHub prerelease
@@ -122,12 +137,19 @@ jobs:
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          package-artifact/*.tgz package-artifact/SHA256SUMS
-          --repo "${GITHUB_REPOSITORY}"
-          --verify-tag
-          --generate-notes
-          --draft
-          --prerelease
-          --title "dshc ${GITHUB_REF_NAME#v}"
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            DRAFT="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
+            test "${DRAFT}" = "true"
+            gh release upload "${RELEASE_TAG}" package-artifact/*.tgz package-artifact/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${RELEASE_TAG}" \
+              package-artifact/*.tgz package-artifact/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --generate-notes \
+              --draft \
+              --prerelease \
+              --title "dshc ${RELEASE_TAG#v}"
+          fi
