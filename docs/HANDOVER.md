@@ -20,7 +20,7 @@ approvals. `enforce_admins` is deliberate — it exists because the owner merged
 pull request with four of five checks red (#95, fixed in #96), and protection is
 worth nothing if the person most likely to be in a hurry can walk past it.
 
-The release target is `@1919-doomer/dshc` under the npm `alpha` dist-tag, paired
+The release target is `dshc` under the npm `alpha` dist-tag, paired
 with a GitHub prerelease carrying the same tested tarball and checksum. At this
 candidate stage the package still needs the owner-side first-publication 2FA
 bootstrap described in `docs/RELEASE.md`.
@@ -184,9 +184,9 @@ plugins refused in #37.
 ## Decisions only the owner can make
 
 - **The first npm publication.** The old unscoped `deepseek-harness-cli` name is
-  occupied by an unrelated package. M5 therefore targets the scoped public
-  package `@1919-doomer/dshc`, with the executable still named `dshc`. The owner
-  must control that npm scope, enable 2FA and perform the first interactive
+  occupied by an unrelated package. M5 therefore targets the unscoped package
+  `dshc`, matching the executable name. The owner must control that npm package,
+  enable 2FA and perform the first interactive
   publication from the exact verified workflow artifact. After it exists,
   releases use stage-only Trusted Publisher/OIDC plus human 2FA approval. The
   README's unofficial notice is necessary but does not settle any trademark

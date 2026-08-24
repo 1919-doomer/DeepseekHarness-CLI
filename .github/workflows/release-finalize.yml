@@ -33,8 +33,8 @@ jobs:
         run: |
           VERSION="${{ inputs.tag }}"
           VERSION="${VERSION#v}"
-          PUBLISHED="$(npm view "@1919-doomer/dshc@${VERSION}" version --registry=https://registry.npmjs.org/)"
-          ALPHA="$(npm view @1919-doomer/dshc dist-tags.alpha --registry=https://registry.npmjs.org/)"
+          PUBLISHED="$(npm view "dshc@${VERSION}" version --registry=https://registry.npmjs.org/)"
+          ALPHA="$(npm view dshc dist-tags.alpha --registry=https://registry.npmjs.org/)"
           test "${PUBLISHED}" = "${VERSION}"
           test "${ALPHA}" = "${VERSION}"
       - name: Publish the existing draft prerelease

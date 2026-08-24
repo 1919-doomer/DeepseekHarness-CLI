@@ -7,7 +7,7 @@ repository containing no secrets.
 ## Recording flow
 
 ```bash
-npm install --global @1919-doomer/dshc@alpha
+npm install --global dshc@alpha
 dshc --version
 dshc doctor
 cd /path/to/disposable-repository

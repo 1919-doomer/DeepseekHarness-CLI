@@ -33,7 +33,7 @@ try {
   // execute with shell=false. Verify the shim exists, then drive the exact
   // installed JS entry without weakening argument boundaries through a shell.
   const installedEntry = process.platform === 'win32'
-    ? join(prefix, 'node_modules', '@1919-doomer', 'dshc', 'dist', 'cli', 'bin.js')
+    ? join(prefix, 'node_modules', ...manifest.name.split('/'), 'dist', 'cli', 'bin.js')
     : command
   const installedCommand = process.platform === 'win32' ? process.execPath : command
   const installedPrefix = process.platform === 'win32' ? [installedEntry] : []

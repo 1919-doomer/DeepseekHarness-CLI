@@ -9,14 +9,14 @@
 ## Install the public alpha
 
 ```bash
-npm install --global @1919-doomer/dshc@alpha
+npm install --global dshc@alpha
 dshc doctor
 cd /path/to/repository
 dshc
 ```
 
-The npm package is `@1919-doomer/dshc`; the installed command is `dshc`. The
-unscoped package `deepseek-harness-cli` is unrelated to this repository. See
+The npm package and installed command are both `dshc`. The unscoped package
+`deepseek-harness-cli` is unrelated to this repository. See
 [installation and lifecycle](docs/INSTALLATION.md) for provider configuration,
 pinning, update, uninstall and diagnostics.
 

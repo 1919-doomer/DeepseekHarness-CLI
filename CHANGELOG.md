@@ -10,7 +10,7 @@ First installable community alpha.
 
 ### Added
 
-- npm package identity `@1919-doomer/dshc`, exposing the `dshc` executable;
+- npm package identity `dshc`, exposing the `dshc` executable;
 - fresh global install, repair/update and uninstall validation from the packed
   tarball on Windows, macOS and Linux;
 - staged npm publishing with OIDC provenance, human 2FA approval and a draft

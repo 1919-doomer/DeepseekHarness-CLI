@@ -9,14 +9,14 @@
 ## 安装 public alpha
 
 ```bash
-npm install --global @1919-doomer/dshc@alpha
+npm install --global dshc@alpha
 dshc doctor
 cd <仓库目录>
 dshc
 ```
 
-npm 包名是 `@1919-doomer/dshc`，安装后的命令仍是 `dshc`。npm 上不带
-scope 的 `deepseek-harness-cli` 与本仓库无关。provider 配置、固定版本、更新、
+npm 包名和安装后的命令都是 `dshc`。npm 上的 `deepseek-harness-cli`
+与本仓库无关。provider 配置、固定版本、更新、
 卸载和诊断说明见[安装与生命周期](docs/INSTALLATION.md)。
 
 ## 核心定位

@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME
+const cliArgs = process.argv.slice(2)
+const releaseArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
+if (releaseArgs.length > 1) {
+  throw new Error(`Expected one release tag, received ${releaseArgs.length}`)
+}
+const tag = releaseArgs[0] ?? process.env.GITHUB_REF_NAME
 
 if (tag === undefined || tag.length === 0) {
   throw new Error('Pass the release tag or set GITHUB_REF_NAME')
@@ -17,11 +22,11 @@ if (!/^0\.1\.0-alpha\.\d+$/.test(manifest.version)) {
 if (tag !== `v${manifest.version}`) {
   throw new Error(`Release tag ${tag} does not match package version v${manifest.version}`)
 }
-if (manifest.name !== '@1919-doomer/dshc' || manifest.private !== false) {
+if (manifest.name !== 'dshc' || manifest.private !== false) {
   throw new Error('Release package identity is not finalized')
 }
 if (manifest.publishConfig?.access !== 'public') {
-  throw new Error('Scoped alpha must publish with public access')
+  throw new Error('Public alpha must publish with public access')
 }
 if (manifest.contentPolicy?.class !== 'dual-use') {
   throw new Error('npm dual-use declaration is missing')

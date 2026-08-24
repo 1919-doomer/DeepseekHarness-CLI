@@ -1,6 +1,6 @@
 Dual-use functionality disclosure
 
-@1919-doomer/dshc is an unofficial terminal frontend for DeepSeek Harness. Its
+dshc is an unofficial terminal frontend for DeepSeek Harness. Its
 intended legitimate use is software development inside repositories selected by
 the operator. Through the upstream Harness runtime it can inspect and modify
 files, search source code, run shell commands, use skills, and delegate work to
