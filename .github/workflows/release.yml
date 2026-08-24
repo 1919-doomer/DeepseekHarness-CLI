@@ -39,7 +39,7 @@ jobs:
       - name: Detect first-publication bootstrap
         id: registry
         run: |
-          if npm view dshc name --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+          if npm view @liaosiyuan123/dshc name --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"

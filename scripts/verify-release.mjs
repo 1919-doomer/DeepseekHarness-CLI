@@ -22,7 +22,7 @@ if (!/^0\.1\.0-alpha\.\d+$/.test(manifest.version)) {
 if (tag !== `v${manifest.version}`) {
   throw new Error(`Release tag ${tag} does not match package version v${manifest.version}`)
 }
-if (manifest.name !== 'dshc' || manifest.private !== false) {
+if (manifest.name !== '@liaosiyuan123/dshc' || manifest.private !== false) {
   throw new Error('Release package identity is not finalized')
 }
 if (manifest.publishConfig?.access !== 'public') {

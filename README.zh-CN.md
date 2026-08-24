@@ -2,21 +2,22 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：public-alpha 发布候选版（`0.1.0-alpha.1`）。M1–M4.6 已完成。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge 与受限的 Harness 插件自助安装。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`。
+**当前状态：public-alpha 发布候选版（`0.1.0-alpha.2`）。M1–M4.6 已完成。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge 与受限的 Harness 插件自助安装。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`。
 
 [English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
 ## 安装 public alpha
 
 ```bash
-npm install --global dshc@alpha
+npm install --global @liaosiyuan123/dshc@alpha
 dshc doctor
 cd <仓库目录>
 dshc
 ```
 
-npm 包名和安装后的命令都是 `dshc`。npm 上的 `deepseek-harness-cli`
-与本仓库无关。provider 配置、固定版本、更新、
+npm 包名是 `@liaosiyuan123/dshc`，安装后的命令仍是 `dshc`。npm 上不带
+scope 的 `dshc` 和 `deepseek-harness-cli` 均不是本仓库发布的包。provider
+配置、固定版本、更新、
 卸载和诊断说明见[安装与生命周期](docs/INSTALLATION.md)。
 
 ## 核心定位
@@ -195,7 +196,7 @@ Terminal user
 
 ## 下一阶段
 
-- **M5**：让已验证的 `0.1.0-alpha.1` 候选版通过所有者侧 npm 2FA 门禁并公开；
+- **M5**：让已验证的 `0.1.0-alpha.2` 候选版通过所有者侧 npm 2FA 门禁并公开；
 - **M6**：安全的社区扩展生态与高级 capability views。
 
 ## License 与关系说明

@@ -1,6 +1,6 @@
 {
-  "name": "dshc",
-  "version": "0.1.0-alpha.1",
+  "name": "@liaosiyuan123/dshc",
+  "version": "0.1.0-alpha.2",
   "description": "Unofficial terminal-native console for DeepSeek Harness",
   "license": "MIT",
   "author": "1919-doomer",

@@ -76,7 +76,7 @@ for (const path of paths) {
   }
 }
 
-if (manifest.name !== 'dshc') throw new Error(`Unexpected package name: ${manifest.name}`)
+if (manifest.name !== '@liaosiyuan123/dshc') throw new Error(`Unexpected package name: ${manifest.name}`)
 if (manifest.private !== false) throw new Error('Published package must set private=false')
 if (manifest.bin?.dshc !== './dist/cli/bin.js') throw new Error('Published package must expose the dshc binary')
 if (manifest.publishConfig?.access !== 'public') throw new Error('Published package must declare public access')

@@ -1,6 +1,6 @@
 # Public-alpha compatibility statement
 
-This statement applies to `dshc@0.1.0-alpha.1`.
+This statement applies to `@liaosiyuan123/dshc@0.1.0-alpha.2`.
 
 | Boundary | Supported alpha baseline |
 | --- | --- |

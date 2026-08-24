@@ -4,13 +4,26 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
+## 0.1.0-alpha.2 — 2026-08-24
+
+First publishable community alpha.
+
+### Fixed
+
+- moved the npm identity to `@liaosiyuan123/dshc` after npm rejected the
+  available unscoped `dshc` name under its package-name similarity policy;
+- retained the short `dshc` executable and all alpha.1 runtime behavior;
+- advanced the immutable release tag instead of retargeting the failed
+  `v0.1.0-alpha.1` publication attempt.
+
 ## 0.1.0-alpha.1 — 2026-08-24
 
-First installable community alpha.
+Unpublished release candidate. Its tarball passed the complete release matrix,
+but npm rejected the unscoped package name before creating a package or version.
 
 ### Added
 
-- npm package identity `dshc`, exposing the `dshc` executable;
+- npm package identity candidate `dshc`, exposing the `dshc` executable;
 - fresh global install, repair/update and uninstall validation from the packed
   tarball on Windows, macOS and Linux;
 - staged npm publishing with OIDC provenance, human 2FA approval and a draft
