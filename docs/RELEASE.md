@@ -8,7 +8,7 @@ or Git tag.
 
 - npm package: `@liaosiyuan123/dshc`;
 - binary: `dshc`;
-- prerelease channel: `alpha` (never `latest`);
+- prerelease channel: `alpha` (`latest` exists because npm forced it on the first publication, but release commands never target it);
 - tag: `v<package.json version>`;
 - the npm and GitHub assets must be the exact tarball that passed the installed
   package matrix;
@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile
 pnpm check
 pnpm test:official-runtime
 pnpm test:package
-pnpm release:verify -- v0.1.0-alpha.2
+pnpm release:verify -- v0.1.0-alpha.5
 ```
 
 Inspect `npm pack --dry-run --json`. The allowlisted package must contain the

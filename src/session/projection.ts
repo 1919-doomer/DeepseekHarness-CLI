@@ -32,13 +32,20 @@ export interface TokenUsage {
   reasoningTokens?: number
 }
 
+/** Allowlisted public presentation metadata observed on tool/result.data.meta. */
+export interface ToolResultMetadata {
+  pluginId?: string
+  packageId?: string
+  pluginRunId?: string
+}
+
 export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'session-status'; sessionId: string; status: 'running' | 'idle' }
   | { sequence: number; kind: 'user-message'; sessionId: string; text: string }
   | { sequence: number; kind: 'assistant-delta'; sessionId: string; text: string }
   | { sequence: number; kind: 'assistant-message'; sessionId: string; text: string; usage?: TokenUsage }
   | { sequence: number; kind: 'tool-call'; sessionId: string; callId: string; name: string; arguments: string }
-  | { sequence: number; kind: 'tool-result'; sessionId: string; callId: string; text: string; isError: boolean }
+  | { sequence: number; kind: 'tool-result'; sessionId: string; callId: string; name?: string; metadata?: ToolResultMetadata; text: string; isError: boolean }
   | { sequence: number; kind: 'subagent-started'; parentSessionId: string; childSessionId: string; provider?: string }
   | { sequence: number; kind: 'subagent-finished'; parentSessionId: string; childSessionId: string }
   | { sequence: number; kind: 'turn-error'; sessionId: string; message: string }
@@ -162,7 +169,7 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
       tools.set(key, {
         sessionId: event.sessionId,
         callId: event.callId,
-        name: previous?.name ?? 'unknown-tool',
+        name: event.name ?? previous?.name ?? 'unknown-tool',
         arguments: previous?.arguments ?? '',
         result: event.text,
         isError: event.isError,
@@ -217,7 +224,11 @@ export class SessionProjector {
   }
 
   ingest(notification: HarnessNotification): NormalizedEvent {
-    const event = normalizeNotification(notification, this.sequence++)
+    let event = normalizeNotification(notification, this.sequence++)
+    if (event.kind === 'tool-result' && event.name === undefined) {
+      const previous = this.currentState.tools.get(toolProjectionKey(event.sessionId, event.callId))
+      if (previous !== undefined) event = { ...event, name: previous.name }
+    }
     this.currentState = reduceProjection(this.currentState, event)
     return event
   }
@@ -348,6 +359,7 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     const message = data === undefined ? undefined : recordField(data, 'message')
     const error = data === undefined ? undefined : recordField(data, 'error')
     const result = extractToolResult(message)
+    const metadata = readToolResultMetadata(recordField(data, 'meta'))
     return {
       sequence,
       kind: 'tool-result',
@@ -357,6 +369,8 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
         ?? stringField(message, 'toolCallId')
         ?? stringField(data, 'callId')
         ?? 'unknown-call',
+      ...(stringField(data, 'name') === undefined ? {} : { name: stringField(data, 'name') }),
+      ...(metadata === undefined ? {} : { metadata }),
       text: result.text,
       isError: error !== undefined || result.isError || message?.isError === true,
     }
@@ -412,6 +426,16 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
   }
 
   return { sequence, kind: 'unknown', sessionId, method: notification.method, type }
+}
+
+function readToolResultMetadata(source: Record<string, unknown> | undefined): ToolResultMetadata | undefined {
+  if (source === undefined) return undefined
+  const metadata: ToolResultMetadata = {}
+  for (const key of ['pluginId', 'packageId', 'pluginRunId'] as const) {
+    const value = stringField(source, key)
+    if (value !== undefined) metadata[key] = value
+  }
+  return Object.keys(metadata).length === 0 ? undefined : metadata
 }
 
 export function isInboxReceipt(notification: HarnessNotification, sessionId: string, messageId: string): boolean {

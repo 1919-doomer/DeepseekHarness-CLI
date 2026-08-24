@@ -87,6 +87,9 @@ export interface PluginInstallRestart extends RuntimeRestart {
 
 export interface TerminalProductOptions {
   debug?: boolean
+  devMode?: boolean
+  /** Trusted-mode warning inserted into the initial transcript and after /clear. */
+  startupNotice?: string
   /** Composition summary for `/config`; display only. */
   composition?: CompositionSummary
   /** Creates the workspace patch layer without overwriting an existing one. */
@@ -127,7 +130,7 @@ export async function runTerminalProduct(
   // down. The new runtime is started before the old one closes, so a rejected
   // composition leaves the session working rather than stranded.
   const runtimeRef = { current: runtime }
-  const host = options.host ?? createDefaultTerminalHost()
+  const host = options.host ?? createDefaultTerminalHost({ devMode: options.devMode })
   const initialSessionId = options.initialSessionId ?? createSessionId()
   const stdin = options.stdin ?? process.stdin
   const stdout = options.stdout ?? process.stdout
@@ -160,6 +163,15 @@ export async function runTerminalProduct(
   }
   const onInt = (): void => closeForSignal(130)
   const onTerm = (): void => closeForSignal(143)
+  // Ink does not turn a closed injected/stdin stream into an application
+  // result by itself. Treat terminal EOF as the same clean whole-runtime exit
+  // as `/exit`; the protocol has no smaller session or plugin disposal scope.
+  const onEof = (): void => finish({
+    exitCode: 0,
+    interrupted: false,
+    totalTurns: latest.totalTurns,
+    sessionId: latest.sessionId,
+  })
 
   try {
     if (alternate) {
@@ -168,6 +180,7 @@ export async function runTerminalProduct(
     }
     process.once('SIGINT', onInt)
     process.once('SIGTERM', onTerm)
+    stdin.once('end', onEof)
 
     instance = render(
       <TerminalProductApp
@@ -181,6 +194,7 @@ export async function runTerminalProduct(
         {...(options.installPlugin === undefined ? {} : { installPlugin: options.installPlugin })}
         host={host}
         debug={options.debug ?? false}
+        {...(options.startupNotice === undefined ? {} : { startupNotice: options.startupNotice })}
         initialSessionId={initialSessionId}
         onProgress={(totalTurns, sessionId) => { latest = { totalTurns, sessionId } }}
         onFinish={finish}
@@ -204,6 +218,7 @@ export async function runTerminalProduct(
   } finally {
     process.off('SIGINT', onInt)
     process.off('SIGTERM', onTerm)
+    stdin.off('end', onEof)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
     await runtimeRef.current.close()
@@ -222,9 +237,17 @@ interface AppProps {
   installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
   host: TerminalPluginHost
   debug: boolean
+  startupNotice?: string
   initialSessionId: string
   onProgress(totalTurns: number, sessionId: string): void
   onFinish(result: FinishResult): void
+}
+
+function initialProductTranscript(startupNotice: string | undefined): TerminalTranscriptState {
+  const initial = initialTerminalTranscript()
+  return startupNotice === undefined
+    ? initial
+    : appendSystemMessage(initial, startupNotice, 'developer mode', 'developer-mode-warning')
 }
 
 function TerminalProductApp(props: AppProps): React.ReactElement {
@@ -244,7 +267,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // only drops local blocks and must not pretend the tokens were not spent.
   const [usage, setUsage] = useState(initialSessionUsage)
   const [phase, setPhase] = useState<TerminalRuntimePhase>('idle')
-  const [transcript, setTranscript] = useState<TerminalTranscriptState>(initialTerminalTranscript)
+  const [transcript, setTranscript] = useState<TerminalTranscriptState>(() => initialProductTranscript(props.startupNotice))
   const [eventHistory, setEventHistory] = useState<TerminalEventHistory>(initialTerminalEventHistory)
   const [agentTopology, setAgentTopology] = useState<AgentTopologyHistory>(initialAgentTopologyHistory)
   const [input, setInput] = useState('')
@@ -591,7 +614,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         return
       }
       case 'clear':
-        setTranscript(initialTerminalTranscript())
+        setTranscript(initialProductTranscript(props.startupNotice))
         selectView(undefined)
         return
       case 'exit':

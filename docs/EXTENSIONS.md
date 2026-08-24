@@ -1,5 +1,9 @@
 # Extensions and composition
 
+For interactive development of an ordinary DSH/Cordis package, see the trusted
+[Cordis Plugin Workbench](PLUGIN-WORKBENCH.md). It is a Harness development
+surface, not a third-party terminal-plugin SDK.
+
 M4.6 Batch 2 keeps one authoritative base at `runtime/cordis.yml`. A workspace
 may add only this automatic layer:
 

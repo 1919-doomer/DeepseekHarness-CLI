@@ -11,6 +11,7 @@ export interface CliOptions {
   activityTimeoutMs?: number
   requestTimeoutMs?: number
   runtimeConfig?: string
+  dev: boolean
   interactive: boolean
   json: boolean
   debug: boolean
@@ -21,6 +22,7 @@ export interface CliOptions {
 export function parseCliArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command: 'auto',
+    dev: false,
     interactive: false,
     json: false,
     debug: false,
@@ -62,6 +64,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
     if (arg === '--interactive') {
       options.interactive = true
+      index++
+      continue
+    }
+    if (arg === '--dev') {
+      options.dev = true
       index++
       continue
     }
@@ -161,6 +168,7 @@ Options:
       --activity-timeout-ms <n>   Bound receipt-to-idle collection
       --request-timeout-ms <n>    Bound individual JSON-RPC requests
       --runtime-config <path>     Override runtime Cordis config
+      --dev                       Trusted interactive Cordis plugin workbench mode
       --interactive               Force the persistent loop even when stdin is piped
       --json                      Emit machine-readable one-shot/doctor output
       --debug                     Show compatibility and unknown-event diagnostics
@@ -171,6 +179,8 @@ Doctor:
   dshc doctor never issues session/prompt. It checks the current workspace, pinned DSH packages,
   runtime config, initialize handshake, credential presence (never the value), TTY facts, shipped
   sandbox/approval defaults, protocol limitations and local retention policy.
+  dshc doctor --dev additionally validates the trusted Cordis workbench layer without
+  defining or running dynamic code and does not require provider credentials.
 
 Interactive commands:
   Scripted non-TTY loop: /help  /status  /session  /new  /clear  /exit

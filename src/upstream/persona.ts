@@ -27,6 +27,7 @@
  */
 
 import { describeNetwork, type NetworkFacts } from './network.js'
+import { DEV_PERSONA_APPENDIX } from '../workbench/contract.js'
 
 export interface PersonaFacts {
   /** Host platform, as `process.platform` reports it. */
@@ -75,6 +76,10 @@ export function buildPersona(facts: PersonaFacts): string {
   ].join('\n')
 }
 
+export function buildDeveloperPersona(facts: PersonaFacts): string {
+  return `${buildPersona(facts)}\n${DEV_PERSONA_APPENDIX}`
+}
+
 /**
  * The persona the child runtime should launch with, or `undefined` when the
  * deployment already set one. An explicit `DSH_SYSTEM_PROMPT` wins: a person
@@ -83,10 +88,11 @@ export function buildPersona(facts: PersonaFacts): string {
 export function resolvePersona(
   env: NodeJS.ProcessEnv,
   facts: PersonaFacts,
+  devMode = false,
 ): string | undefined {
   const configured = env[PERSONA_ENV_VAR]
   if (configured !== undefined && configured.trim().length > 0) return undefined
-  return buildPersona(facts)
+  return devMode ? buildDeveloperPersona(facts) : buildPersona(facts)
 }
 
 /**

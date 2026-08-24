@@ -52,9 +52,11 @@ const required = [
   'docs/COMPATIBILITY.md',
   'docs/DEMO.md',
   'docs/EXTENSIONS.md',
+  'docs/PLUGIN-WORKBENCH.md',
   'docs/assets/dshc-alpha.svg',
   'dist/cli/bin.js',
   'runtime/cordis.yml',
+  'runtime/cordis.dev.patch.yml',
   'runtime/jsonrpc-agent.mjs',
 ]
 for (const path of required) {

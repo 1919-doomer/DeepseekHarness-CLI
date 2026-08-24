@@ -22,6 +22,9 @@ describe('M4.4 trace debugger query', () => {
     expect(parseTraceQuery(['tools', '--page', '3'])).toEqual({ mode: 'tools', page: 3 })
     expect(parseTraceQuery(['--page', '2', 'unknown'])).toEqual({ mode: 'unknown', page: 2 })
     expect(parseTraceQuery(['session', 'session-a', '--page', '4'])).toEqual({ mode: 'session', value: 'session-a', page: 4 })
+    expect(parseTraceQuery(['cordis'])).toEqual({ mode: 'cordis', page: 1 })
+    expect(parseTraceQuery(['plugin', 'wthr-1'])).toEqual({ mode: 'plugin', value: 'wthr-1', page: 1 })
+    expect(parseTraceQuery(['service', 'Service'])).toEqual({ mode: 'service', value: 'Service', page: 1 })
     expect(parseTraceQuery(['find', 'Permission', 'DENIED', '--page', '2'])).toEqual({
       mode: 'find',
       value: 'Permission DENIED',

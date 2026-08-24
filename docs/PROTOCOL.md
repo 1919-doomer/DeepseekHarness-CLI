@@ -89,6 +89,21 @@ M3 adds **no new wire method**. Ink, the terminal plugin host, Capability Explor
 
 The runtime emits `session.event`, `session.status`, `subagent.started`, and `subagent.finished` notifications consumed by the normalized projection.
 
+### M6 Cordis lifecycle remains tool-driven
+
+Developer mode adds no request method. The official `0.1.1-rc.2`
+`dsh-tool-cordis` package exposes seven model tools:
+`cordis_inspect_list`, `cordis_inspect_query`, `cordis_inspect_self`,
+`cordis_define`, `cordis_run`, `cordis_stop` and `cordis_undefine`. Their calls
+and results arrive through the existing `session.event` `tool/call` and
+`tool/result` vocabulary.
+
+The real rc.2 wire puts lifecycle presentation identity in
+`tool/result.data.meta`. dshc allowlists `pluginId`, `packageId` and
+`pluginRunId` from that public structure; it does not parse rendered result text
+to reconstruct them. `/workbench` and the Cordis trace filters remain bounded
+local projections, not authoritative inventories or direct control surfaces.
+
 ## Activity ownership is receipt-to-idle, not prompt/result RPC
 
 For each prompt `dshc` subscribes before enqueueing, captures the returned `messageId`, waits until the matching durable `agent/inbox/spliced` receipt is observed, then consumes ordered session-tree notifications until the root session reports `idle`.

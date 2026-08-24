@@ -107,7 +107,7 @@ Shipped as `0.1.0-preview.4`. Every defect this milestone fixed was found by run
 product, not by reading it; the recurring lesson is recorded in #97 and
 [SUBAGENT-ROLES.md](SUBAGENT-ROLES.md).
 
-## M5 — Public alpha — release candidate — #14
+## M5 — Public alpha — complete — #14
 
 Ship the first installable community preview:
 
@@ -119,14 +119,32 @@ Ship the first installable community preview:
 - changelog/release notes;
 - public alpha tag.
 
-Release requires the gates in `DEVELOPMENT.md` to pass.
+Completed on 2026-08-24 with `@liaosiyuan123/dshc@0.1.0-alpha.2`, the npm
+`alpha` tag and matching GitHub prerelease. npm necessarily created `latest`
+for the first package publication, so supported installation and updates always
+name `@alpha` explicitly.
 
-The repository candidate is `@liaosiyuan123/dshc@0.1.0-alpha.2`, exposing the
-`dshc` binary. Package contents, installed lifecycle and staged release
-automation are blocking; #14 remains open until the version is visible under
-the npm `alpha` tag and the matching GitHub prerelease is public.
+## M6 — Plugin Workbench — implemented for alpha.3–alpha.5 — #57
 
-## M6 — Post-alpha capability growth — #16
+The first capability admitted from #16 is the trusted DSH/Cordis Plugin
+Workbench:
+
+- interactive-TTY-only `dshc --dev` and initialize-only `doctor --dev`;
+- official `0.1.1-rc.2` Cordis runner/tool packages behind an ordered built-in
+  developer patch that ordinary mode never loads;
+- explicit process-wide trust warning and developer persona;
+- `/workbench`, dedicated lifecycle rendering and structured `/trace` filters;
+- real official-runtime inspect/define/run/dynamic-call/update/stop/undefine
+  acceptance plus credential-free replay;
+- guidance from temporary in-memory prototype to ordinary source package,
+  workspace patch and post-restart verification.
+
+The pinned package exports seven lifecycle tools (`cordis_inspect_list`,
+`cordis_inspect_query`, `cordis_inspect_self`, `cordis_define`, `cordis_run`,
+`cordis_stop`, `cordis_undefine`). This measured contract supersedes the older
+five-tool planning shorthand. See [PLUGIN-WORKBENCH.md](PLUGIN-WORKBENCH.md).
+
+## Post-M6 candidate pool — #16
 
 Candidate work, promoted only when backed by a real user problem and supported upstream contract:
 
@@ -142,9 +160,9 @@ Candidate work, promoted only when backed by a real user problem and supported u
 - remote runtime console only if upstream exposes a supported secure transport;
 - graceful per-prompt cancel only if upstream adds a real cancel contract;
 - performance work for very long sessions;
-- plugin replay/development harness and optional hot reload.
+- optional hot reload only after an upstream contract exists.
 
-Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` must remain usable without it.
+Research: #36 explores an optional DSH-side `dshc-bridge` Cordis plugin for capability metadata and feature negotiation. Base `dshc` and the M6 Workbench remain usable without it.
 
 ## Feature priorities after M3
 

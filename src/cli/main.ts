@@ -8,7 +8,7 @@ import {
   workspaceCompositionPath,
   type ResolvedComposition,
 } from '../upstream/composition.js'
-import { defaultRuntimeConfigPath, defaultRuntimeInstallAnchor } from '../upstream/runtime-launcher.js'
+import { defaultRuntimeConfigPath, defaultRuntimeDevPatchPath, defaultRuntimeInstallAnchor } from '../upstream/runtime-launcher.js'
 import {
   installWorkspacePlugin,
   resolveDeepseekPlugin,
@@ -21,6 +21,7 @@ import { DSHC_VERSION } from '../version.js'
 import { HELP_TEXT, parseCliArgs, type CliOptions } from './args.js'
 import { collectDoctorReport, doctorExitCode, renderDoctorHuman } from './doctor.js'
 import { runInteractiveLoop } from './interactive.js'
+import { DEV_MODE_WARNING } from '../workbench/contract.js'
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024
 
@@ -70,7 +71,17 @@ function shouldRunInteractive(options: CliOptions): boolean {
   return process.stdin.isTTY === true
 }
 
-function validateModeOptions(options: CliOptions): void {
+export function validateModeOptions(
+  options: CliOptions,
+  tty: { stdin: boolean; stdout: boolean } = {
+    stdin: process.stdin.isTTY === true,
+    stdout: process.stdout.isTTY === true,
+  },
+): void {
+  if (options.help || options.version) return
+  if (options.dev && options.runtimeConfig !== undefined) {
+    throw new DshcRuntimeError('`--dev` cannot be combined with `--runtime-config`; developer mode requires the shipped base composition.', 'configuration')
+  }
   if (options.command === 'doctor') {
     if (options.interactive) {
       throw new DshcRuntimeError('`doctor` cannot be combined with `--interactive`.', 'configuration')
@@ -88,6 +99,15 @@ function validateModeOptions(options: CliOptions): void {
       throw new DshcRuntimeError('`doctor` has no prompt activity; remove `--activity-timeout-ms`.', 'configuration')
     }
     return
+  }
+
+  if (options.dev) {
+    if (options.command === 'run' || options.prompt !== undefined || options.json) {
+      throw new DshcRuntimeError('`--dev` is available only in the interactive TTY product; one-shot and JSON modes are not supported.', 'configuration')
+    }
+    if (!tty.stdin || !tty.stdout) {
+      throw new DshcRuntimeError('`--dev` requires interactive TTY stdin and stdout; piped and scripted modes are rejected.', 'configuration')
+    }
   }
 
   if (!options.interactive) return
@@ -113,7 +133,8 @@ function createRuntime(
     model: options.model,
     maxTokens: options.maxTokens,
     configPath: composition.path,
-    patchPaths: composition.patchPath === undefined ? [] : [composition.patchPath],
+    patchPaths: composition.patchPaths,
+    devMode: options.dev,
     ...(moduleBasePath === undefined ? {} : { moduleBasePath }),
     activityTimeoutMs: options.activityTimeoutMs,
     requestTimeoutMs: options.requestTimeoutMs,
@@ -128,6 +149,7 @@ async function runDoctorCommand(options: CliOptions): Promise<number> {
       model: options.model,
       configPath: options.runtimeConfig,
       requestTimeoutMs: options.requestTimeoutMs,
+      devMode: options.dev,
     })
     process.stdout.write(options.json
       ? `${stringifyTerminalSafeJson(report)}\n`
@@ -145,6 +167,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
     cliOptions.workspace ?? process.cwd(),
     cliOptions.runtimeConfig,
     defaultRuntimeConfigPath(),
+    { devMode: cliOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
   )
   const options = activeOptions
   const runtime = createRuntime(activeOptions, resolved)
@@ -163,10 +186,12 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
         },
       })
       try {
-        const composition = await readCompositionSummary(resolved.path, resolved.source, resolved.patchPath)
+        const composition = await readCompositionSummary(resolved.path, resolved.source, resolved.patchPaths)
         const result = await runTerminalProduct(runtime, {
           initialSessionId: options.sessionId,
           debug: options.debug,
+          devMode: options.dev,
+          ...(options.dev ? { startupNotice: DEV_MODE_WARNING } : {}),
           ...(composition === undefined ? {} : { composition }),
           // A fork lands beside the workspace so it travels with the project
           // rather than with this machine.
@@ -177,6 +202,9 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
           // Construction and startup live here; the product owns presentation
           // and lifecycle, not how a runtime is built.
           restart: async (selection) => {
+            if (activeOptions.dev && selection.runtimeConfig !== undefined) {
+              throw new DshcRuntimeError('Developer mode cannot reload an explicit runtime config; persist changes through the workspace patch.', 'configuration')
+            }
             const nextOptions: CliOptions = {
               ...activeOptions,
               ...(selection.provider === undefined ? {} : { provider: selection.provider }),
@@ -188,6 +216,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
               nextOptions.workspace ?? process.cwd(),
               nextOptions.runtimeConfig,
               defaultRuntimeConfigPath(),
+              { devMode: nextOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
             )
             const next = createRuntime(nextOptions, nextResolved)
             try {
@@ -195,7 +224,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
               const nextComposition = await readCompositionSummary(
                 nextResolved.path,
                 nextResolved.source,
-                nextResolved.patchPath,
+                nextResolved.patchPaths,
               )
               activeOptions = nextOptions
               return {
@@ -234,6 +263,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
                   workspace,
                   undefined,
                   defaultRuntimeConfigPath(),
+                  { devMode: activeOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
                 )
                 const next = createRuntime(activeOptions, nextResolved, moduleBasePath)
                 try {
@@ -241,7 +271,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
                   const nextComposition = await readCompositionSummary(
                     nextResolved.path,
                     nextResolved.source,
-                    nextResolved.patchPath,
+                    nextResolved.patchPaths,
                   )
                   return {
                     runtime: next,
@@ -302,6 +332,7 @@ async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<numbe
     cliOptions.workspace ?? process.cwd(),
     cliOptions.runtimeConfig,
     defaultRuntimeConfigPath(),
+    { devMode: cliOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
   )
   const options = cliOptions
   const runtime = createRuntime(options, resolved)

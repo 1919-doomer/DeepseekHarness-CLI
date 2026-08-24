@@ -12,6 +12,8 @@ export interface RuntimeLaunchOptions {
   configPath?: string
   patchPaths?: readonly string[]
   moduleBasePath?: string
+  /** Select the trusted developer persona; patch selection remains caller-owned. */
+  devMode?: boolean
   /** Incremental environment patch for the default Harness launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
@@ -48,7 +50,7 @@ export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): Node
     platform: process.platform,
     workspace: options.workspace,
     network: readNetworkFacts(env, options.workspace),
-  })
+  }, options.devMode === true)
   if (persona !== undefined) env[PERSONA_ENV_VAR] = persona
   return env
 }
@@ -61,6 +63,13 @@ export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promi
     await access(configPath)
   } catch {
     throw new DshcRuntimeError(`Harness runtime config does not exist: ${configPath}`, 'configuration')
+  }
+  for (const patchPath of options.patchPaths ?? []) {
+    try {
+      await access(patchPath)
+    } catch {
+      throw new DshcRuntimeError(`Harness runtime patch does not exist: ${resolve(patchPath)}`, 'configuration')
+    }
   }
 
   const runtimeBin = fileURLToPath(new URL('../../runtime/jsonrpc-agent.mjs', import.meta.url))
@@ -86,6 +95,10 @@ export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promi
 
 export function defaultRuntimeConfigPath(): string {
   return fileURLToPath(new URL('../../runtime/cordis.yml', import.meta.url))
+}
+
+export function defaultRuntimeDevPatchPath(): string {
+  return fileURLToPath(new URL('../../runtime/cordis.dev.patch.yml', import.meta.url))
 }
 
 export function defaultRuntimeInstallAnchor(): string {

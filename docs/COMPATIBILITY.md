@@ -1,6 +1,6 @@
 # Public-alpha compatibility statement
 
-This statement applies to `@liaosiyuan123/dshc@0.1.0-alpha.2`.
+This statement applies to `@liaosiyuan123/dshc@0.1.0-alpha.5`.
 
 | Boundary | Supported alpha baseline |
 | --- | --- |
@@ -31,12 +31,19 @@ initialize-only `doctor --json`, reinstall/repair and uninstall.
 - one-shot prompt and JSON output;
 - scripted persistent non-TTY interaction;
 - initialize-only doctor preflight;
+- trusted interactive Cordis Workbench and initialize-only `doctor --dev`;
 - repository-local read/search/edit/platform-shell work through the shipped
   Harness composition;
 - upstream `workspace-write` sandbox enforcement and fail-closed unavailable
   escalation;
 - vision, web research, workspace MCP patches and exact official Harness plugin
   installation described in `docs/EXTENSIONS.md`.
+
+Developer mode additionally pins `@deepseek-ai/dsh-cordis-host-runner` and
+`@deepseek-ai/dsh-tool-cordis` to exact `0.1.1-rc.2`. Host-only dynamic packages
+are supported; client-half activation requires a browser client and is not a
+supported terminal path. Ordinary mode does not mount either lifecycle tool
+surface.
 
 ## Compatibility policy
 

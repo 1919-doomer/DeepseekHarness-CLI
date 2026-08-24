@@ -623,6 +623,42 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 15_000)
 
+  it('treats terminal EOF as a clean whole-runtime exit and restores terminal state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m6-product-eof-'))
+    tempRoots.push(root)
+    const runtime = runtimeFor(root, join(root, 'prompts.jsonl'))
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'm6-product-eof',
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      input.end()
+      await expect(product).resolves.toEqual({
+        exitCode: 0,
+        interrupted: false,
+        totalTurns: 0,
+        sessionId: 'm6-product-eof',
+      })
+      await waitFor(() => !input.isRaw)
+      expect(input.referenced).toBe(false)
+      expect(readOutput()).toContain(ALT_SCREEN_OFF)
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
   it('shows token usage once a turn has reported it, and never a context percentage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m4-usage-'))
     tempRoots.push(root)

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { effectiveRuntimeEnvironment } from '../../src/upstream/runtime-launcher.js'
+import { join } from 'node:path'
+import { effectiveRuntimeEnvironment, resolveRuntimeLaunch } from '../../src/upstream/runtime-launcher.js'
 
 const originals = new Map<string, string | undefined>()
 
@@ -69,5 +70,17 @@ describe('effectiveRuntimeEnvironment', () => {
 
     expect(env).toBe(process.env)
     expect(env.DSHC_PARENT_ONLY_TEST).toBe('parent-value')
+  })
+
+  it('fails closed instead of silently dropping a selected patch layer', async () => {
+    const missing = join(process.cwd(), '.dshc', 'missing-dev.patch.yml')
+    await expect(resolveRuntimeLaunch({
+      workspace: process.cwd(),
+      patchPaths: [missing],
+    })).rejects.toMatchObject({ code: 'configuration' })
+    await expect(resolveRuntimeLaunch({
+      workspace: process.cwd(),
+      patchPaths: [missing],
+    })).rejects.toThrow(`Harness runtime patch does not exist: ${missing}`)
   })
 })

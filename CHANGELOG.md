@@ -4,6 +4,43 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
+## 0.1.0-alpha.5 — 2026-08-24
+
+Completes the M6 Plugin Workbench persistence and regression slice.
+
+### Added
+
+- documented temporary-prototype to normal source package/workspace patch and
+  post-restart verification workflow;
+- credential-free replay fixture captured from the official Cordis lifecycle
+  wire;
+- full host-only weather-style lifecycle acceptance, including immutable update,
+  dynamic tool invocation, stop and undefine.
+
+## 0.1.0-alpha.4 — 2026-08-24
+
+Adds the terminal Workbench and lifecycle debugging slice.
+
+### Added
+
+- dev-only `/workbench` observed lifecycle timeline;
+- specialized safe renderers for the seven pinned official Cordis tools;
+- `/trace cordis`, `/trace plugin` and `/trace service` filters over structured
+  call arguments and public result metadata.
+
+## 0.1.0-alpha.3 — 2026-08-24
+
+Adds the trusted developer-mode vertical slice.
+
+### Added
+
+- interactive-TTY-only `dshc --dev` and credential-free `dshc doctor --dev`;
+- ordered shipped base → built-in developer patch → workspace patch composition;
+- exact official `dsh-cordis-host-runner` and `dsh-tool-cordis` `0.1.1-rc.2`
+  dependencies and a developer persona for ordinary Cordis packages;
+- permanent warning that dynamic code has process-wide authority, the VM is not
+  a security boundary and definitions disappear on restart.
+
 ## 0.1.0-alpha.2 — 2026-08-24
 
 First publishable community alpha.
@@ -51,7 +88,9 @@ but npm rejected the unscoped package name before creating a package or version.
   filesystem/shell coding capabilities in `DISCLOSURE`;
 - `js-yaml` is pinned to `4.3.1`, satisfying the Harness `^4.2.0` range while
   removing the quadratic merge-key and `!!omap` CPU denial-of-service findings;
-- npm releases use the `alpha` dist-tag and never silently move `latest`.
+- npm's first publication necessarily created `latest` for alpha.2; installation
+  and updates must therefore name `@alpha` explicitly, and later automation does
+  not publish against `latest`.
 
 ### Known limitations
 

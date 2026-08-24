@@ -9,7 +9,7 @@
   <text x="600" y="41" fill="#8796b8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16" text-anchor="middle">dshc · public alpha</text>
   <line x1="0" y1="62" x2="1200" y2="62" stroke="#26324f"/>
   <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">
-    <text x="34" y="102" fill="#73e0c1">DeepSeek Harness Console 0.1.0-alpha.2</text>
+    <text x="34" y="102" fill="#73e0c1">DeepSeek Harness Console 0.1.0-alpha.5</text>
     <text x="34" y="136" fill="#8796b8">workspace</text><text x="160" y="136" fill="#d8e1f3">sample-repository</text>
     <text x="510" y="136" fill="#8796b8">provider</text><text x="620" y="136" fill="#d8e1f3">deepseek-official</text>
     <text x="34" y="180" fill="#b8c4dc">› Inspect the repository, fix the smallest reproducible defect, and run its tests.</text>

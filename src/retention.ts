@@ -76,7 +76,16 @@ export function retainNormalizedEvent(event: NormalizedEvent): NormalizedEvent {
     case 'tool-call':
       return { ...event, arguments: retainText(event.arguments, MAX_RETAINED_EVENT_TEXT_CHARS).text }
     case 'tool-result':
-      return { ...event, text: retainText(event.text, MAX_RETAINED_EVENT_TEXT_CHARS).text }
+      return {
+        ...event,
+        text: retainText(event.text, MAX_RETAINED_EVENT_TEXT_CHARS).text,
+        ...(event.metadata === undefined ? {} : {
+          metadata: Object.fromEntries(Object.entries(event.metadata).map(([key, value]) => [
+            key,
+            value === undefined ? undefined : retainText(value, MAX_RETAINED_EVENT_TEXT_CHARS).text,
+          ])),
+        }),
+      }
     case 'turn-error':
       return { ...event, message: retainText(event.message, MAX_RETAINED_EVENT_TEXT_CHARS).text }
     case 'session-title':

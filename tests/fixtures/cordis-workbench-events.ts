@@ -1,0 +1,55 @@
+import type { NormalizedEvent } from '../../src/session/projection.js'
+
+/** Replay-safe normalized projection captured from the official rc.2 lifecycle wire. */
+export const CORDIS_WORKBENCH_REPLAY: readonly NormalizedEvent[] = [
+  {
+    sequence: 0,
+    kind: 'tool-call',
+    sessionId: 'replay-session',
+    callId: 'define-1',
+    name: 'cordis_define',
+    arguments: JSON.stringify({
+      plugin: { kind: 'new', idPrefix: 'wthr' },
+      name: 'Weather',
+      purpose: 'Replay weather service',
+      code: { host: 'return { apply() {} }' },
+    }),
+    upstreamSeq: 25,
+    upstreamTime: 1_000,
+  },
+  {
+    sequence: 1,
+    kind: 'tool-result',
+    sessionId: 'replay-session',
+    callId: 'define-1',
+    name: 'cordis_define',
+    text: 'Defined wthr-1/pkg-1 (Weather); it is not running yet.',
+    isError: false,
+    metadata: { pluginId: 'wthr-1', packageId: 'pkg-1' },
+    upstreamSeq: 26,
+    upstreamTime: 1_007,
+    sourceEventSeqs: [25],
+  },
+  {
+    sequence: 2,
+    kind: 'tool-call',
+    sessionId: 'replay-session',
+    callId: 'inspect-1',
+    name: 'cordis_inspect_query',
+    arguments: JSON.stringify({ platform: 'host', provider: 'Service', method: 'listService', input: { service: 'weather' } }),
+    upstreamSeq: 27,
+    upstreamTime: 1_010,
+  },
+  {
+    sequence: 3,
+    kind: 'tool-result',
+    sessionId: 'replay-session',
+    callId: 'inspect-1',
+    name: 'cordis_inspect_query',
+    text: '{"data":[]}',
+    isError: false,
+    upstreamSeq: 28,
+    upstreamTime: 1_012,
+    sourceEventSeqs: [27],
+  },
+]

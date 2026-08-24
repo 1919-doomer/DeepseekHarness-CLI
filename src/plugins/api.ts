@@ -139,6 +139,7 @@ export interface TerminalViewContext extends TerminalCommandContext {
       entries: readonly { id: string; settings: readonly string[] }[]
     }
     patch?: { path: string; patchCount: number }
+    patches?: readonly { path: string; patchCount: number; kind?: 'developer' | 'workspace' }[]
     effective: { entries: readonly { id: string; settings: readonly string[] }[] }
   }
   /** Tool activity entry the sidebar has selected, when one is focused. */

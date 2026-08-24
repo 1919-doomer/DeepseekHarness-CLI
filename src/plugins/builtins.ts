@@ -16,15 +16,19 @@ import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.j
 import { configurationPlugin } from './configuration.js'
 import { pluginManagementPlugin } from './plugin-management.js'
 import { TerminalPluginHost } from './host.js'
+import { cordisEventTags, cordisEventToolName, workbenchPlugin } from './workbench.js'
 
 const TRACE_PAGE_SIZE = 15
 const TRACE_USAGE = [
   '/trace [all|errors|tools|agents|unknown] [--page N]',
   '/trace session <id> [--page N]',
   '/trace find <text> [--page N]',
+  '/trace cordis [--page N]',
+  '/trace plugin <plugin-id> [--page N]',
+  '/trace service <service-name> [--page N]',
 ].join('\n')
 
-export type TraceQueryMode = 'all' | 'errors' | 'tools' | 'agents' | 'unknown' | 'session' | 'find'
+export type TraceQueryMode = 'all' | 'errors' | 'tools' | 'agents' | 'unknown' | 'session' | 'find' | 'cordis' | 'plugin' | 'service'
 
 export interface TraceQuery {
   mode: TraceQueryMode
@@ -32,10 +36,11 @@ export interface TraceQuery {
   value?: string
 }
 
-export function createDefaultTerminalHost(): TerminalPluginHost {
+export function createDefaultTerminalHost(options: { devMode?: boolean } = {}): TerminalPluginHost {
   const host = new TerminalPluginHost()
   host.register(corePlugin())
   host.register(codingActivityPlugin())
+  if (options.devMode === true) host.register(workbenchPlugin())
   host.register(activityPlugin())
   host.register(configurationPlugin())
   host.register(pluginManagementPlugin())
@@ -224,9 +229,17 @@ export function parseTraceQuery(args: readonly string[]): TraceQuery {
     if (tokens.length !== 1) throw new Error(`/trace ${mode} does not accept extra arguments`)
     return { mode, page }
   }
-  if (mode === 'session') {
-    if (tokens.length !== 2 || tokens[1]!.length === 0) throw new Error('/trace session requires exactly one session id')
-    return { mode: 'session', page, value: tokens[1]! }
+  if (mode === 'session' || mode === 'plugin' || mode === 'service') {
+    if (tokens.length !== 2 || tokens[1]!.length === 0) {
+      throw new Error(mode === 'session'
+        ? '/trace session requires exactly one session id'
+        : `/trace ${mode} requires exactly one value`)
+    }
+    return { mode, page, value: tokens[1]! }
+  }
+  if (mode === 'cordis') {
+    if (tokens.length !== 1) throw new Error('/trace cordis does not accept extra arguments')
+    return { mode, page }
   }
   if (mode === 'find') {
     const value = sanitizeTerminalText(tokens.slice(1).join(' ').trim())
@@ -245,7 +258,7 @@ export function renderTraceQuery(context: TerminalViewContext, query: TraceQuery
   // result still reports its span when its call sits on an earlier page.
   const durations = toolCallDurations(context.events)
   const entries = context.events.map((event, index) => ({ event, absoluteIndex: retainedStart + index }))
-  const matches = entries.filter(entry => matchesTraceQuery(entry.event, entry.absoluteIndex, query, durations))
+  const matches = entries.filter(entry => matchesTraceQuery(entry.event, entry.absoluteIndex, query, durations, context.events))
   const totalPages = Math.max(1, Math.ceil(matches.length / TRACE_PAGE_SIZE))
   const pageEnd = Math.max(0, matches.length - (query.page - 1) * TRACE_PAGE_SIZE)
   const pageStart = Math.max(0, pageEnd - TRACE_PAGE_SIZE)
@@ -278,6 +291,7 @@ function matchesTraceQuery(
   absoluteIndex: number,
   query: TraceQuery,
   durations?: ReadonlyMap<string, number>,
+  contextEvents: readonly NormalizedEvent[] = [],
 ): boolean {
   switch (query.mode) {
     case 'all': return true
@@ -286,6 +300,9 @@ function matchesTraceQuery(
     case 'agents': return event.kind === 'subagent-started' || event.kind === 'subagent-finished'
     case 'unknown': return event.kind === 'unknown'
     case 'session': return query.value !== undefined && eventSessionIds(event).includes(query.value)
+    case 'cordis': return cordisEventToolName(event, contextEvents) !== undefined
+    case 'plugin': return query.value !== undefined && cordisEventTags(event, contextEvents).pluginIds.includes(query.value)
+    case 'service': return query.value !== undefined && cordisEventTags(event, contextEvents).serviceNames.includes(query.value)
     case 'find': {
       const needle = query.value?.toLocaleLowerCase() ?? ''
       return needle.length > 0 && formatTraceEvent(event, absoluteIndex, durations).toLocaleLowerCase().includes(needle)
@@ -315,7 +332,7 @@ function eventSessionIds(event: NormalizedEvent): readonly string[] {
 }
 
 function traceQueryLabel(query: TraceQuery): string {
-  if (query.mode === 'session') return `session ${sanitizeTerminalText(query.value ?? '')}`
+  if (query.mode === 'session' || query.mode === 'plugin' || query.mode === 'service') return `${query.mode} ${sanitizeTerminalText(query.value ?? '')}`
   if (query.mode === 'find') return `find ${JSON.stringify(sanitizeTerminalText(query.value ?? ''))}`
   return query.mode
 }

@@ -82,11 +82,25 @@ npm install --global @liaosiyuan123/dshc@alpha
 Pin an exact build when reproducibility matters:
 
 ```bash
-npm install --global @liaosiyuan123/dshc@0.1.0-alpha.2
+npm install --global @liaosiyuan123/dshc@0.1.0-alpha.5
 ```
 
-`latest` is intentionally not the public-alpha channel. Do not omit `@alpha`
-unless a later stable release explicitly documents that transition.
+The first npm publication was required by npm to create a `latest` tag, so
+`latest` currently exists even though it is not the supported public-alpha
+channel. Always name `@alpha`; do not omit it unless a later stable release
+explicitly documents that transition.
+
+## Trusted plugin development
+
+Plugin authors can validate and enter the interactive Cordis Workbench with:
+
+```bash
+dshc doctor --dev
+dshc --dev
+```
+
+Developer mode executes trusted dynamic code in the Harness process and is not
+a sandbox. See [Cordis Plugin Workbench](PLUGIN-WORKBENCH.md) before using it.
 
 ## Uninstall
 
