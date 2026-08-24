@@ -6,7 +6,7 @@ or Git tag.
 
 ## Release contract
 
-- npm package: `dshc`;
+- npm package: `@liaosiyuan123/dshc`;
 - binary: `dshc`;
 - prerelease channel: `alpha` (never `latest`);
 - tag: `v<package.json version>`;
@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile
 pnpm check
 pnpm test:official-runtime
 pnpm test:package
-pnpm release:verify -- v0.1.0-alpha.1
+pnpm release:verify -- v0.1.0-alpha.2
 ```
 
 Inspect `npm pack --dry-run --json`. The allowlisted package must contain the
@@ -41,7 +41,7 @@ exists. The first version is therefore the only bootstrap exception:
 2. let `Stage public alpha` build the tarball and pass all four installed-package
    jobs, producing a draft GitHub prerelease;
 3. download that exact `npm-package` workflow artifact and verify `SHA256SUMS`;
-4. sign in to the npm account that owns `dshc`, with 2FA enabled;
+4. sign in to the npm account that owns `@liaosiyuan123/dshc`, with 2FA enabled;
 5. publish the tarball interactively with
    `npm publish <tarball> --access public --tag alpha --otp=<one-time-code>`;
 6. never place the OTP, session token or npm configuration in the repository;

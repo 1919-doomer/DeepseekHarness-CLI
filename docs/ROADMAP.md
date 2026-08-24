@@ -121,7 +121,7 @@ Ship the first installable community preview:
 
 Release requires the gates in `DEVELOPMENT.md` to pass.
 
-The repository candidate is `dshc@0.1.0-alpha.1`, exposing the
+The repository candidate is `@liaosiyuan123/dshc@0.1.0-alpha.2`, exposing the
 `dshc` binary. Package contents, installed lifecycle and staged release
 automation are blocking; #14 remains open until the version is visible under
 the npm `alpha` tag and the matching GitHub prerelease is public.

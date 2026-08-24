@@ -7,7 +7,7 @@ repository containing no secrets.
 ## Recording flow
 
 ```bash
-npm install --global dshc@alpha
+npm install --global @liaosiyuan123/dshc@alpha
 dshc --version
 dshc doctor
 cd /path/to/disposable-repository
@@ -24,7 +24,7 @@ this repository.
 
 The recording should visibly demonstrate:
 
-1. `0.1.0-alpha.1` and a successful initialize-only doctor preflight;
+1. `0.1.0-alpha.2` and a successful initialize-only doctor preflight;
 2. repository cwd, provider/model and Harness runtime identity;
 3. Harness-owned filesystem/search/platform-shell activity;
 4. a safe edit and its relevant test result;
