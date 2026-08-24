@@ -7,8 +7,9 @@ and `docs/DEVELOPMENT.md`.
 It is a findings document, not a policy document. `SECURITY.md` states what must
 be true; this states what was checked, how, and what was found.
 
-- Reviewed at: `main` after #85 and #86.
-- Upstream baseline: DeepSeek Harness `0.1.1-rc.1`, SDK protocol `0.0.1`.
+- Reviewed at: `main` after #85 and #86; upstream compatibility refreshed by
+  the M4.6 Batch 3 working tree for #125.
+- Upstream baseline: DeepSeek Harness `0.1.1-rc.2`, SDK protocol `0.0.1`.
 - Platform: Windows 11 / Node 24.13.0, plus the CI matrix (Ubuntu 24, Ubuntu
   22.19, macOS, Windows).
 - Provider-backed probes used a live DeepSeek key against a throwaway
@@ -156,7 +157,7 @@ escalation is unavailable.
 
 **Checked.** dshc composes upstream policy plugins and implements no path or
 command permission logic of its own. The shipped default is `workspace-write`
-with `ask`; `danger-full-access` is never an implicit fallback. Protocol `0.0.1`
+with `never`; `danger-full-access` is never an implicit fallback. Protocol `0.0.1`
 has no server-to-client approval transport, and dshc does not invent one.
 
 **Live probe.** During the #13 acceptance task the agent hit `spawn EPERM` when
@@ -175,24 +176,28 @@ network isolation and not general process invisibility, and platform enforcement
 may be partial on some Windows and Linux hosts. `SECURITY.md` already states
 this; the review confirms dshc does not relabel partial enforcement as complete.
 
-## 6. Third-party plugin loading — not applicable, deferred by policy
+## 6. Runtime plugin loading — restricted, trial-gated
 
-dshc loads no third-party packages. The plugin host is first-party only, and
-plugin faults are contained at the terminal boundary so a presentation extension
-cannot redefine runtime success or failure. The security design that must exist
-before this changes is in [PLUGIN-ISOLATION.md](PLUGIN-ISOLATION.md), per #37.
+The terminal plugin host remains first-party only. M4.6 Batch 2 adds child-runtime
+installation restricted to `@deepseek-ai/` npm packages. It requires exact
+package-and-version confirmation, disables npm lifecycle scripts, changes only
+the workspace patch, initializes a replacement runtime before swapping it live,
+and restores the prior patch on failed initialization.
+
+This is not package isolation: accepted plugin code executes with the Harness
+child's OS authority. Arbitrary scopes, Git/URL specs and terminal-plane package
+loading remain deferred to [PLUGIN-ISOLATION.md](PLUGIN-ISOLATION.md), per #37.
 
 ## Documentation drift found
 
 `SECURITY.md`'s *M4 validated default* section still names the pinned baseline
 as `0.1.0-rc.8`. #82 moved it to `0.1.1-rc.1`. Corrected in this change.
 
-## Open, non-blocking
+## Follow-up status
 
-- #83 — the `session/title` event introduced by `0.1.1-rc.1` is unclassified and
-  falls through to `unknown`. It degrades safely and is diagnosable under
-  `--debug`, so it is not a blocker.
-- The `#86` residual described in section 1.
+- #83 is closed: `session/title` is classified, sanitized and bounded, and its
+  payload was re-checked during the rc.2 compatibility pass.
+- The `#86` residual described in section 1 remains open and non-blocking.
 
 ## What would reopen this gate
 

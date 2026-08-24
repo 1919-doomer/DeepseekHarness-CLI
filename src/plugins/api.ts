@@ -29,6 +29,8 @@ export type TerminalCommandOutcome =
   | { kind: 'view'; viewId: string }
   | { kind: 'toggle-tools' }
   | { kind: 'fork-composition' }
+  | { kind: 'plugin-search'; query: string }
+  | { kind: 'plugin-install'; spec: string; confirmed: boolean }
   /**
    * Restart the owned runtime with a different selection. Protocol 0.0.1 has no
    * way to reconfigure a live runtime, so this is the only mechanism, and it
@@ -131,6 +133,13 @@ export interface TerminalViewContext extends TerminalCommandContext {
     path: string
     source: 'shipped-default' | 'workspace' | 'override'
     entries: readonly { id: string; settings: readonly string[] }[]
+    base: {
+      path: string
+      source: 'shipped-default' | 'workspace' | 'override'
+      entries: readonly { id: string; settings: readonly string[] }[]
+    }
+    patch?: { path: string; patchCount: number }
+    effective: { entries: readonly { id: string; settings: readonly string[] }[] }
   }
   /** Tool activity entry the sidebar has selected, when one is focused. */
   selectedToolKey?: string

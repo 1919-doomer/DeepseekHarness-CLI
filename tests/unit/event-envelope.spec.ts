@@ -8,7 +8,7 @@ import {
   type NormalizedEvent,
 } from '../../src/session/projection.js'
 
-// Envelope shape captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.1: a
+// Envelope shape re-captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.2: a
 // tool/result carries its own timestamp and links back to the call it derives
 // from through sourceEventSeqs.
 function sessionEvent(

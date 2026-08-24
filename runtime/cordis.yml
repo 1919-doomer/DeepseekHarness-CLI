@@ -1,7 +1,7 @@
-# dshc M4 coding runtime composition.
+# dshc M4.6 Batch 2 runtime composition.
 #
 # This is a complete stdio JSON-RPC Harness process composition aligned with
-# DeepSeek Harness 0.1.1-rc.1 `examples/jsonrpc-agent/cordis.yml` plus the
+# DeepSeek Harness 0.1.1-rc.2 `examples/jsonrpc-agent/cordis.yml` plus the
 # repository workflow and security additions validated in M4.
 # Harness owns agent/tool/session/sandbox/approval semantics; dshc owns only the
 # terminal front end. stdout belongs exclusively to JSON-RPC.
@@ -29,6 +29,11 @@
   config:
     thinking: enabled
     reasoningEffort: max
+
+# Durable local image attachments make read_image available to routed vision
+# agents without giving the terminal its own file or image semantics.
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
 
 # One shared DSH policy controls both shell and filesystem write authority.
 - id: sandbox
@@ -118,6 +123,22 @@
     toolName: subagent
     enableRunInBackground: false
 
+- id: tool-subagent-vision
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: vision
+    enableRunInBackground: false
+    agentOptions:
+      model: deepseek-v4-flash-vision-exp
+    toolFilter:
+      allow: [read, read_image, glob, grep]
+    persona: |
+      You are a vision subagent. Inspect real image evidence with read_image and
+      connect visual observations to the repository files the parent names.
+      You are read-only. Report what is visible, what is uncertain, and which
+      file or image supports every conclusion. Reply in the task's language.
+
 - id: tool-todo
   name: '@deepseek-ai/dsh-tool-todo'
   config:
@@ -142,6 +163,46 @@
   name: '@deepseek-ai/dsh-tool-fs-search'
   config:
     sampleOverCapGlobResults: false
+
+# Web is a Harness-owned seam. Search uses DeepSeek's Anthropic-compatible
+# native search endpoint; fetch is anonymous public HTTP(S). Tool declarations
+# carry their own timeouts, enforced cooperatively by the timeout policy.
+- id: web
+  name: '@deepseek-ai/dsh-web'
+
+- id: web-search-deepseek
+  name: '@deepseek-ai/dsh-web-search-deepseek'
+
+- id: web-fetch-http
+  name: '@deepseek-ai/dsh-web-fetch-http'
+
+- id: tool-call-timeout-policy
+  name: '@deepseek-ai/dsh-tool-call-timeout-policy'
+
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+
+- id: tool-subagent-researcher
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: researcher
+    enableRunInBackground: false
+    toolFilter:
+      allow: [read, glob, grep, web_search, web_fetch]
+    persona: |
+      You are a research subagent. Use web_search to discover primary sources,
+      web_fetch to read them, and repository reads to connect external facts to
+      this task. Prefer official documentation and original research. Separate
+      source-backed facts from inference, include source URLs, and reply in the
+      language the task was written in.
+
+# MCP servers are deployment-specific and may execute outside the DSH sandbox.
+# This disabled target is enabled only by a workspace patch that supplies a
+# complete stdio or streamable-http server configuration.
+- id: mcp-workspace
+  name: '@deepseek-ai/dsh-mcp-client'
+  disabled: true
 
 # Long-session context controls from the official JSON-RPC reference.
 - id: token-meter

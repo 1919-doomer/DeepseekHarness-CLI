@@ -9,7 +9,7 @@ Use the toolchain supported by the pinned DeepSeek Harness baseline unless a doc
 - TypeScript / ESM;
 - Node `^22.19.0 || >=24.0.0`;
 - pnpm `11.7.0`;
-- DeepSeek Harness `0.1.1-rc.1` public SDK/runtime surfaces;
+- DeepSeek Harness `0.1.1-rc.2` public SDK/runtime surfaces;
 - Ink `7.1.1` + React `19.2.8` for the TTY product;
 - Vitest for deterministic unit/integration tests;
 - GitHub Actions with Windows, macOS, and Ubuntu blocking supported paths.

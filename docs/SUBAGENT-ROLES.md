@@ -37,10 +37,10 @@ reaches the child through `DSH_SYSTEM_PROMPT`, which the composition reads.
 
 ### Where the composition comes from
 
-A composition at `<workspace>/.dshc/cordis.yml` — which is what `/config fork`
-writes — is used by every launch in that workspace, with no flag. `--runtime-config`
-still wins, and `dshc doctor` labels which of the three sources it resolved:
-`shipped-default`, `workspace`, or `override`.
+The shipped composition remains the base. `/config fork` creates the optional
+`<workspace>/.dshc/cordis.patch.yml` layer; it never copies or shadows the base.
+An explicit `--runtime-config` selects another base and does not inherit the
+workspace patch. `/config` shows base, patch and effective requested entries.
 
 An explicit `--runtime-config` is never second-guessed. If the named file does
 not exist the launch fails naming it, rather than quietly starting a different
@@ -90,6 +90,8 @@ implementer role.
 | `planner` | Turning a goal into a stepwise plan with a blast radius | `read`, `glob`, `grep` |
 | `reviewer` | Independent critique with a verdict and severities | `read`, `glob`, `grep` |
 | `oracle` | Second opinion: challenge the assumption, name the blind spot | `read`, `glob`, `grep` |
+| `vision` | Inspect real image evidence | `read`, `read_image`, `glob`, `grep` |
+| `researcher` | Research primary web sources | `read`, `glob`, `grep`, `web_search`, `web_fetch` |
 | `subagent` | General delegation, including changes | everything |
 
 Each role answers in the language its task was written in, so a Chinese session
@@ -104,10 +106,10 @@ scheduler inside dshc would be the exact boundary violation this project has
 refused for four milestones. What was worth taking was the role library — the
 prompts — and upstream supports exactly that through per-instance `persona`.
 
-Two capabilities of the pi version have no upstream equivalent today and were
-dropped rather than faked: per-role thinking levels (`agentOptions` carries
-`provider`, `model` and `maxTokens` only, and reasoning effort is global plugin
-config) and the `researcher` role (the composition mounts no web search tool).
+Per-role reasoning effort is still not exposed: `agentOptions` carries provider,
+model and maxTokens, while reasoning effort is global plugin configuration. The
+vision and researcher roles are now real upstream subagent mounts, not terminal
+schedulers.
 
 ### Editing the allow-lists
 

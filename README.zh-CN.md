@@ -2,9 +2,9 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：pre-alpha。M1–M4 已完成。** Harness-native coding baseline、零配置仓库工作流、workspace sandbox、终端安全门禁、长会话有界 retention、`dshc doctor`、可查询的 session trace debugger 与 alpha 前安全评审均已就位。M4 的验收任务——检视仓库、做一次改动、跑它的测试——已在真实 runtime 上端到端跑通。固定在 DeepSeek Harness `0.1.1-rc.1`。**下一步是 M5：首个可安装的公开 alpha；尚未发布到 npm。**
+**当前状态：pre-alpha。M1–M4.6 已完成。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge 与受限的 Harness 插件自助安装。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`。**下一步是 M5；尚未发布到 npm。**
 
-[English](README.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
+[English](README.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
 ## 核心定位
 
@@ -22,7 +22,7 @@ M4 默认路径已经从最小 demo composition 升级为 Harness-native coding 
 cd repository
  -> dshc
  -> Harness filesystem / search / platform shell / subagents / todo
- -> workspace-write sandbox + ask approval policy
+ -> workspace-write sandbox + never approval policy
  -> Ink terminal product / plain compatibility paths
  -> bounded local transcript + trace retention
  -> clean runtime teardown
@@ -34,7 +34,11 @@ cd repository
 - 一个 Harness runtime 支撑持续多轮交互，active session 默认保持稳定；
 - 从仓库 cwd 直接启动即可使用 Harness-owned `read`、`write`、`edit`、`glob`、`grep`、POSIX Bash / Windows PowerShell、subagent 与 todo；
 - filesystem 与 shell 共用上游 `workspace-write` sandbox policy；`danger-full-access` 绝不是隐式 fallback；
-- approval policy 保持 `ask`；protocol `0.0.1` 没有 dshc 可用的 server→client approval transport，因此无法获得的升级请求会 fail closed；
+- approval policy 为 `never`；protocol `0.0.1` 没有 dshc 可用的 server→client approval transport，因此不会向模型承诺不存在的升级通道；
+- `vision` 使用 `deepseek-v4-flash-vision-exp` 检视图片；`web_search`、`web_fetch` 与只读 `researcher` 角色由 Harness seam 和 timeout policy 提供；
+- 工作区可通过 patch 启用 MCP server，`/tools` 和 activity 保留 `mcp__<server>__<tool>` 来源；
+- shipped composition 始终是基线，工作区只自动应用 `.dshc/cordis.patch.yml`；
+- `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认、先试启动，失败时回滚 patch；
 - resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
 - first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
@@ -71,6 +75,8 @@ TTY 中的主要命令：
 /capabilities  /plugins 的别名
 /trace         normalized observable event timeline
 /agents        基于公开事件的 root/subagent topology
+/config        查看 base、patch 与 effective requested configuration
+/plugin        搜索/安装受限 Harness 插件
 /exit          关闭当前拥有的 Harness runtime 并退出
 ```
 
@@ -115,7 +121,7 @@ printf "first prompt\nsecond prompt\n/exit\n" | pnpm dev -- --interactive
 
 ## 协议边界
 
-已验证基线仍为 DeepSeek Harness `0.1.1-rc.1`、SDK server `deepseek-harness-sdk-runtime`、protocol `0.0.1`、Node `^22.19.0 || >=24`、pnpm `11.7.0`。
+已验证基线为 DeepSeek Harness `0.1.1-rc.2`、SDK server `deepseek-harness-sdk-runtime`、protocol `0.0.1`、Node `^22.19.0 || >=24`、pnpm `11.7.0`。
 
 `dshc` 不增加私有 wire method。当前协议依然没有 per-prompt cancel、per-session close、可用的 server→client approval request flow，也没有 authoritative full runtime-plugin inventory。因此：
 
@@ -146,7 +152,7 @@ Required CI 不需要真实 provider secret，并阻塞验证：
 - Ubuntu latest / Node 24；
 - Ubuntu latest / Node 22.19.0。
 
-正常 gate 覆盖 injected-TTY 产品测试、fake-runtime lifecycle/security 与 bounded-retention。官方发布版 Harness smoke 覆盖 one-shot、持续交互、仓库 read/edit/search/shell、workspace sandbox denial/escalation，以及 built `dshc doctor --json`。doctor smoke 会主动删除 `DEEPSEEK_API_KEY` 并把模型 endpoint 指向不可达地址；仍能成功意味着 preflight 没有发出模型请求。
+正常 gate 覆盖 injected-TTY 产品测试、fake-runtime lifecycle/security 与 bounded-retention。官方发布版 Harness smoke 覆盖 one-shot、持续交互、仓库 read/edit/search/shell、workspace sandbox denial/escalation、built `dshc doctor --json`，以及 rc.2 成功/失败 tool result 的原始事件契约。doctor smoke 会主动删除 `DEEPSEEK_API_KEY` 并把模型 endpoint 指向不可达地址；仍能成功意味着 preflight 没有发出模型请求。
 
 ## 架构
 

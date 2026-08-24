@@ -39,6 +39,8 @@ export interface HarnessRuntimeOptions {
   model?: string
   maxTokens?: number
   configPath?: string
+  patchPaths?: readonly string[]
+  moduleBasePath?: string
   /** Incremental environment patch for the default Harness child launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
@@ -108,6 +110,8 @@ export class HarnessRuntime {
     // exact resolved launch env, so child diagnostics and redaction cannot drift.
     this.diagnosticEnv = { ...effectiveRuntimeEnvironment({
       workspace: this.workspace,
+      patchPaths: options.patchPaths,
+      moduleBasePath: options.moduleBasePath,
       env: options.env,
       override: options.launchOverride,
     }) }
@@ -239,6 +243,8 @@ export class HarnessRuntime {
       const launch = await resolveRuntimeLaunch({
         workspace: this.workspace,
         configPath: this.options.configPath,
+        patchPaths: this.options.patchPaths,
+        moduleBasePath: this.options.moduleBasePath,
         env: this.options.env,
         requestTimeoutMs: this.options.requestTimeoutMs,
         shutdownTimeoutMs: this.options.shutdownTimeoutMs,

@@ -2,9 +2,9 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: pre-alpha. M1-M4 are complete.** The Harness-native coding baseline, zero-config repository workflow, workspace sandboxing, terminal-security gates, bounded long-session retention, `dshc doctor`, the queryable session trace debugger and the pre-alpha security gate are all in. The M4 acceptance task — inspect a repository, make a change, run its tests — has been executed end to end against the live runtime. Pinned to DeepSeek Harness `0.1.1-rc.1`. **M5, the first installable public alpha, is next; not published to npm yet.**
+**Status: pre-alpha. M1-M4.6 are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging and restricted self-service Harness plugin installation. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`. **M5 is next; not published to npm yet.**
 
-[简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
+[简体中文](README.zh-CN.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## The idea
 
@@ -22,7 +22,7 @@ The M4 default path is a Harness-native coding runtime rather than the old minim
 cd repository
  -> dshc
  -> Harness filesystem / search / platform shell / subagents / todo
- -> workspace-write sandbox + ask approval policy
+ -> workspace-write sandbox + never approval policy
  -> Ink terminal product / plain compatibility paths
  -> bounded local transcript + trace retention
  -> clean runtime teardown
@@ -34,7 +34,9 @@ Current capabilities:
 - persistent multi-turn conversation with one Harness runtime and stable active session;
 - zero-config repository cwd workflow with Harness-owned `read`, `write`, `edit`, `glob`, `grep`, Bash on POSIX / PowerShell on Windows, subagents and todo state;
 - shared upstream `workspace-write` sandbox policy for filesystem and shell writes; `danger-full-access` is never an implicit fallback;
-- upstream approval policy remains `ask`; protocol `0.0.1` has no dshc server-to-client approval transport, so unavailable escalation fails closed;
+- upstream approval policy is `never`; protocol `0.0.1` has no dshc server-to-client approval transport, so the model is not promised an unavailable escalation path;
+- `vision` routes image inspection to `deepseek-v4-flash-vision-exp`; `web_search`, `web_fetch` and the read-only `researcher` role use Harness-owned seams and timeout policy;
+- workspace MCP servers can be enabled by patch; calls retain `mcp__<server>__<tool>` provenance in `/tools` and activity views;
 - resize-aware transcript, grapheme-safe prompt editor, history navigation and adaptive status line;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
 - a slash menu built from the live registry: arrows choose, Tab completes, Enter runs a finished command and completes an unfinished one, and the window scrolls instead of stopping at the fold;
@@ -47,9 +49,10 @@ Current capabilities:
 - `dshc doctor` compatibility/startup preflight that performs `initialize` only and never issues a model prompt;
 - M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
 - a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
-- a composition at `<workspace>/.dshc/cordis.yml` is used by every launch in that workspace without a flag, and `doctor` reports which of shipped/workspace/override it resolved;
+- the shipped composition remains authoritative; `<workspace>/.dshc/cordis.patch.yml` is the only automatic workspace layer, and `/config` separates base, patch and effective requested configuration;
 - `scout` / `planner` / `reviewer` / `oracle` read-only role subagents alongside the general `subagent`, mounted on the upstream delegation seam rather than on a scheduler of our own — see [subagent roles](docs/SUBAGENT-ROLES.md);
-- `/config`, `/config fork`, `/model`, `/provider` and `/reload` for inspecting and replacing the composition, each stating the session loss before it acts.
+- `/config`, `/config fork`, `/model`, `/provider` and `/reload` for inspecting and patching composition, each stating the session loss before it acts;
+- `/plugin search` and `/plugin install` for `@deepseek-ai/` packages only, with exact named confirmation, trial initialization before live replacement and patch rollback on failure.
 
 ## Source usage
 
@@ -79,6 +82,8 @@ Inside the TTY product:
 /capabilities  alias of /plugins
 /trace         normalized observable event timeline
 /agents        root/subagent topology from public events
+/config        base, patch and effective requested configuration
+/plugin        search/install restricted Harness plugins
 /exit          close the owned Harness runtime and exit
 ```
 
@@ -132,7 +137,7 @@ machine, and the decisions that are the owner's alone.
 
 ## Protocol truth
 
-The validated baseline remains DeepSeek Harness `0.1.1-rc.1`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.
+The validated baseline is DeepSeek Harness `0.1.1-rc.2`, SDK server `deepseek-harness-sdk-runtime`, protocol `0.0.1`, Node `^22.19.0 || >=24`, pnpm `11.7.0`.
 
 `dshc` adds no private wire method. The public protocol still has no per-prompt cancel, no per-session close, no active server-to-client approval request flow, and no authoritative full runtime-plugin inventory. Therefore:
 
@@ -152,7 +157,7 @@ See [Protocol and upstream compatibility](docs/PROTOCOL.md).
 
 The terminal plane is first-party only. Built-in commands, event renderers, views and status segments register through one deterministic `TerminalPluginHost`.
 
-This is deliberately **not** a public arbitrary-package plugin ecosystem yet. Loading untrusted Node packages in-process would grant broad machine access; third-party loading remains deferred until the M4/M6 isolation work establishes a real boundary.
+The terminal plane is deliberately **not** an arbitrary-package ecosystem. `/plugin install` affects the child Harness composition only, accepts `@deepseek-ai/` npm packages, requires an exact-version confirmation, installs with lifecycle scripts disabled, and trial-boots before replacing the live runtime. Installed plugin code still executes with the Harness child process's OS authority. See [Extensions and composition](docs/EXTENSIONS.md).
 
 ## Validation
 
@@ -163,7 +168,7 @@ Required CI is credential-free and blocking on:
 - Ubuntu latest / Node 24;
 - Ubuntu latest / Node 22.19.0.
 
-Every runtime job builds the Ink/React product. The normal gate drives injected TTY product tests, fake-runtime lifecycle/security tests and bounded-retention regressions. Official published-Harness smokes cover one-shot, persistent interaction, repository read/edit/search/shell, workspace sandbox denial/escalation, and built `dshc doctor --json`. The doctor smoke deliberately removes `DEEPSEEK_API_KEY` and uses an unreachable model endpoint; success proves preflight does not issue a model request.
+Every runtime job builds the Ink/React product. The normal gate drives injected TTY product tests, fake-runtime lifecycle/security tests and bounded-retention regressions. Official published-Harness smokes cover one-shot, persistent interaction, repository read/edit/search/shell, workspace sandbox denial/escalation, built `dshc doctor --json`, and the raw rc.2 event contract for successful and failed tool results. The doctor smoke deliberately removes `DEEPSEEK_API_KEY` and uses an unreachable model endpoint; success proves preflight does not issue a model request.
 
 ## Architecture
 

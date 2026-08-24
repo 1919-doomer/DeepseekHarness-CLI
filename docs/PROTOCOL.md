@@ -2,13 +2,13 @@
 
 This document records the public DeepSeek Harness boundary that `dshc` depends on. Upstream documentation remains authoritative.
 
-Last reviewed and exercised in CI: **2026-08-21**.
+Last reviewed and exercised locally: **2026-08-24**.
 
-## Validated M1-M3 baseline
+## Validated runtime baseline
 
 The current terminal product remains pinned to:
 
-- DeepSeek Harness packages: `0.1.1-rc.1`;
+- DeepSeek Harness packages: `0.1.1-rc.2`;
 - `@deepseek-ai/cordis`: `4.0.1`;
 - SDK server name: `deepseek-harness-sdk-runtime`;
 - SDK protocol version: `0.0.1`;
@@ -19,7 +19,39 @@ The exact dependency closure is committed in `pnpm-lock.yaml`. Startup rejects u
 
 Required credential-free validation targets Windows latest / Node 24, macOS latest / Node 24, Ubuntu latest / Node 24, and Ubuntu latest / Node 22.19.0.
 
-`dshc` uses public package/runtime surfaces only: `@deepseek-ai/dsh-sdk-client`, the published `dsh-jsonrpc-agent` entry point from `@deepseek-ai/dsh-sdk-jsonrpc-demo`, the public JSON-RPC server, and the external Cordis composition in `runtime/cordis.yml`.
+`dshc` uses public package/runtime surfaces only: `@deepseek-ai/dsh-sdk-client`, the public JSON-RPC server, and `@deepseek-ai/dsh-app-boot`'s patch-aware `boot`/config APIs. The small wrapper in `runtime/jsonrpc-agent.mjs` preserves the official stdio lifecycle while passing workspace patch layers and an installed-plugin module anchor into public app-boot.
+
+### rc.2 compatibility evidence
+
+Batch 3 compared official tags `dsh-v0.1.1-rc.1` (`528c682`) and
+`dsh-v0.1.1-rc.2` (`b150a55`) before moving the compatibility gate. The SDK
+client/protocol/server, core agent/session/tool event producers and session
+projection contain no non-manifest source change between those tags. rc.2's
+runtime change is concentrated in image normalization and DeepSeek Files API
+upload/reuse. `read_image` can now report optional `originalDimensions`, while
+the public `tool/result` envelope remains the nested shape consumed here.
+
+`tests/integration/official-event-contract.spec.ts` breaks the fixture/parser
+closed loop: it launches the published rc.2 runtime, drives one successful and
+one failed real `read` call through a local model endpoint, captures the raw SDK
+notifications, and asserts:
+
+- `tool/call` carries `callId`, `name` and serialized `arguments` in event data;
+- `tool/result` links through `message.source.callId`, while the nested
+  `tool-result` block owns `toolCallId`, output content and `isError`;
+- `seq`, `time` and `sourceEventSeqs` preserve the upstream causal link;
+- durable assistant `usage` remains a sibling of `message`;
+- projection preserves both call ids and distinguishes success from failure.
+
+All direct `@deepseek-ai/dsh-*` packages are exact `0.1.1-rc.2` dependencies,
+the lockfile contains no rc.8 residue, and `pnpm peers check` is a CI gate. This
+prevents a leaf-plugin upgrade from silently retaining an older service/brand
+closure.
+
+The provider-backed gates were also repeated on 2026-08-24 against this exact
+closure: Web Search and Web Fetch, a real JPEG through the vision subagent and
+`read_image`, the official stdio MCP everything server, and exact installation
+plus trial initialization of `dsh-repeat-tool-reminder@0.1.1-rc.2` all passed.
 
 ## Session persistence and identity
 
@@ -38,7 +70,7 @@ dshc process
     │
     │ newline-delimited JSON-RPC 2.0 over stdin/stdout
     ▼
-official dsh-jsonrpc-agent
+dshc patch-aware JSON-RPC wrapper
     │
     └─ runtime/cordis.yml
 ```
@@ -154,7 +186,7 @@ Required CI has four layers:
 
 **Fake-runtime subprocess tests** cover initialize validation, receipt ownership, ordering, unrelated-session filtering, M2 line-mode interaction, `/new`, EOF, POSIX active-turn SIGINT, timeout, malformed protocol, child crash/EOF, secret redaction and bounded shutdown.
 
-**Official-runtime smoke tests** launch the published `dsh-jsonrpc-agent` with the real Harness composition and route the DeepSeek adapter to a local deterministic HTTP model stub. CI retains both the one-shot path and two-turn persistent subprocess smoke, including proof that the second provider request carries expanded same-session history. No paid provider call or real API key is required.
+**Official-runtime smoke tests** launch the published runtime with the real Harness composition and route the DeepSeek adapter to a local deterministic HTTP model stub. CI retains one-shot and two-turn persistent subprocess smokes, proves the second provider request carries expanded same-session history, and captures successful/failed rc.2 tool events from the real wire. No paid provider call or real API key is required.
 
 ## Compatibility policy
 

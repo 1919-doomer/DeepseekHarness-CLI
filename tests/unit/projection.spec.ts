@@ -156,7 +156,7 @@ describe('session projection', () => {
 })
 
 describe('tool result projection against the live DSH payload', () => {
-  // Captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.1 running the `read`
+  // Re-captured from @deepseek-ai/dsh-sdk-client 0.1.1-rc.2 running the `read`
   // tool. The call id, output text and error flag all live on the nested
   // tool-result block rather than on the message.
   function liveToolResult(overrides: {

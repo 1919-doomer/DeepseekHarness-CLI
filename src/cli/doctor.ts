@@ -75,6 +75,7 @@ export interface DoctorReport {
   runtimeConfig: {
     path: string
     source: CompositionSource
+    patchPath?: string
   }
   selection: {
     provider: string
@@ -119,9 +120,11 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const resolved = await resolveComposition(workspace, options.configPath, defaultRuntimeConfigPath())
   const runtimeConfigPath = resolve(resolved.path)
   const runtimeConfigSource = resolved.source
+  const runtimePatchPaths = resolved.patchPath === undefined ? [] : [resolved.patchPath]
   const childEnv = effectiveRuntimeEnvironment({
     workspace,
     configPath: runtimeConfigPath,
+    patchPaths: runtimePatchPaths,
     env: options.env,
     requestTimeoutMs: options.requestTimeoutMs,
     shutdownTimeoutMs: options.shutdownTimeoutMs,
@@ -137,6 +140,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const nodeReady = checkNodeVersion(process.versions.node, findings)
   const workspaceReady = await checkWorkspace(workspace, findings)
   const configReady = await checkRuntimeConfig(runtimeConfigPath, runtimeConfigSource, findings)
+    && await checkRuntimePatch(resolved.patchPath, findings)
   const packageReady = await checkInstalledPackages(findings)
 
   findings.push({
@@ -164,7 +168,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
         id: 'composition.coding',
         status: 'PASS',
         category: 'capability',
-        summary: 'Shipped M4 coding composition selected: filesystem, search, platform shell, subagent and todo capabilities are Harness-owned.',
+        summary: 'Shipped M4.6 composition selected: filesystem, repository search, platform shell, subagent and todo capabilities are Harness-owned.',
       },
       {
         id: 'composition.sandbox',
@@ -178,7 +182,28 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
         category: 'capability',
         summary: 'Shipped approval policy is never; this deployment has no answerer, so the model is told plainly that escalation is unavailable rather than that it might be granted.',
       },
+      {
+        id: 'composition.extensions',
+        status: 'PASS',
+        category: 'capability',
+        summary: 'Vision, Web Search, Web Fetch, researcher and cooperative tool timeouts are present in the shipped composition.',
+      },
+      {
+        id: 'composition.mcp',
+        status: 'PASS',
+        category: 'capability',
+        summary: 'The MCP client bridge is installed but its deployment-specific server target is disabled until a workspace patch configures it.',
+      },
     )
+    if (resolved.patchPath !== undefined) {
+      findings.push({
+        id: 'composition.patch',
+        status: 'PASS',
+        category: 'configuration',
+        summary: 'Workspace Cordis patches are applied over the shipped composition; the shipped base remains authoritative.',
+        detail: resolved.patchPath,
+      })
+    }
   } else {
     findings.push({
       id: runtimeConfigSource === 'workspace' ? 'composition.workspace' : 'composition.override',
@@ -192,6 +217,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   }
 
   networkFacts(childEnv, workspace, findings)
+  pluginRegistryFacts(readNetworkFacts(childEnv, workspace), findings)
 
   findings.push({
     id: 'retention',
@@ -202,7 +228,12 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   let runtimeMetadata: HarnessRuntimeMetadata | undefined
   if (nodeReady && workspaceReady && configReady && packageReady) {
-    const runtime = new HarnessRuntime({ ...options, workspace, configPath: runtimeConfigPath })
+    const runtime = new HarnessRuntime({
+      ...options,
+      workspace,
+      configPath: runtimeConfigPath,
+      patchPaths: runtimePatchPaths,
+    })
     try {
       runtimeMetadata = await runtime.start()
       findings.push(
@@ -270,7 +301,11 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
     platform: process.platform,
     arch: process.arch,
     workspace,
-    runtimeConfig: { path: runtimeConfigPath, source: runtimeConfigSource },
+    runtimeConfig: {
+      path: runtimeConfigPath,
+      source: runtimeConfigSource,
+      ...(resolved.patchPath === undefined ? {} : { patchPath: resolved.patchPath }),
+    },
     selection: { provider, model },
     credential,
     tty,
@@ -292,6 +327,7 @@ export function renderDoctorHuman(report: DoctorReport): string {
     `DeepSeek Harness Console doctor — dshc ${report.dshcVersion}`,
     `workspace: ${safe(report.workspace)}`,
     `runtime config: ${safe(report.runtimeConfig.path)} (${report.runtimeConfig.source})`,
+    ...(report.runtimeConfig.patchPath === undefined ? [] : [`runtime patch: ${safe(report.runtimeConfig.patchPath)}`]),
     '',
   ]
   for (const finding of report.findings) {
@@ -362,6 +398,31 @@ async function checkRuntimeConfig(
       status: 'FAIL',
       category: 'configuration',
       summary: `Runtime config is unavailable: ${classified.message}`,
+      detail: path,
+    })
+    return false
+  }
+}
+
+async function checkRuntimePatch(path: string | undefined, findings: DoctorFinding[]): Promise<boolean> {
+  if (path === undefined) return true
+  try {
+    await access(path, constants.R_OK)
+    findings.push({
+      id: 'runtime.patch',
+      status: 'PASS',
+      category: 'configuration',
+      summary: 'Workspace composition patch is readable.',
+      detail: path,
+    })
+    return true
+  } catch (error) {
+    const classified = classifyRuntimeError(error)
+    findings.push({
+      id: 'runtime.patch',
+      status: 'FAIL',
+      category: 'configuration',
+      summary: `Workspace composition patch is unavailable: ${classified.message}`,
       detail: path,
     })
     return false
@@ -520,6 +581,22 @@ function networkFacts(
       ? 'No proxy or registry override is configured; reachability is not probed.'
       : 'Proxy/registry configuration detected and passed to the Harness child; reachability is not probed.',
     ...(observed.length === 0 ? {} : { detail: observed.join('; ') }),
+  })
+}
+
+function pluginRegistryFacts(facts: NetworkFacts, findings: DoctorFinding[]): void {
+  const registry = facts.registry
+  const isMirror = registry !== undefined && !/^https:\/\/registry\.npmjs\.org\/?$/i.test(registry.url)
+  findings.push({
+    id: 'plugin.registry',
+    status: isMirror ? 'WARN' : 'PASS',
+    category: 'environment',
+    summary: registry === undefined
+      ? 'Self-service plugin search/install uses npm’s default registry and accepts @deepseek-ai package names only; Git/URL specs are unsupported.'
+      : isMirror
+        ? 'Self-service plugin search/install will use the configured npm mirror; it must carry the requested @deepseek-ai version. Git/URL specs are unsupported.'
+        : 'Self-service plugin search/install uses the public npm registry and accepts @deepseek-ai package names only; Git/URL specs are unsupported.',
+    ...(registry === undefined ? {} : { detail: `${registry.url} (${registry.source})` }),
   })
 }
 

@@ -39,7 +39,7 @@ For non-sensitive bugs, use normal GitHub Issues.
 
 ## M4 validated default
 
-The M4 default composition uses the pinned DeepSeek Harness `0.1.1-rc.1` security seams:
+The M4 default composition uses the pinned DeepSeek Harness `0.1.1-rc.2` security seams:
 
 - `@deepseek-ai/dsh-sandbox-local`;
 - `@deepseek-ai/dsh-sandbox-policy` with `workspace-write`;

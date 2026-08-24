@@ -14,6 +14,7 @@ import {
 } from './api.js'
 import { codingActivityPlugin, VALIDATED_DEFAULT_CODING_TOOLS } from './coding.js'
 import { configurationPlugin } from './configuration.js'
+import { pluginManagementPlugin } from './plugin-management.js'
 import { TerminalPluginHost } from './host.js'
 
 const TRACE_PAGE_SIZE = 15
@@ -37,6 +38,7 @@ export function createDefaultTerminalHost(): TerminalPluginHost {
   host.register(codingActivityPlugin())
   host.register(activityPlugin())
   host.register(configurationPlugin())
+  host.register(pluginManagementPlugin())
   return host
 }
 

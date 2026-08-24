@@ -32,6 +32,16 @@ describe('effectiveRuntimeEnvironment', () => {
     expect(env.DSH_CWD).toBe('/workspace')
   })
 
+  it('serializes patch layers and a file URL module anchor for the runtime wrapper', () => {
+    const env = effectiveRuntimeEnvironment({
+      workspace: process.cwd(),
+      patchPaths: ['one.patch.yml', 'two.patch.yml'],
+      moduleBasePath: new URL('../../package.json', import.meta.url).pathname,
+    })
+    expect(JSON.parse(env.DSHC_CORDIS_PATCHES ?? 'null')).toEqual(['one.patch.yml', 'two.patch.yml'])
+    expect(env.DSHC_MODULE_BASE_URL).toMatch(/^file:/)
+  })
+
   it('treats launchOverride.env as the authoritative child environment', () => {
     setEnv('DSHC_PARENT_ONLY_TEST', 'parent-value')
     const overrideEnv = { DSHC_OVERRIDE_ONLY_TEST: 'override-value' }

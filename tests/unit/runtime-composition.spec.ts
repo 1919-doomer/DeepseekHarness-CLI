@@ -6,7 +6,7 @@ const runtimeConfigUrl = new URL('../../runtime/cordis.yml', import.meta.url)
 const packageJsonUrl = new URL('../../package.json', import.meta.url)
 
 const UPSTREAM_JSONRPC_REFERENCE =
-  'deepseek-ai/deepseek-harness@141eb6fef83422698aef7a981029e843e8161534:examples/jsonrpc-agent/cordis.yml'
+  'deepseek-ai/deepseek-harness@b150a551b8d465e31e418e1b2eaf5e79bbb7d28e:examples/jsonrpc-agent/cordis.yml'
 
 const REFERENCE_PLUGIN_IDS = [
   'sdk-jsonrpc-server',
@@ -72,6 +72,19 @@ describe('M4 runtime composition', () => {
 
     for (const { name } of parsePluginEntries(config)) {
       expect(dependencies[name], `${name} must be direct because dsh-jsonrpc-agent external configs own bare plugins`).toBe(TESTED_DSH_BASELINE.sdkVersion)
+    }
+  })
+
+  it('pins the complete direct Harness closure to one tested release candidate', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonUrl, 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    const dshDependencies = Object.entries(packageJson.dependencies ?? {})
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+
+    expect(dshDependencies.length).toBeGreaterThan(0)
+    for (const [name, version] of dshDependencies) {
+      expect(version, `${name} must not create a mixed Harness runtime closure`).toBe(TESTED_DSH_BASELINE.sdkVersion)
     }
   })
 })
