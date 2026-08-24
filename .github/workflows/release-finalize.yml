@@ -1,0 +1,47 @@
+name: Finalize public alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing verified alpha tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    name: Verify npm and publish GitHub prerelease
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.x'
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+      - name: Verify tag and package identity
+        run: node scripts/verify-release.mjs "${{ inputs.tag }}"
+      - name: Require the exact npm alpha before announcing it
+        run: |
+          VERSION="${{ inputs.tag }}"
+          VERSION="${VERSION#v}"
+          PUBLISHED="$(npm view "dshc@${VERSION}" version --registry=https://registry.npmjs.org/)"
+          ALPHA="$(npm view dshc dist-tags.alpha --registry=https://registry.npmjs.org/)"
+          test "${PUBLISHED}" = "${VERSION}"
+          test "${ALPHA}" = "${VERSION}"
+      - name: Publish the existing draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release edit "${{ inputs.tag }}"
+          --repo "${GITHUB_REPOSITORY}"
+          --draft=false
+          --prerelease=true

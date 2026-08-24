@@ -6,6 +6,9 @@
 
 | Document | Purpose |
 |---|---|
+| [INSTALLATION.md](INSTALLATION.md) | Public-alpha install, provider setup, update, uninstall and diagnostics |
+| [COMPATIBILITY.md](COMPATIBILITY.md) | Exact Node, platform, Harness and protocol support statement |
+| [DEMO.md](DEMO.md) | Repeatable installed-package demo flow and representative terminal frame |
 | [DESIGN.md](DESIGN.md) | Product position, architecture, terminal UX invariants, plugin philosophy and major design decisions |
 | [PROTOCOL.md](PROTOCOL.md) | DeepSeek Harness JSON-RPC contract, lifecycle limitations and upstream compatibility policy |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain, source layout, implementation order, tests, security engineering and release gates |
@@ -15,6 +18,7 @@
 | [TOOL-ACTIVITY-UI.md](TOOL-ACTIVITY-UI.md) | M4.5 contract for tool activity presentation and runtime configuration |
 | [SUBAGENT-ROLES.md](SUBAGENT-ROLES.md) | What the shipped persona tells the model, and the role subagents mounted beside the general one |
 | [HANDOVER.md](HANDOVER.md) | Operational knowledge for whoever picks this up: how to verify a change, the failure modes that have actually happened, and what only the owner can decide |
+| [RELEASE.md](RELEASE.md) | npm bootstrap, staged publishing, 2FA finalization and rollback runbook |
 
 Repository-level policies:
 
