@@ -26,6 +26,8 @@ export interface CompositionSummary {
   entries: readonly CompositionEntry[]
   base: CompositionLayerSummary
   patch?: CompositionPatchSummary
+  /** Ordered patch layers applied after the base composition. */
+  patches: readonly CompositionPatchSummary[]
   effective: {
     entries: readonly CompositionEntry[]
   }
@@ -40,6 +42,7 @@ export interface CompositionLayerSummary {
 export interface CompositionPatchSummary {
   path: string
   patchCount: number
+  kind?: 'developer' | 'workspace'
 }
 
 /** Composition a workspace may carry, relative to its root. */
@@ -52,7 +55,16 @@ export function workspaceCompositionPath(workspace: string): string {
 export interface ResolvedComposition {
   path: string
   source: CompositionSource
+  /** Backward-compatible workspace patch path. */
   patchPath?: string
+  devPatchPath?: string
+  /** Authoritative ordered patch list: developer layer, then workspace layer. */
+  patchPaths: readonly string[]
+}
+
+export interface ResolveCompositionOptions {
+  devMode?: boolean
+  devPatchPath?: string
 }
 
 /**
@@ -69,15 +81,31 @@ export async function resolveComposition(
   workspace: string,
   explicit: string | undefined,
   shippedPath: string,
+  options: ResolveCompositionOptions = {},
 ): Promise<ResolvedComposition> {
-  if (explicit !== undefined) return { path: resolve(explicit), source: 'override' }
+  if (explicit !== undefined) return { path: resolve(explicit), source: 'override', patchPaths: [] }
+
+  const devPatchPath = options.devMode === true ? options.devPatchPath : undefined
+  const patchPaths: string[] = devPatchPath === undefined ? [] : [devPatchPath]
 
   const candidate = workspaceCompositionPath(workspace)
   try {
     await access(candidate)
-    return { path: shippedPath, source: 'shipped-default', patchPath: candidate }
+    patchPaths.push(candidate)
+    return {
+      path: shippedPath,
+      source: 'shipped-default',
+      patchPath: candidate,
+      ...(devPatchPath === undefined ? {} : { devPatchPath }),
+      patchPaths,
+    }
   } catch {
-    return { path: shippedPath, source: 'shipped-default' }
+    return {
+      path: shippedPath,
+      source: 'shipped-default',
+      ...(devPatchPath === undefined ? {} : { devPatchPath }),
+      patchPaths,
+    }
   }
 }
 
@@ -97,7 +125,7 @@ export async function resolveComposition(
 export async function readCompositionSummary(
   path: string,
   source: CompositionSource,
-  patchPath?: string,
+  patchInput: string | readonly string[] = [],
 ): Promise<CompositionSummary | undefined> {
   let text: string
   try {
@@ -108,12 +136,20 @@ export async function readCompositionSummary(
 
   const baseEntries = parseCompositionEntries(text)
   let effectiveEntries = baseEntries
-  let patch: CompositionPatchSummary | undefined
-  if (patchPath !== undefined) {
-    const patches = loadOptionalPatches('dshc', patchPath) ?? []
-    const effective = renderConfigDump('dshc', path, [{ label: patchPath, patches }])
+  const patchPaths = typeof patchInput === 'string' ? [patchInput] : [...patchInput]
+  const summaries: CompositionPatchSummary[] = []
+  if (patchPaths.length > 0) {
+    const layers = patchPaths.map((patchPath) => {
+      const patches = loadOptionalPatches('dshc', patchPath) ?? []
+      summaries.push({
+        path: patchPath,
+        patchCount: patches.length,
+        kind: patchPath.endsWith('cordis.dev.patch.yml') ? 'developer' : 'workspace',
+      })
+      return { label: patchPath, patches }
+    })
+    const effective = renderConfigDump('dshc', path, layers)
     effectiveEntries = parseCompositionEntries(effective)
-    patch = { path: patchPath, patchCount: patches.length }
   }
 
   const base: CompositionLayerSummary = { path, source, entries: baseEntries }
@@ -122,7 +158,10 @@ export async function readCompositionSummary(
     source,
     entries: effectiveEntries,
     base,
-    ...(patch === undefined ? {} : { patch }),
+    ...(summaries.length === 0
+      ? {}
+      : { patch: { path: summaries[summaries.length - 1]!.path, patchCount: summaries[summaries.length - 1]!.patchCount } }),
+    patches: summaries,
     effective: { entries: effectiveEntries },
   }
 }

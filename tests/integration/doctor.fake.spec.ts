@@ -88,6 +88,34 @@ describe('dshc doctor fake-runtime integration', () => {
     expect(JSON.parse(json)).toMatchObject({ schemaVersion: 1, ok: true })
   })
 
+  it('validates developer dependencies, patch order and initialize without credentials or dynamic execution', async () => {
+    const root = await workspace()
+    const logPath = join(root, 'dev-methods.log')
+    const env = { ...process.env }
+    delete env.DEEPSEEK_API_KEY
+    const report = await collectDoctorReport({
+      workspace: root,
+      devMode: true,
+      launchOverride: fakeLaunch(root, 'success', logPath, { ...env, DEEPSEEK_API_KEY: undefined }),
+      env,
+      stdin: { isTTY: false },
+      stdout: { isTTY: false },
+      stderr: { isTTY: false },
+    })
+
+    expect(report.devMode).toBe(true)
+    expect(report.credential.present).toBe(false)
+    expect(report.runtimeConfig.patchPaths[0]).toContain('cordis.dev.patch.yml')
+    expect(report.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'workbench.mode', status: 'WARN' }),
+      expect.objectContaining({ id: 'workbench.packages', status: 'PASS' }),
+      expect.objectContaining({ id: 'workbench.patch-order', status: 'PASS' }),
+      expect.objectContaining({ id: 'composition.dev-patch', status: 'PASS' }),
+      expect.objectContaining({ id: 'runtime.initialize', status: 'PASS' }),
+    ]))
+    expect((await readFile(logPath, 'utf8')).trim().split('\n')).toEqual(['initialize', 'shutdown'])
+  })
+
   it.each([
     ['bad-version', 'Unsupported Harness SDK protocol'],
     ['bad-server', 'Unexpected Harness server identity'],
@@ -165,7 +193,8 @@ describe('dshc doctor fake-runtime integration', () => {
       launchOverride: fakeLaunch(root, 'success', logPath),
     })
 
-    expect(report.runtimeConfig).toEqual({ path: config, source: 'override' })
+    expect(report.runtimeConfig).toEqual({ path: config, source: 'override', patchPaths: [] })
+    expect(report.devMode).toBe(false)
     expect(report.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'composition.override', status: 'WARN' }),
     ]))

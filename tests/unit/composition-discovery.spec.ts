@@ -24,6 +24,7 @@ describe('composition discovery', () => {
     expect(await resolveComposition(dir, undefined, shipped)).toEqual({
       path: shipped,
       source: 'shipped-default',
+      patchPaths: [],
     })
   })
 
@@ -33,6 +34,7 @@ describe('composition discovery', () => {
       path: shipped,
       source: 'shipped-default',
       patchPath: workspaceCompositionPath(dir),
+      patchPaths: [workspaceCompositionPath(dir)],
     })
   })
 

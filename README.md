@@ -2,9 +2,9 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: public-alpha release candidate (`0.1.0-alpha.2`). M1-M4.6 are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging and restricted self-service Harness plugin installation. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
+**Status: M6 public alpha (`0.1.0-alpha.5`). M1-M6 Plugin Workbench are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
 
-[简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
+[简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Install the public alpha
 
@@ -62,6 +62,8 @@ Current capabilities:
 - bounded activity/trace/transcript/topology diagnostic retention with explicit eviction disclosure;
 - terminal ESC/CSI/OSC/C1/bidi sanitization, secret-redacted diagnostics and exception-safe alternate-screen cleanup;
 - `dshc doctor` compatibility/startup preflight that performs `initialize` only and never issues a model prompt;
+- trusted `dshc --dev` for interactive host-only Cordis prototypes, with an always-visible process-authority warning, official lifecycle tools only, `/workbench` observation and no dshc-owned runner;
+- `dshc doctor --dev` checks exact Cordis packages, developer patch order and initialize without credentials or dynamic execution;
 - M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
 - a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
 - the shipped composition remains authoritative; `<workspace>/.dshc/cordis.patch.yml` is the only automatic workspace layer, and `/config` separates base, patch and effective requested configuration;
@@ -83,6 +85,10 @@ pnpm dev -- doctor --json
 # Configure the normal DeepSeek Harness provider environment for model-backed work.
 # No positional prompt in a TTY => terminal product.
 pnpm dev
+
+# Trusted Cordis package development (interactive TTY only).
+pnpm dev -- doctor --dev
+pnpm dev -- --dev
 ```
 
 Inside the TTY product:
@@ -99,6 +105,7 @@ Inside the TTY product:
 /agents        root/subagent topology from public events
 /config        base, patch and effective requested configuration
 /plugin        search/install restricted Harness plugins
+/workbench     observed Cordis lifecycle timeline (dev mode only)
 /exit          close the owned Harness runtime and exit
 ```
 
@@ -138,6 +145,7 @@ Useful options:
 --activity-timeout-ms <n>
 --request-timeout-ms <n>
 --runtime-config <path>
+--dev
 --interactive
 --json
 --debug
@@ -166,6 +174,11 @@ The validated baseline is DeepSeek Harness `0.1.1-rc.2`, SDK server `deepseek-ha
 - `/trace` never reconstructs or exposes hidden reasoning;
 - local `activityId` values group terminal blocks only and are not upstream message/turn/causal ids.
 
+Developer mode does not change that wire. Lifecycle changes are official model
+tool calls, and `/workbench` is explicitly a non-authoritative retained event
+timeline. Dynamic code can affect the whole Harness process; the VM is not a
+security boundary and in-memory definitions do not survive restart.
+
 See [Protocol and upstream compatibility](docs/PROTOCOL.md).
 
 ## First-party terminal plugins
@@ -183,7 +196,7 @@ Required CI is credential-free and blocking on:
 - Ubuntu latest / Node 24;
 - Ubuntu latest / Node 22.19.0.
 
-Every runtime job builds the Ink/React product. The normal gate drives injected TTY product tests, fake-runtime lifecycle/security tests and bounded-retention regressions. Official published-Harness smokes cover one-shot, persistent interaction, repository read/edit/search/shell, workspace sandbox denial/escalation, built `dshc doctor --json`, and the raw rc.2 event contract for successful and failed tool results. The doctor smoke deliberately removes `DEEPSEEK_API_KEY` and uses an unreachable model endpoint; success proves preflight does not issue a model request.
+Every runtime job builds the Ink/React product. The normal gate drives injected TTY product tests, fake-runtime lifecycle/security tests and bounded-retention regressions. Official published-Harness smokes cover one-shot, persistent interaction, repository read/edit/search/shell, workspace sandbox denial/escalation, built `dshc doctor --json`, the raw rc.2 event contract, normal/dev tool isolation and a complete host-only Cordis lifecycle. The doctor smoke deliberately removes `DEEPSEEK_API_KEY` and uses an unreachable model endpoint; success proves preflight does not issue a model request.
 
 ## Architecture
 
@@ -213,8 +226,8 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M5** — publish the verified `0.1.0-alpha.2` candidate through the owner-side npm 2FA gate;
-- **M6** — safe community extension ecosystem and advanced capability views.
+- **M6** — publish the staged Plugin Workbench alpha line and close #57 after real package acceptance;
+- **#16** — retain unpromoted capability candidates behind the admission test.
 
 ## License and affiliation
 

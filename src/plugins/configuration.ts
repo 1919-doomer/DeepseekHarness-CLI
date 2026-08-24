@@ -29,6 +29,7 @@ export const CONFIG_USAGE = [
   'Patches at <workspace>/.dshc/cordis.patch.yml are applied over the shipped',
   'composition on every launch. --runtime-config selects an explicit base and',
   'does not inherit the workspace patch.',
+  'In --dev, the built-in trusted Cordis layer appears before the workspace patch.',
 ].join('\n')
 
 export function configurationPlugin(): TerminalPluginSpec {
@@ -173,7 +174,7 @@ function renderConfiguration(context: TerminalViewContext): string {
   lines.push(
     `Base composition (${composition.base.source})`,
     `  ${sanitizeTerminalText(composition.base.path)}`,
-    `Workspace patch: ${composition.patch === undefined ? 'none' : `${sanitizeTerminalText(composition.patch.path)} (${composition.patch.patchCount} patch entries)`}`,
+    ...renderPatchLayers(composition),
     '',
     'Effective requested configuration',
     'Protocol 0.0.1 exposes no runtime plugin inventory, so this is the composed',
@@ -190,4 +191,15 @@ function renderConfiguration(context: TerminalViewContext): string {
 
   lines.push('', CONFIG_USAGE)
   return lines.join('\n')
+}
+
+function renderPatchLayers(composition: NonNullable<TerminalViewContext['composition']>): string[] {
+  const layers = composition.patches
+  if (layers === undefined || layers.length === 0) {
+    return [`Workspace patch: ${composition.patch === undefined ? 'none' : `${sanitizeTerminalText(composition.patch.path)} (${composition.patch.patchCount} patch entries)`}`]
+  }
+  return layers.map(layer => {
+    const label = layer.kind === 'developer' ? 'Built-in developer patch' : 'Workspace patch'
+    return `${label}: ${sanitizeTerminalText(layer.path)} (${layer.patchCount} patch entries)`
+  })
 }

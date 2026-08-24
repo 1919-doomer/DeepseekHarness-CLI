@@ -9,10 +9,11 @@ defects and would otherwise be lost.
 
 ## Where things stand
 
-`0.1.0-alpha.2` is the M5 public-alpha candidate. M0 through M4.6, including the
-`0.1.1-rc.2` compatibility pass, are implemented. The established
-cross-platform gate remains Windows/macOS/Ubuntu against Node 22.19 and 24 and
-now installs, repairs, diagnoses and uninstalls the packed npm tarball.
+`0.1.0-alpha.2` completed M5 and is public under the npm `alpha` tag with a
+matching GitHub prerelease. The M6 tree targets `0.1.0-alpha.5`: trusted Cordis
+developer mode, Workbench projection and replay/persistence guidance are
+implemented against the exact `0.1.1-rc.2` closure. The established
+cross-platform gate remains Windows/macOS/Ubuntu against Node 22.19 and 24.
 
 `main` is protected: five required status checks, strict up-to-date merges,
 `enforce_admins` on, no force push, no branch deletion, zero required reviewing
@@ -20,10 +21,11 @@ approvals. `enforce_admins` is deliberate — it exists because the owner merged
 pull request with four of five checks red (#95, fixed in #96), and protection is
 worth nothing if the person most likely to be in a hurry can walk past it.
 
-The release target is `@liaosiyuan123/dshc` under the npm `alpha` dist-tag, paired
-with a GitHub prerelease carrying the same tested tarball and checksum. At this
-candidate stage the package still needs the owner-side first-publication 2FA
-bootstrap described in `docs/RELEASE.md`.
+The release target is `@liaosiyuan123/dshc` under the npm `alpha` dist-tag,
+paired with a GitHub prerelease carrying the same tested tarball and checksum.
+npm required the first package publication to create `latest`; do not infer
+that it is the supported alpha channel. Installation and updates must name
+`@alpha` explicitly.
 
 ## The rule that explains most of the code
 
@@ -126,11 +128,12 @@ was written, believed, and only failed to protect anything.
 
 ## What is on the owner's machine
 
-Three separate copies of DSH exist there, and only one drives dshc.
+Several separate copies of DSH may exist there, and only the dependency closure
+inside the installed `@liaosiyuan123/dshc` package drives the global command.
 
 | What | Where | Version |
 |---|---|---|
-| dshc's runtime (the live one) | `%APPDATA%\npm\node_modules\deepseek-harness-cli\node_modules\@deepseek-ai\` | `0.1.1-rc.1` |
+| installed dshc runtime | global npm `@liaosiyuan123/dshc/node_modules/@deepseek-ai/` | `0.1.1-rc.2` |
 | dshc dev tree | `E:\ClaudeCodeUse\projects\dshc\node_modules\` | `0.1.1-rc.2` |
 | Official `dsh`, unrelated to dshc | npx cache, symlinked from `~\.dsh\profiles\` | `0.1.1-rc.2` |
 
@@ -167,7 +170,17 @@ through the official stdio server, and a trial-booted
 `dsh-repeat-tool-reminder@0.1.1-rc.2` installation all passed. Re-run these
 against the pinned closure whenever the upstream baseline moves again.
 
-**#36 is the lever.** A DSH-side bridge plugin that dshc ships and mounts is the
+**#57 is the admitted M6 lever.** The Workbench uses the official runner and
+seven measured Cordis tools; dshc adds only the developer patch, persona and
+terminal projection. `tool/result.data.meta` is the stable source of
+`pluginId`/`packageId`/`pluginRunId`; never parse result prose to recover them.
+Host-only packages work headlessly. Any client half waits for a browser page,
+so this terminal deployment must not claim it can complete that activation.
+Dynamic definitions are session-owned for visibility/control but may affect
+the whole process, and all disappear on restart. See
+[PLUGIN-WORKBENCH.md](PLUGIN-WORKBENCH.md).
+
+**#36 remains a separate bridge candidate.** A DSH-side bridge plugin could be the
 single unblock for three things that are all stuck against the same wall:
 approval prompts reaching a human, an honest context percentage, and a real
 runtime plugin inventory. Protocol `0.0.1` carries no server-to-client
@@ -183,15 +196,11 @@ plugins refused in #37.
 
 ## Decisions only the owner can make
 
-- **The first npm publication.** The old unscoped `deepseek-harness-cli` name is
-  occupied by an unrelated package, and npm rejected the unscoped `dshc` name
-  as too similar to existing short package names. M5 therefore targets the
-  public package `@liaosiyuan123/dshc`, while the executable remains `dshc`.
-  The owner must control that npm scope, enable 2FA and perform the first interactive
-  publication from the exact verified workflow artifact. After it exists,
-  releases use stage-only Trusted Publisher/OIDC plus human 2FA approval. The
-  README's unofficial notice is necessary but does not settle any trademark
-  question for the owner.
+- **Future npm publications.** The package exists, and npm forced `latest` on
+  the first publication. Releases still use the staged Trusted Publisher/OIDC
+  workflow plus human approval, must publish with `--tag alpha`, and must verify
+  both npm dist-tags and the matching GitHub prerelease. The README's unofficial
+  notice is necessary but does not settle any trademark question for the owner.
 - **Stale remote branches.** Around twenty from merged pull requests are still
   on the remote. Deleting them is safe but is the owner's call, not a
   housekeeping task to perform unasked.

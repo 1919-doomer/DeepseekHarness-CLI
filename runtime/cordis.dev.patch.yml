@@ -1,0 +1,8 @@
+# Trusted developer-only layer. dshc loads this file only for `--dev` and
+# applies the workspace patch after it. These are the official Harness/Cordis
+# implementations; dshc does not execute plugin code itself.
+- insert:
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'

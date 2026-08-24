@@ -41,6 +41,7 @@ export interface HarnessRuntimeOptions {
   configPath?: string
   patchPaths?: readonly string[]
   moduleBasePath?: string
+  devMode?: boolean
   /** Incremental environment patch for the default Harness child launch. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
@@ -112,6 +113,7 @@ export class HarnessRuntime {
       workspace: this.workspace,
       patchPaths: options.patchPaths,
       moduleBasePath: options.moduleBasePath,
+      devMode: options.devMode,
       env: options.env,
       override: options.launchOverride,
     }) }
@@ -245,6 +247,7 @@ export class HarnessRuntime {
         configPath: this.options.configPath,
         patchPaths: this.options.patchPaths,
         moduleBasePath: this.options.moduleBasePath,
+        devMode: this.options.devMode,
         env: this.options.env,
         requestTimeoutMs: this.options.requestTimeoutMs,
         shutdownTimeoutMs: this.options.shutdownTimeoutMs,

@@ -14,6 +14,8 @@ import {
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import {
   assertInstalledCompatibility,
+  assertInstalledCordisCompatibility,
+  readInstalledCordisVersions,
   readInstalledDshVersions,
   TESTED_DSH_BASELINE,
   type InstalledDshVersions,
@@ -22,7 +24,7 @@ import { resolveComposition, type CompositionSource } from '../upstream/composit
 import { classifyRuntimeError, type RuntimeErrorCode } from '../upstream/errors.js'
 import { describeNetwork, readNetworkFacts, type NetworkFacts } from '../upstream/network.js'
 import { HarnessRuntime, type HarnessRuntimeMetadata, type HarnessRuntimeOptions } from '../upstream/runtime.js'
-import { defaultRuntimeConfigPath, effectiveRuntimeEnvironment } from '../upstream/runtime-launcher.js'
+import { defaultRuntimeConfigPath, defaultRuntimeDevPatchPath, effectiveRuntimeEnvironment } from '../upstream/runtime-launcher.js'
 import { DSHC_VERSION } from '../version.js'
 
 export type DoctorStatus = 'PASS' | 'WARN' | 'FAIL' | 'UNKNOWN'
@@ -76,7 +78,9 @@ export interface DoctorReport {
     path: string
     source: CompositionSource
     patchPath?: string
+    patchPaths: readonly string[]
   }
+  devMode: boolean
   selection: {
     provider: string
     model: string
@@ -108,6 +112,7 @@ interface DoctorOutputStream {
 }
 
 export interface DoctorOptions extends HarnessRuntimeOptions {
+  devMode?: boolean
   stdin?: DoctorInputStream
   stdout?: DoctorOutputStream
   stderr?: DoctorOutputStream
@@ -117,14 +122,19 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const workspace = resolve(options.workspace ?? process.cwd())
   const provider = options.provider ?? 'deepseek-official'
   const model = options.model ?? 'deepseek-v4-flash'
-  const resolved = await resolveComposition(workspace, options.configPath, defaultRuntimeConfigPath())
+  const devMode = options.devMode === true
+  const resolved = await resolveComposition(workspace, options.configPath, defaultRuntimeConfigPath(), {
+    devMode,
+    devPatchPath: defaultRuntimeDevPatchPath(),
+  })
   const runtimeConfigPath = resolve(resolved.path)
   const runtimeConfigSource = resolved.source
-  const runtimePatchPaths = resolved.patchPath === undefined ? [] : [resolved.patchPath]
+  const runtimePatchPaths = resolved.patchPaths
   const childEnv = effectiveRuntimeEnvironment({
     workspace,
     configPath: runtimeConfigPath,
     patchPaths: runtimePatchPaths,
+    devMode,
     env: options.env,
     requestTimeoutMs: options.requestTimeoutMs,
     shutdownTimeoutMs: options.shutdownTimeoutMs,
@@ -140,8 +150,32 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const nodeReady = checkNodeVersion(process.versions.node, findings)
   const workspaceReady = await checkWorkspace(workspace, findings)
   const configReady = await checkRuntimeConfig(runtimeConfigPath, runtimeConfigSource, findings)
-    && await checkRuntimePatch(resolved.patchPath, findings)
+    && await checkRuntimePatches(runtimePatchPaths, findings)
   const packageReady = await checkInstalledPackages(findings)
+    && (!devMode || await checkInstalledCordisPackages(findings))
+
+  findings.push(devMode
+    ? {
+        id: 'workbench.mode',
+        status: 'WARN',
+        category: 'local-policy',
+        summary: 'Developer mode enables trusted process-wide dynamic code; the Cordis VM is not a security boundary and definitions disappear on restart.',
+      }
+    : {
+        id: 'workbench.isolation',
+        status: 'PASS',
+        category: 'local-policy',
+        summary: 'Ordinary mode omits the built-in Cordis developer patch, so dynamic lifecycle tools are not requested by dshc.',
+      })
+  if (devMode) {
+    findings.push({
+      id: 'workbench.patch-order',
+      status: resolved.patchPaths[0] === defaultRuntimeDevPatchPath() ? 'PASS' : 'FAIL',
+      category: 'configuration',
+      summary: 'Patch order is shipped base, built-in developer layer, then optional workspace layer.',
+      detail: resolved.patchPaths.join(' -> '),
+    })
+  }
 
   findings.push({
     id: 'selection',
@@ -204,6 +238,15 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
         detail: resolved.patchPath,
       })
     }
+    if (resolved.devPatchPath !== undefined) {
+      findings.push({
+        id: 'composition.dev-patch',
+        status: 'PASS',
+        category: 'configuration',
+        summary: 'Official Cordis host runner and lifecycle tool package are requested by the built-in developer layer.',
+        detail: resolved.devPatchPath,
+      })
+    }
   } else {
     findings.push({
       id: runtimeConfigSource === 'workspace' ? 'composition.workspace' : 'composition.override',
@@ -233,6 +276,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       workspace,
       configPath: runtimeConfigPath,
       patchPaths: runtimePatchPaths,
+      devMode,
     })
     try {
       runtimeMetadata = await runtime.start()
@@ -305,7 +349,9 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       path: runtimeConfigPath,
       source: runtimeConfigSource,
       ...(resolved.patchPath === undefined ? {} : { patchPath: resolved.patchPath }),
+      patchPaths: runtimePatchPaths,
     },
+    devMode,
     selection: { provider, model },
     credential,
     tty,
@@ -328,6 +374,7 @@ export function renderDoctorHuman(report: DoctorReport): string {
     `workspace: ${safe(report.workspace)}`,
     `runtime config: ${safe(report.runtimeConfig.path)} (${report.runtimeConfig.source})`,
     ...(report.runtimeConfig.patchPath === undefined ? [] : [`runtime patch: ${safe(report.runtimeConfig.patchPath)}`]),
+    ...(report.runtimeConfig.patchPaths.length === 0 ? [] : [`ordered patches: ${report.runtimeConfig.patchPaths.map(safe).join(' -> ')}`]),
     '',
   ]
   for (const finding of report.findings) {
@@ -404,8 +451,15 @@ async function checkRuntimeConfig(
   }
 }
 
-async function checkRuntimePatch(path: string | undefined, findings: DoctorFinding[]): Promise<boolean> {
-  if (path === undefined) return true
+async function checkRuntimePatches(paths: readonly string[], findings: DoctorFinding[]): Promise<boolean> {
+  let ready = true
+  for (const path of paths) {
+    ready = await checkRuntimePatch(path, findings) && ready
+  }
+  return ready
+}
+
+async function checkRuntimePatch(path: string, findings: DoctorFinding[]): Promise<boolean> {
   try {
     await access(path, constants.R_OK)
     findings.push({
@@ -424,6 +478,29 @@ async function checkRuntimePatch(path: string | undefined, findings: DoctorFindi
       category: 'configuration',
       summary: `Workspace composition patch is unavailable: ${classified.message}`,
       detail: path,
+    })
+    return false
+  }
+}
+
+async function checkInstalledCordisPackages(findings: DoctorFinding[]): Promise<boolean> {
+  try {
+    const versions = await readInstalledCordisVersions()
+    assertInstalledCordisCompatibility(versions)
+    findings.push({
+      id: 'workbench.packages',
+      status: 'PASS',
+      category: 'compatibility',
+      summary: `Official Cordis host runner ${versions.hostRunnerVersion} and tool package ${versions.toolCordisVersion} exactly match the pinned M6 baseline.`,
+    })
+    return true
+  } catch (error) {
+    const classified = classifyRuntimeError(error)
+    findings.push({
+      id: 'workbench.packages',
+      status: 'FAIL',
+      category: classified.code,
+      summary: classified.message,
     })
     return false
   }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
+import { TESTED_CORDIS_BASELINE, TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
 
 const cliEntry = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
 const tempRoots: string[] = []
@@ -64,6 +64,61 @@ describe('published DeepSeek Harness doctor', () => {
       expect.objectContaining({ id: 'composition.sandbox', status: 'PASS' }),
       expect.objectContaining({ id: 'composition.approval', status: 'PASS' }),
       expect.objectContaining({ id: 'retention', status: 'PASS' }),
+    ]))
+  }, 30_000)
+
+  it('validates developer composition without credentials or executing dynamic code', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-official-dev-doctor-'))
+    tempRoots.push(root)
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      DSH_HOME: join(root, '.dsh-home'),
+      DSH_SESSION_ROOT: join(root, '.dsh-sessions'),
+      DEEPSEEK_BASE_URL: 'http://127.0.0.1:1',
+    }
+    delete env.DEEPSEEK_API_KEY
+
+    const result = await runProcess(
+      process.execPath,
+      [cliEntry, 'doctor', '--dev', '--workspace', root, '--request-timeout-ms', '10000', '--json'],
+      env,
+      root,
+    )
+
+    expect(result.code).toBe(0)
+    expect(result.stderr).toBe('')
+    const report = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      devMode: true,
+      workspace: root,
+      runtimeConfig: {
+        source: 'shipped-default',
+        patchPaths: [expect.stringMatching(/cordis\.dev\.patch\.yml$/u)],
+      },
+      credential: {
+        environmentVariable: 'DEEPSEEK_API_KEY',
+        present: false,
+      },
+      runtime: {
+        serverName: TESTED_DSH_BASELINE.serverName,
+        protocolVersion: TESTED_DSH_BASELINE.protocolVersion,
+      },
+    })
+
+    const findings = report['findings']
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'credential', status: 'WARN' }),
+      expect.objectContaining({ id: 'workbench.mode', status: 'WARN' }),
+      expect.objectContaining({ id: 'workbench.patch-order', status: 'PASS' }),
+      expect.objectContaining({
+        id: 'workbench.packages',
+        status: 'PASS',
+        summary: expect.stringContaining(TESTED_CORDIS_BASELINE.hostRunnerVersion),
+      }),
+      expect.objectContaining({ id: 'composition.dev-patch', status: 'PASS' }),
+      expect.objectContaining({ id: 'runtime.initialize', status: 'PASS' }),
     ]))
   }, 30_000)
 })

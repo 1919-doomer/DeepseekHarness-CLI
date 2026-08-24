@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TESTED_DSH_BASELINE } from '../../src/upstream/compatibility.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
+import { defaultRuntimeDevPatchPath } from '../../src/upstream/runtime-launcher.js'
+import { CORDIS_TOOL_NAMES } from '../../src/workbench/contract.js'
 
 const tempRoots: string[] = []
 const cliEntry = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url))
@@ -63,6 +65,35 @@ describe('official DeepSeek Harness JSON-RPC runtime', () => {
       expect(toolNames).toEqual(expect.arrayContaining([...EXPECTED_CODING_TOOLS]))
       expect(toolNames).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
       expect(toolNames).not.toContain(process.platform === 'win32' ? 'bash' : 'pwsh')
+      for (const name of CORDIS_TOOL_NAMES) expect(toolNames).not.toContain(name)
+    } finally {
+      await runtime.close()
+      await closeServer(stub.server)
+    }
+  }, 30_000)
+
+  it('mounts the exact official Cordis lifecycle contract only in developer mode', async () => {
+    const root = await testWorkspace()
+    const modelRequests: Record<string, unknown>[] = []
+    const stub = await startModelStub('m6-dev-contract-ok', modelRequests)
+    const runtime = new HarnessRuntime({
+      workspace: root,
+      model: 'deepseek-v4-flash',
+      maxTokens: 64,
+      patchPaths: [defaultRuntimeDevPatchPath()],
+      devMode: true,
+      activityTimeoutMs: 20_000,
+      env: modelEnvironment(stub.baseUrl, root),
+    })
+
+    try {
+      const result = await runtime.run('Inspect the developer tool contract.', { sessionId: 'm6-dev-contract' })
+      expect(result.finalResponse).toBe('m6-dev-contract-ok')
+      expect(modelToolNames(requiredFirstRequest(modelRequests))).toEqual(expect.arrayContaining([...CORDIS_TOOL_NAMES]))
+      const second = await runtime.run('Inspect it from a second session.', { sessionId: 'm6-dev-contract-second' })
+      expect(second.finalResponse).toBe('m6-dev-contract-ok')
+      expect(modelRequests).toHaveLength(2)
+      expect(modelToolNames(modelRequests[1]!)).toEqual(expect.arrayContaining([...CORDIS_TOOL_NAMES]))
     } finally {
       await runtime.close()
       await closeServer(stub.server)

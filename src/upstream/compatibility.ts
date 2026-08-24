@@ -9,9 +9,19 @@ export const TESTED_DSH_BASELINE = Object.freeze({
   protocolVersion: '0.0.1',
 })
 
+export const TESTED_CORDIS_BASELINE = Object.freeze({
+  hostRunnerVersion: '0.1.1-rc.2',
+  toolCordisVersion: '0.1.1-rc.2',
+})
+
 export interface InstalledDshVersions {
   sdkVersion: string
   runtimePackageVersion: string
+}
+
+export interface InstalledCordisVersions {
+  hostRunnerVersion: string
+  toolCordisVersion: string
 }
 
 export interface RuntimeIdentity {
@@ -25,6 +35,23 @@ export async function readInstalledDshVersions(): Promise<InstalledDshVersions> 
     readPackageVersion('@deepseek-ai/dsh-sdk-jsonrpc-demo/package.json'),
   ])
   return { sdkVersion, runtimePackageVersion }
+}
+
+export async function readInstalledCordisVersions(): Promise<InstalledCordisVersions> {
+  const [hostRunnerVersion, toolCordisVersion] = await Promise.all([
+    readPackageVersion('@deepseek-ai/dsh-cordis-host-runner/package.json'),
+    readPackageVersion('@deepseek-ai/dsh-tool-cordis/package.json'),
+  ])
+  return { hostRunnerVersion, toolCordisVersion }
+}
+
+export function assertInstalledCordisCompatibility(versions: InstalledCordisVersions): void {
+  if (versions.hostRunnerVersion !== TESTED_CORDIS_BASELINE.hostRunnerVersion) {
+    throw new CompatibilityError(`Unsupported @deepseek-ai/dsh-cordis-host-runner ${versions.hostRunnerVersion}; M6 is tested against ${TESTED_CORDIS_BASELINE.hostRunnerVersion}.`)
+  }
+  if (versions.toolCordisVersion !== TESTED_CORDIS_BASELINE.toolCordisVersion) {
+    throw new CompatibilityError(`Unsupported @deepseek-ai/dsh-tool-cordis ${versions.toolCordisVersion}; M6 is tested against ${TESTED_CORDIS_BASELINE.toolCordisVersion}.`)
+  }
 }
 
 export function assertInstalledCompatibility(versions: InstalledDshVersions): void {
