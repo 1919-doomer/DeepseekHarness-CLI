@@ -144,7 +144,7 @@ The pinned package exports seven lifecycle tools (`cordis_inspect_list`,
 `cordis_stop`, `cordis_undefine`). This measured contract supersedes the older
 five-tool planning shorthand. See [PLUGIN-WORKBENCH.md](PLUGIN-WORKBENCH.md).
 
-## M7 — History, context, prompt and permissions — implementation in progress
+## M7 — History, context, prompt and permissions — M7.0–M7.3 delivered in alpha.9
 
 The source tree now contains the protocol-independent M7.0–M7.3 slices:
 

@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile
 pnpm check
 pnpm test:official-runtime
 pnpm test:package
-pnpm release:verify -- v0.1.0-alpha.5
+pnpm release:verify -- v0.1.0-alpha.9
 ```
 
 Inspect `npm pack --dry-run --json`. The allowlisted package must contain the

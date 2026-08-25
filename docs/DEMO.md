@@ -24,7 +24,7 @@ this repository.
 
 The recording should visibly demonstrate:
 
-1. `0.1.0-alpha.5` and a successful initialize-only doctor preflight;
+1. `0.1.0-alpha.9` and a successful initialize-only doctor preflight;
 2. repository cwd, provider/model and Harness runtime identity;
 3. Harness-owned filesystem/search/platform-shell activity;
 4. a safe edit and its relevant test result;
