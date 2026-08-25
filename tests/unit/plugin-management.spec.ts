@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
 import {
@@ -73,8 +74,10 @@ describe('plugin install transaction', () => {
       npmRunner: runner,
       healFallback: () => undefined,
       trial: async profile => profile,
+      discardTrial: async () => undefined,
     })
-    expect(result.value).toBe(join(workspace, '.dshc', 'profiles', 'default', 'runtime-anchor.mjs'))
+    expect(result.value).toBe(join(result.profilePath, 'runtime-anchor.mjs'))
+    expect(result.profilePath).toContain(join('.dshc', 'profiles', 'candidates', 'candidate-'))
     const patch = await readFile(patchPath, 'utf8')
     expect(patch).toContain('workspace-example-')
     expect(patch).toContain('entries')
@@ -93,7 +96,158 @@ describe('plugin install transaction', () => {
       npmRunner: runner,
       healFallback: () => undefined,
       trial: async () => { throw new Error('plugin init exploded') },
-    })).rejects.toThrow('patch was rolled back')
+      discardTrial: async () => undefined,
+    })).rejects.toThrow('active workspace composition was not changed')
     await expect(readFile(patchPath, 'utf8')).resolves.toBe('[]\n')
   })
+
+  it('keeps the last good immutable generation active after a failed upgrade and cold resolution', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-upgrade-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    const npmRunner = fakeInstallingRunner()
+
+    const first = await installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: '@deepseek-ai/example@1.0.0',
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner,
+      healFallback: () => undefined,
+      trial: async (_moduleBasePath, candidatePatchPath) => {
+        expect(await coldResolvedVersion(candidatePatchPath)).toBe('1.0.0')
+        return 'first-runtime'
+      },
+      discardTrial: async () => undefined,
+    })
+    const committedPatch = await readFile(patchPath, 'utf8')
+    expect(await coldResolvedVersion(patchPath)).toBe('1.0.0')
+
+    await expect(installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: '@deepseek-ai/example@2.0.0',
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner,
+      healFallback: () => undefined,
+      trial: async (_moduleBasePath, candidatePatchPath) => {
+        expect(await coldResolvedVersion(candidatePatchPath)).toBe('2.0.0')
+        throw new Error('version 2 cannot initialize')
+      },
+      discardTrial: async () => undefined,
+    })).rejects.toThrow('immutable candidate was discarded')
+
+    expect(await readFile(patchPath, 'utf8')).toBe(committedPatch)
+    expect(await coldResolvedVersion(patchPath)).toBe('1.0.0')
+    expect(await readFile(join(first.profilePath, 'node_modules', '@deepseek-ai', 'example', 'package.json'), 'utf8'))
+      .toContain('"version": "1.0.0"')
+    await expect(readdir(join(workspace, '.dshc', 'profiles', 'candidates'))).resolves.toEqual([
+      first.profilePath.split(/[\\/]/).at(-1),
+    ])
+  })
+
+  it('atomically replaces an existing patch after a successful upgrade without mutating the old generation', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-promote-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    const npmRunner = fakeInstallingRunner()
+    const install = (version: string) => installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: `@deepseek-ai/example@${version}`,
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner,
+      healFallback: () => undefined,
+      trial: async (_moduleBasePath: string, candidatePatchPath: string) => coldResolvedVersion(candidatePatchPath),
+      discardTrial: async () => undefined,
+    })
+
+    const first = await install('1.0.0')
+    const second = await install('2.0.0')
+    expect(second.value).toBe('2.0.0')
+    expect(await coldResolvedVersion(patchPath)).toBe('2.0.0')
+    expect(await readFile(join(first.profilePath, 'node_modules', '@deepseek-ai', 'example', 'package.json'), 'utf8'))
+      .toContain('"version": "1.0.0"')
+    expect(second.profilePath).not.toBe(first.profilePath)
+  })
+
+  it('deletes a candidate when package preparation fails before trial', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-prepare-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    const failingRunner: NpmRunner = async (args) => {
+      if (args[0] === 'view') return '"1.2.3"'
+      throw new Error('npm install failed')
+    }
+    await expect(installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: '@deepseek-ai/example@1.2.3',
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner: failingRunner,
+      healFallback: () => undefined,
+      trial: async () => { throw new Error('trial must not run') },
+      discardTrial: async () => undefined,
+    })).rejects.toThrow('npm install failed')
+    await expect(readdir(join(workspace, '.dshc', 'profiles', 'candidates'))).resolves.toEqual([])
+    await expect(readFile(patchPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('disposes a successful trial and removes its candidate when atomic publish fails', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-commit-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    await mkdir(dirname(patchPath), { recursive: true })
+    await writeFile(patchPath, '[]\n', 'utf8')
+    const trialValue = { runtime: 'candidate' }
+    const discardTrial = vi.fn(async () => undefined)
+
+    await expect(installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: '@deepseek-ai/example@1.2.3',
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner: runner,
+      healFallback: () => undefined,
+      trial: async () => trialValue,
+      discardTrial,
+      publishPatch: async () => { throw new Error('atomic rename denied') },
+    })).rejects.toThrow('could not be committed')
+
+    expect(discardTrial).toHaveBeenCalledWith(trialValue)
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe('[]\n')
+    await expect(readdir(join(workspace, '.dshc', 'profiles', 'candidates'))).resolves.toEqual([])
+  })
 })
+
+function fakeInstallingRunner(): NpmRunner {
+  return async (args, cwd) => {
+    const exactSpec = args.find(argument => argument.startsWith('@deepseek-ai/example@'))
+    if (args[0] === 'view') {
+      if (exactSpec === undefined) throw new Error('missing exact view spec')
+      return JSON.stringify(exactSpec.slice(exactSpec.lastIndexOf('@') + 1))
+    }
+    if (args[0] !== 'install' || exactSpec === undefined) throw new Error(`unexpected npm operation: ${args.join(' ')}`)
+    const version = exactSpec.slice(exactSpec.lastIndexOf('@') + 1)
+    const packagePath = join(cwd, 'node_modules', '@deepseek-ai', 'example')
+    await mkdir(packagePath, { recursive: true })
+    await writeFile(join(packagePath, 'package.json'), `${JSON.stringify({
+      name: '@deepseek-ai/example',
+      version,
+      type: 'module',
+      exports: './index.mjs',
+    }, null, 2)}\n`, 'utf8')
+    await writeFile(join(packagePath, 'index.mjs'), `export const version = ${JSON.stringify(version)}\n`, 'utf8')
+    await writeFile(join(cwd, 'package-lock.json'), `${JSON.stringify({ lockfileVersion: 3, version })}\n`, 'utf8')
+    return ''
+  }
+}
+
+async function coldResolvedVersion(patchPath: string): Promise<string> {
+  const patches = loadOptionalPatches('dshc-test', patchPath) ?? []
+  const shim = patches.flatMap(patch => patch.insert ?? [])
+    .find(entry => typeof entry.id === 'string' && entry.id.startsWith('workspace-example-'))?.name
+  if (typeof shim !== 'string') throw new Error(`plugin shim missing from ${patchPath}`)
+  const profilePath = dirname(dirname(shim))
+  const manifest = JSON.parse(await readFile(join(profilePath, 'node_modules', '@deepseek-ai', 'example', 'package.json'), 'utf8')) as {
+    version?: unknown
+  }
+  if (typeof manifest.version !== 'string') throw new Error('fake plugin version missing')
+  return manifest.version
+}

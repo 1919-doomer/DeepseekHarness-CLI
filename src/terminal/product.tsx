@@ -18,6 +18,7 @@ import type {
 } from '../plugins/api.js'
 import { createDefaultTerminalHost } from '../plugins/builtins.js'
 import type { TerminalPluginHost } from '../plugins/host.js'
+import type { HistoryWorkbench } from '../plugins/history.js'
 import {
   appendTerminalEventHistory,
   initialAgentTopologyHistory,
@@ -34,6 +35,7 @@ import {
   type TerminalTranscriptState,
 } from './transcript.js'
 import { sanitizeTerminalText } from './sanitize.js'
+import { RuntimeCloseTracker } from './runtime-ownership.js'
 import {
   formatActivityCounts,
   formatActivityRow,
@@ -103,6 +105,8 @@ export interface TerminalProductOptions {
   searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
   resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
   installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
+  /** First-party read-only history controller; not part of terminal plugin API v1. */
+  history?: HistoryWorkbench
   initialSessionId?: string
   host?: TerminalPluginHost
   useAlternateScreen?: boolean
@@ -130,7 +134,12 @@ export async function runTerminalProduct(
   // down. The new runtime is started before the old one closes, so a rejected
   // composition leaves the session working rather than stranded.
   const runtimeRef = { current: runtime }
-  const host = options.host ?? createDefaultTerminalHost({ devMode: options.devMode })
+  const runtimeClosures = new RuntimeCloseTracker<HarnessRuntime>()
+  const host = options.host ?? createDefaultTerminalHost({
+    devMode: options.devMode,
+    history: options.history,
+    env: process.env,
+  })
   const initialSessionId = options.initialSessionId ?? createSessionId()
   const stdin = options.stdin ?? process.stdin
   const stdout = options.stdout ?? process.stdout
@@ -159,7 +168,7 @@ export async function runTerminalProduct(
       totalTurns: latest.totalTurns,
       sessionId: latest.sessionId,
     })
-    void runtimeRef.current.close().catch(() => undefined)
+    void runtimeClosures.track(runtimeRef.current)
   }
   const onInt = (): void => closeForSignal(130)
   const onTerm = (): void => closeForSignal(143)
@@ -185,6 +194,7 @@ export async function runTerminalProduct(
     instance = render(
       <TerminalProductApp
         runtimeRef={runtimeRef}
+        trackRuntimeClose={runtime => runtimeClosures.track(runtime)}
         metadata={metadata}
         {...(options.restart === undefined ? {} : { restart: options.restart })}
         {...(options.composition === undefined ? {} : { composition: options.composition })}
@@ -192,6 +202,7 @@ export async function runTerminalProduct(
         {...(options.searchPlugins === undefined ? {} : { searchPlugins: options.searchPlugins })}
         {...(options.resolvePlugin === undefined ? {} : { resolvePlugin: options.resolvePlugin })}
         {...(options.installPlugin === undefined ? {} : { installPlugin: options.installPlugin })}
+        {...(options.history === undefined ? {} : { history: options.history })}
         host={host}
         debug={options.debug ?? false}
         {...(options.startupNotice === undefined ? {} : { startupNotice: options.startupNotice })}
@@ -221,13 +232,15 @@ export async function runTerminalProduct(
     stdin.off('end', onEof)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
-    await runtimeRef.current.close()
+    await runtimeClosures.drain(runtimeRef.current)
   }
 }
 
 interface AppProps {
   /** Mutable so a configuration restart can swap the runtime under the UI. */
   runtimeRef: { current: HarnessRuntime }
+  /** Starts a close and retains its result until the product's final drain. */
+  trackRuntimeClose(runtime: HarnessRuntime): Promise<void>
   metadata: HarnessRuntimeMetadata
   restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
   composition?: CompositionSummary
@@ -235,6 +248,7 @@ interface AppProps {
   searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
   resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
   installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
+  history?: HistoryWorkbench
   host: TerminalPluginHost
   debug: boolean
   startupNotice?: string
@@ -274,6 +288,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
   const [activeView, setActiveView] = useState<string | undefined>()
+  const [, setFirstPartyViewRevision] = useState(0)
   const [metadata, setMetadata] = useState(props.metadata)
   const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
@@ -330,6 +345,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const menuDismissedRef = useRef(false)
   const sessionRef = useRef(sessionId)
   const idRef = useRef(0)
+  const mountedRef = useRef(true)
 
   sessionRef.current = sessionId
   totalTurnsRef.current = totalTurns
@@ -339,6 +355,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   useEffect(() => {
     props.onProgress(totalTurns, sessionId)
   }, [props.onProgress, sessionId, totalTurns])
+
+  useEffect(() => () => { mountedRef.current = false }, [])
 
   useEffect(() => {
     const onResize = (): void => setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
@@ -403,8 +421,93 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       ))
     }
     setPhase('closing')
-    void props.runtimeRef.current.close().finally(() => finish(130, true))
-  }, [finish, nextId, metadata.protocolVersion, props.runtimeRef])
+    void props.trackRuntimeClose(props.runtimeRef.current).then(
+      () => finish(130, true),
+      () => finish(130, true),
+    )
+  }, [finish, nextId, metadata.protocolVersion, props.runtimeRef, props.trackRuntimeClose])
+
+  const runHarnessPrompt = useCallback(async (
+    prompt: string,
+    displayText: string,
+    freshSession = false,
+    sourceSummary?: string,
+  ): Promise<void> => {
+    if (runningRef.current) return
+    let rootSessionId = sessionId
+    if (freshSession) {
+      const previous = sessionId
+      rootSessionId = createSessionId()
+      setSessionId(rootSessionId)
+      setGeneration(value => value + 1)
+      setSessionTurns(0)
+      setAgentTopology(initialAgentTopologyHistory())
+      setTranscript(state => appendSystemMessage(
+        state,
+        `Ask History starts a new analysis session ${rootSessionId}; source session remains unchanged.${sourceSummary === undefined ? '' : `\nSelected evidence: ${sourceSummary}.`}\nPrevious live session ${previous} remains runtime-owned until exit.`,
+        'history',
+        nextId('history-session'),
+      ))
+    }
+
+    const activityId = nextId('activity')
+    setHistory(items => [...items.slice(-99), displayText])
+    setTranscript(state => appendUserPrompt(state, rootSessionId, displayText, nextId('user')))
+    setPhase('running')
+    runningRef.current = true
+
+    try {
+      const result = await props.runtimeRef.current.run(prompt, {
+        sessionId: rootSessionId,
+        onEvent: event => {
+          setTranscript(state => reduceTerminalEvent(
+            state,
+            event,
+            props.host,
+            activityId,
+            rootSessionId,
+            props.debug,
+          ))
+          setEventHistory(state => appendTerminalEventHistory(state, event))
+          setAgentTopology(state => reduceAgentTopologyHistory(state, event))
+          setUsage(state => accumulateUsage(state, event, rootSessionId))
+        },
+      })
+      setSessionTurns(value => value + 1)
+      setTotalTurns(value => value + 1)
+      setPhase(result.projection.lastTurnError === undefined ? 'idle' : 'failed')
+      if (result.projection.lastTurnError !== undefined) {
+        setTranscript(state => appendSystemMessage(
+          state,
+          'The Harness turn ended with an observable root-session error. The runtime reported idle and remains owned by this terminal process.',
+          'turn',
+          nextId('turn-error'),
+        ))
+      }
+    } catch (error) {
+      if (interruptingRef.current) return
+      const failure = classifyRuntimeError(error)
+      setPhase('failed')
+      setTranscript(state => appendSystemMessage(state, failure.message, `runtime error · ${failure.code}`, nextId('runtime-error')))
+      await props.trackRuntimeClose(props.runtimeRef.current).catch(() => undefined)
+      finish(1, false)
+    } finally {
+      runningRef.current = false
+    }
+  }, [finish, nextId, props.debug, props.host, props.runtimeRef, props.trackRuntimeClose, sessionId])
+
+  const retireRuntime = useCallback((previous: HarnessRuntime): void => {
+    void props.trackRuntimeClose(previous).catch((error) => {
+      if (!mountedRef.current) return
+      const failure = classifyRuntimeError(error)
+      setTranscript(state => appendSystemMessage(
+        state,
+        `The replacement runtime is active, but its predecessor failed to close: ${failure.message}\nThe predecessor remains tracked and shutdown will report this failure again on exit.`,
+        `runtime cleanup error · ${failure.code}`,
+        nextId('runtime-close-error'),
+      ))
+    })
+  }, [nextId, props.trackRuntimeClose])
 
   const applyOutcome = useCallback(async (outcome: TerminalCommandOutcome): Promise<void> => {
     switch (outcome.kind) {
@@ -489,9 +592,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               [
                 `Install ${sanitizeTerminalText(candidate.exactSpec)} into this workspace.`,
                 '',
-                'This downloads executable plugin code, appends one Cordis patch entry,',
-                'and trial-starts a replacement runtime. The live runtime is replaced only',
-                'after initialization succeeds; a failed trial restores the prior patch.',
+                'This downloads executable plugin code into an immutable candidate profile',
+                'and trial-starts a replacement runtime with a private patch. The active',
+                'workspace patch and live runtime change only after initialization succeeds.',
                 '',
                 `Run  /plugin install ${sanitizeTerminalText(candidate.exactSpec)} --yes  to proceed.`,
               ].join('\n'),
@@ -514,7 +617,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
           setComposition(next.composition)
-          void previous.close().catch(() => undefined)
+          retireRuntime(previous)
           const fresh = createSessionId()
           setSessionId(fresh)
           setGeneration(value => value + 1)
@@ -528,6 +631,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         }
         return
       }
+      case 'submit-prompt':
+        selectView(undefined)
+        jumpToNewest()
+        await runHarnessPrompt(outcome.prompt, outcome.displayText, outcome.newSession, outcome.sourceSummary)
+        return
       case 'restart-runtime': {
         const restart = props.restart
         if (restart === undefined) {
@@ -553,7 +661,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
           setComposition(next.composition)
-          void previous.close().catch(() => undefined)
+          retireRuntime(previous)
           const fresh = createSessionId()
           setSessionId(fresh)
           setGeneration(value => value + 1)
@@ -622,7 +730,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         finish(0, false)
         return
     }
-  }, [finish, nextId, props.host, metadata.protocolVersion, sessionId])
+  }, [finish, jumpToNewest, nextId, props.host, metadata.protocolVersion, retireRuntime, runHarnessPrompt, selectView, sessionId])
 
   const runCommand = useCallback(async (raw: string): Promise<boolean> => {
     const parsed = parseTerminalCommand(raw)
@@ -671,54 +779,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
 
     const prompt = raw.startsWith('//') ? raw.slice(1) : raw
-    const activityId = nextId('activity')
-    const rootSessionId = sessionId
-    setHistory(items => [...items.slice(-99), prompt])
-    setTranscript(state => appendUserPrompt(state, rootSessionId, prompt, nextId('user')))
-    setPhase('running')
-    runningRef.current = true
-
-    try {
-      const result = await props.runtimeRef.current.run(prompt, {
-        sessionId: rootSessionId,
-        onEvent: event => {
-          // Complete normalized events feed presentation first. Only the local
-          // diagnostic copy is compacted/evicted afterward.
-          setTranscript(state => reduceTerminalEvent(
-            state,
-            event,
-            props.host,
-            activityId,
-            rootSessionId,
-            props.debug,
-          ))
-          setEventHistory(state => appendTerminalEventHistory(state, event))
-          setAgentTopology(state => reduceAgentTopologyHistory(state, event))
-          setUsage(state => accumulateUsage(state, event, rootSessionId))
-        },
-      })
-      setSessionTurns(value => value + 1)
-      setTotalTurns(value => value + 1)
-      setPhase(result.projection.lastTurnError === undefined ? 'idle' : 'failed')
-      if (result.projection.lastTurnError !== undefined) {
-        setTranscript(state => appendSystemMessage(
-          state,
-          'The Harness turn ended with an observable root-session error. The runtime reported idle and remains owned by this terminal process.',
-          'turn',
-          nextId('turn-error'),
-        ))
-      }
-    } catch (error) {
-      if (interruptingRef.current) return
-      const failure = classifyRuntimeError(error)
-      setPhase('failed')
-      setTranscript(state => appendSystemMessage(state, failure.message, `runtime error · ${failure.code}`, nextId('runtime-error')))
-      await props.runtimeRef.current.close().catch(() => undefined)
-      finish(1, false)
-    } finally {
-      runningRef.current = false
-    }
-  }, [finish, input, nextId, props.debug, props.host, props.runtimeRef, runCommand, sessionId])
+    jumpToNewest()
+    await runHarnessPrompt(prompt, prompt)
+  }, [input, jumpToNewest, runCommand, runHarnessPrompt])
 
   useInput((keyInput, key) => {
     // Ink reports one parsed key per stdin chunk, but a chunk can carry several
@@ -735,6 +798,82 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return
     }
     if (activeViewRef.current !== undefined) {
+      if (activeViewRef.current === 'history' && props.history !== undefined) {
+        if (key.escape) {
+          if (props.history.isSearchFocused()) {
+            if (props.history.toggleFocus()) setFirstPartyViewRevision(value => value + 1)
+          } else {
+            selectView(undefined)
+          }
+          return
+        }
+        if (key.tab) {
+          if (props.history.toggleFocus()) setFirstPartyViewRevision(value => value + 1)
+          return
+        }
+        if (props.history.isSearchFocused()) {
+          if (key.ctrl && keyInput.toLowerCase() === 'u') {
+            if (props.history.clearSearch()) setFirstPartyViewRevision(value => value + 1)
+            return
+          }
+          if (key.backspace || key.delete) {
+            if (props.history.deleteSearch()) setFirstPartyViewRevision(value => value + 1)
+            return
+          }
+          if (key.return && !commandRunningRef.current) {
+            commandRunningRef.current = true
+            setCommandBusy(true)
+            void props.history.commitSearch()
+              .then(changed => { if (changed) setFirstPartyViewRevision(value => value + 1) })
+              .catch(error => {
+                setTranscript(state => appendSystemMessage(
+                  state,
+                  pluginErrorMessage(error),
+                  'history search error',
+                  nextId('history-search-error'),
+                ))
+              })
+              .finally(() => {
+                commandRunningRef.current = false
+                setCommandBusy(false)
+              })
+            return
+          }
+          if (!key.ctrl && !key.meta && keyInput.length > 0) {
+            if (props.history.insertSearch(keyInput)) setFirstPartyViewRevision(value => value + 1)
+          }
+          return
+        }
+        if (keyInput === 'q') {
+          selectView(undefined)
+          return
+        }
+        if (key.upArrow || key.downArrow) {
+          if (props.history.move(key.downArrow ? 1 : -1)) setFirstPartyViewRevision(value => value + 1)
+          return
+        }
+        if (key.return && !commandRunningRef.current) {
+          commandRunningRef.current = true
+          setCommandBusy(true)
+          void props.history.openSelected()
+            .then(changed => { if (changed) setFirstPartyViewRevision(value => value + 1) })
+            .catch(error => {
+              setTranscript(state => appendSystemMessage(
+                state,
+                pluginErrorMessage(error),
+                'history error',
+                nextId('history-error'),
+              ))
+              selectView(undefined)
+            })
+            .finally(() => {
+              commandRunningRef.current = false
+              setCommandBusy(false)
+            })
+          return
+        }
+        return
+      }
       if (key.escape || key.return || keyInput === 'q') selectView(undefined)
       return
     }

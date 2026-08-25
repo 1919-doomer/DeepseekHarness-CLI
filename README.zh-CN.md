@@ -2,9 +2,9 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：M6 public alpha（`0.1.0-alpha.5`）。M1–M6 Plugin Workbench 已完成。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`。
+**当前状态：M6 public alpha（`0.1.0-alpha.5`）；当前源码已实现 M7.0–M7.3。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`。
 
-[English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
+[English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 历史/上下文/权限](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
 ## 安装 public alpha
 
@@ -52,7 +52,7 @@ cd repository
 - `vision` 使用 `deepseek-v4-flash-vision-exp` 检视图片；`web_search`、`web_fetch` 与只读 `researcher` 角色由 Harness seam 和 timeout policy 提供；
 - 工作区可通过 patch 启用 MCP server，`/tools` 和 activity 保留 `mcp__<server>__<tool>` 来源；
 - shipped composition 始终是基线，工作区只自动应用 `.dshc/cordis.patch.yml`；
-- `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认、先试启动，失败时回滚 patch；
+- `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认；在不可变 candidate profile 中用私有 patch 试启动，成功后才原子发布 workspace patch；
 - resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
 - first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
@@ -61,6 +61,9 @@ cd repository
 - `dshc doctor` 只做兼容性/启动 preflight，只执行 `initialize`，绝不发送模型 prompt；
 - `dshc --dev` 只允许交互式 TTY，挂载官方 Cordis runner/tool，并以持续警告、`/workbench` 和 trace filter 呈现高权限动态生命周期；普通模式完全不挂载这些工具；
 - `dshc doctor --dev` 无需 provider key，只验证精确依赖、developer patch 顺序与 initialize，不执行动态代码；
+- `/history` 通过 Harness 自己的 JSONL 会话文件只读浏览，默认限制在当前 workspace；Ask History 先审阅来源，再把确认片段注入一个全新普通会话；
+- `/context`、`/prompt`、`/permissions` 明确区分 runtime/observed、local/requested 与 unavailable，不伪造 context window、最终 Prompt 或 approval answerer；
+- Windows 的 `TEMP`/`TMP` 位于 workspace 内时，`doctor` 和交互启动都会准确说明所有 pwsh/shell 调用为何失败，但不会搬迁 TEMP 或削弱 sandbox；
 - one-shot、stdin pipe、JSON 与非 TTY `--interactive` 脚本模式全部保留。
 
 ## 源码使用
@@ -98,6 +101,10 @@ TTY 中的主要命令：
 /config        查看 base、patch 与 effective requested configuration
 /plugin        搜索/安装受限 Harness 插件
 /workbench     Cordis 生命周期观察时间线（仅 dev 模式）
+/history       Harness 会话只读浏览；ask 必须先审阅证据
+/context       已观察到的 request usage、容量元数据与 compaction
+/prompt        dshc 自己拥有的本地 Prompt 层投影
+/permissions   fail-closed policy、能力矩阵与 approval audit
 /exit          关闭当前拥有的 Harness runtime 并退出
 ```
 
@@ -207,7 +214,8 @@ Terminal user
 
 ## 下一阶段
 
-- **M6**：发布 Plugin Workbench 分批 alpha，并在真实插件验收后关闭 #57；
+- **M7.4**：仅在 Harness 发布正式版本化扩展/approval 能力握手后进行兼容验证；
+- **M7.5**：通过门禁后再实现完整运行时 Prompt 检查和 Allow once/Reject 交互；
 - **#16**：其余候选能力继续执行准入制。
 
 ## License 与关系说明

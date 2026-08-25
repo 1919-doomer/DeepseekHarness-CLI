@@ -6,6 +6,7 @@ import {
   readCompositionSummary,
   resolveComposition,
   workspaceCompositionPath,
+  type CompositionSummary,
   type ResolvedComposition,
 } from '../upstream/composition.js'
 import { defaultRuntimeConfigPath, defaultRuntimeDevPatchPath, defaultRuntimeInstallAnchor } from '../upstream/runtime-launcher.js'
@@ -18,8 +19,10 @@ import { sanitizeTerminalText, stringifyTerminalSafeJson } from '../terminal/san
 import { classifyRuntimeError, DshcRuntimeError } from '../upstream/errors.js'
 import { HarnessRuntime } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
+import { JsonlHistoryReader } from '../history/reader.js'
+import { HistoryWorkbench } from '../plugins/history.js'
 import { HELP_TEXT, parseCliArgs, type CliOptions } from './args.js'
-import { collectDoctorReport, doctorExitCode, renderDoctorHuman } from './doctor.js'
+import { collectDoctorReport, doctorExitCode, renderDoctorHuman, shellTempRootFacts, type DoctorFinding } from './doctor.js'
 import { runInteractiveLoop } from './interactive.js'
 import { DEV_MODE_WARNING } from '../workbench/contract.js'
 
@@ -187,11 +190,15 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
       })
       try {
         const composition = await readCompositionSummary(resolved.path, resolved.source, resolved.patchPaths)
+        const workspace = options.workspace ?? process.cwd()
+        const history = new HistoryWorkbench(new JsonlHistoryReader())
+        const startupNotice = startupWarnings(workspace, process.env, options.dev)
         const result = await runTerminalProduct(runtime, {
           initialSessionId: options.sessionId,
           debug: options.debug,
           devMode: options.dev,
-          ...(options.dev ? { startupNotice: DEV_MODE_WARNING } : {}),
+          ...(startupNotice === undefined ? {} : { startupNotice }),
+          history,
           ...(composition === undefined ? {} : { composition }),
           // A fork lands beside the workspace so it travels with the project
           // rather than with this machine.
@@ -258,35 +265,63 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
               exactSpec,
               patchPath: workspaceCompositionPath(workspace),
               installAnchor: defaultRuntimeInstallAnchor(),
-              trial: async (moduleBasePath) => {
+              trial: async (moduleBasePath, candidatePatchPath) => {
                 const nextResolved = await resolveComposition(
                   workspace,
                   undefined,
                   defaultRuntimeConfigPath(),
                   { devMode: activeOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
                 )
-                const next = createRuntime(activeOptions, nextResolved, moduleBasePath)
+                const trialResolved: ResolvedComposition = {
+                  ...nextResolved,
+                  patchPath: candidatePatchPath,
+                  patchPaths: nextResolved.patchPath === undefined
+                    ? [...nextResolved.patchPaths, candidatePatchPath]
+                    : nextResolved.patchPaths.map(path => path === nextResolved.patchPath ? candidatePatchPath : path),
+                }
+                const next = createRuntime(activeOptions, trialResolved, moduleBasePath)
                 try {
                   const metadata = await next.start()
-                  const nextComposition = await readCompositionSummary(
-                    nextResolved.path,
-                    nextResolved.source,
-                    nextResolved.patchPaths,
-                  )
                   return {
                     runtime: next,
                     metadata,
-                    ...(nextComposition === undefined ? {} : { composition: nextComposition }),
                   }
                 } catch (error) {
-                  await next.close().catch(() => undefined)
+                  try {
+                    await next.close()
+                  } catch (closeError) {
+                    throw new DshcRuntimeError(
+                      `Plugin trial initialization failed and its runtime could not be closed: ${safeErrorMessage(error)}; cleanup: ${safeErrorMessage(closeError)}`,
+                      'runtime',
+                      { cause: error instanceof Error ? error : undefined },
+                    )
+                  }
                   throw error
                 }
               },
+              discardTrial: async value => value.runtime.close(),
             })
+            let nextComposition: CompositionSummary | undefined
+            let compositionWarning = ''
+            try {
+              const committed = await resolveComposition(
+                workspace,
+                undefined,
+                defaultRuntimeConfigPath(),
+                { devMode: activeOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
+              )
+              nextComposition = await readCompositionSummary(
+                committed.path,
+                committed.source,
+                committed.patchPaths,
+              )
+            } catch (error) {
+              compositionWarning = `\nThe plugin is active, but its local composition summary is unavailable: ${safeErrorMessage(error)}`
+            }
             return {
               ...installed.value,
-              message: `Installed ${installed.exactSpec}; workspace patch ${installed.patchPath} passed trial initialization.`,
+              ...(nextComposition === undefined ? {} : { composition: nextComposition }),
+              message: `Installed ${installed.exactSpec}; workspace patch ${installed.patchPath} passed trial initialization.${compositionWarning}`,
             }
           },
         })
@@ -325,6 +360,28 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
   }
 
   return exitCode
+}
+
+export function startupWarnings(
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  devMode: boolean,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const notices: string[] = []
+  if (devMode) notices.push(DEV_MODE_WARNING)
+  const findings: DoctorFinding[] = []
+  shellTempRootFacts(workspace, env, findings, platform)
+  const tempFailure = findings.find(finding => finding.id === 'shell.temp-root' && finding.status === 'FAIL')
+  if (tempFailure !== undefined) {
+    notices.push([
+      'Windows shell unavailable in this workspace.',
+      tempFailure.summary,
+      tempFailure.detail ?? '',
+      'dshc will not relocate TEMP or weaken the Harness sandbox automatically; run `dshc doctor` after correcting the environment.',
+    ].filter(Boolean).join('\n'))
+  }
+  return notices.length === 0 ? undefined : notices.join('\n\n')
 }
 
 async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<number> {

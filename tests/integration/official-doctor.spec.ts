@@ -64,6 +64,11 @@ describe('published DeepSeek Harness doctor', () => {
       expect.objectContaining({ id: 'composition.sandbox', status: 'PASS' }),
       expect.objectContaining({ id: 'composition.approval', status: 'PASS' }),
       expect.objectContaining({ id: 'retention', status: 'PASS' }),
+      expect.objectContaining({ id: 'history.reader', status: 'PASS' }),
+      expect.objectContaining({ id: 'bridge.protocol', status: 'UNKNOWN' }),
+      expect.objectContaining({ id: 'approval.answerer', status: 'UNKNOWN' }),
+      expect.objectContaining({ id: 'context.capacity', status: 'UNKNOWN' }),
+      expect.objectContaining({ id: 'prompt.runtime-inspection', status: 'UNKNOWN' }),
     ]))
   }, 30_000)
 

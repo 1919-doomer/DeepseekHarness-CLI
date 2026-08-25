@@ -90,6 +90,10 @@ export class PlainRenderer {
         return
 
       case 'user-message':
+      case 'request-context':
+      case 'approval-asked':
+      case 'approval-decided':
+      case 'approval-policy':
       case 'internal':
         return
     }

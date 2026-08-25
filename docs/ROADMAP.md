@@ -144,6 +144,27 @@ The pinned package exports seven lifecycle tools (`cordis_inspect_list`,
 `cordis_stop`, `cordis_undefine`). This measured contract supersedes the older
 five-tool planning shorthand. See [PLUGIN-WORKBENCH.md](PLUGIN-WORKBENCH.md).
 
+## M7 — History, context, prompt and permissions — implementation in progress
+
+The source tree now contains the protocol-independent M7.0–M7.3 slices:
+
+- corrected cache accounting and Windows workspace-local TEMP diagnosis;
+- an official JSONL `listSnapshots()`/`inspect()` history reader with bounded,
+  rebuildable memory projection and workspace scope by default;
+- `/history` browsing and review-first Ask History into a fresh session, with
+  exact source session/message sequence labels and no resume fabrication;
+- `/context`, `/prompt` and `/permissions` views that mark local/requested,
+  runtime/observed and unavailable facts explicitly;
+- durable approval audit projection while the shipped policy remains `never`.
+
+M7.4 is a deliberate upstream compatibility gate. Protocol `0.0.1` has no
+versioned extension router, approval answerer handshake or authoritative final
+prompt inspection. Consequently the exact M7.5 permission controls and complete
+runtime Prompt inspection remain `requires-upstream`: this repository does not
+replace the official server, import private subpaths or add a private side
+protocol. See
+[HISTORY-CONTEXT-PERMISSIONS.md](HISTORY-CONTEXT-PERMISSIONS.md).
+
 ## Post-M6 candidate pool — #16
 
 Candidate work, promoted only when backed by a real user problem and supported upstream contract:
@@ -152,7 +173,8 @@ Candidate work, promoted only when backed by a real user problem and supported u
 - terminal profiles: minimal / coding / research / observer;
 - richer agent topology and future Agent Teams views;
 - background jobs monitor;
-- session browser/resume/time navigation using Harness persistence/query capabilities;
+- formal session resume/time navigation only after Harness exposes a supported
+  resume contract (read-only history browsing is now M7);
 - change review/diff view;
 - exporter/support-bundle plugins;
 - notification plugins;

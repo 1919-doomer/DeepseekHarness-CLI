@@ -92,9 +92,19 @@ export function retainNormalizedEvent(event: NormalizedEvent): NormalizedEvent {
       return { ...event, title: retainText(event.title, MAX_RETAINED_EVENT_TEXT_CHARS).text }
     case 'context-compacted':
       return { ...event, summary: retainText(event.summary, MAX_RETAINED_EVENT_TEXT_CHARS).text }
+    case 'approval-asked':
+      return {
+        ...event,
+        ...(event.reason === undefined
+          ? {}
+          : { reason: retainText(event.reason, MAX_RETAINED_EVENT_TEXT_CHARS).text }),
+      }
     case 'session-status':
     case 'subagent-started':
     case 'subagent-finished':
+    case 'request-context':
+    case 'approval-decided':
+    case 'approval-policy':
     case 'internal':
     case 'unknown':
       return event

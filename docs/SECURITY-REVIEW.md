@@ -181,8 +181,10 @@ this; the review confirms dshc does not relabel partial enforcement as complete.
 The terminal plugin host remains first-party only. M4.6 Batch 2 adds child-runtime
 installation restricted to `@deepseek-ai/` npm packages. It requires exact
 package-and-version confirmation, disables npm lifecycle scripts, changes only
-the workspace patch, initializes a replacement runtime before swapping it live,
-and restores the prior patch on failed initialization.
+an immutable candidate generation before trial, initializes a replacement
+runtime against a private candidate patch, and atomically publishes the
+workspace patch only after successful initialization. Failed candidates are
+deleted without mutating the active plugin generation.
 
 This is not package isolation: accepted plugin code executes with the Harness
 child's OS authority. Arbitrary scopes, Git/URL specs and terminal-plane package

@@ -73,15 +73,19 @@ The unconfirmed command resolves and prints the exact package and version. Only
 the matching exact command with `--yes` mutates the workspace. Installation:
 
 1. accepts npm package names in the `@deepseek-ai/` scope only;
-2. installs under `.dshc/profiles/default` with exact versions and lifecycle
-   scripts disabled (`.dshc/.gitignore` excludes `profiles/` when dshc creates it);
-3. appends one Include insertion to `cordis.patch.yml`;
-4. initializes a replacement runtime before touching the live runtime;
-5. restores the previous patch byte-for-byte if trial initialization fails.
+2. installs an exact version with lifecycle scripts disabled into a new
+   immutable `.dshc/profiles/candidates/...` generation (`.dshc/.gitignore`
+   excludes `profiles/` when dshc creates it);
+3. builds a private candidate patch that inserts or updates that plugin's shim;
+4. initializes a replacement runtime against the candidate patch without
+   changing the active workspace patch or live runtime;
+5. atomically replaces `cordis.patch.yml` only after trial initialization
+   succeeds; any failed candidate is deleted as a whole.
 
-The downloaded package remains cached/installed after a failed trial; the live
-composition does not. Installed code executes in the Harness child with that
-process's OS authority, so scope restriction is a trust policy, not a sandbox.
+Older successful generations may remain on disk, but a failed generation is
+never referenced by the active composition. Installed code executes in the
+Harness child with that process's OS authority, so scope restriction is a trust
+policy, not a sandbox.
 
 Search and install use the active npm registry. `dshc doctor` reports whether
 that is npm's default or a configured mirror and names its source. A mirror must

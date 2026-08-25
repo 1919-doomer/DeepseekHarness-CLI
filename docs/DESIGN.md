@@ -76,6 +76,12 @@ Harness remains authoritative for durable sessions. M2/M3 reuse a stable session
 
 `dshc` does not create a competing durable chat-history database.
 
+M7 history browsing uses the pinned persistence plugin's public
+`listSnapshots()` and non-mutating `inspect()` queries. Its bounded memory index
+is disposable and reconstructable; the session artifact remains the sole fact
+source. Ask History creates a new ordinary session with only user-confirmed
+source message sequences and never invokes stateful resume/load behavior.
+
 ## Event and transcript model
 
 The transcript is a terminal projection, not the source of truth.
@@ -147,6 +153,13 @@ Protocol `0.0.1` does not expose an authoritative runtime plugin inventory, so M
 
 A later optional DSH-side `dshc-bridge` may expose namespaced capability metadata, but base `dshc` must remain useful without it.
 
+M7's `/context`, `/prompt` and `/permissions` use a shared authority vocabulary:
+local/requested, runtime/observed and unavailable. Context percentages require
+an observed public `contextWindow`; prompt inspection distinguishes dshc-owned
+layers from the unavailable final assembly; approval remains fail-closed until
+an official answerer handshake exists. A local shell-risk classifier may
+explain an action but can never authorize it.
+
 ## Trace and agent topology
 
 M3 `/trace` is a normalized user-visible event timeline. It may report event kinds, ids already public in the event stream, lengths and lifecycle transitions. It must not reconstruct or reveal hidden reasoning.
@@ -193,6 +206,8 @@ A future public plugin SDK therefore requires a credible isolation model, likely
 11. Treat session identity as part of transcript/projection identity whenever session-tree events can interleave.
 12. Contain terminal-plugin faults so presentation extensions cannot redefine runtime success/failure.
 13. Treat Unicode grapheme editing and terminal display-cell measurement as distinct presentation primitives; never use UTF-16 length as an editing or column-width model.
+14. Keep Harness session artifacts authoritative; history indexes and Ask History evidence are bounded, read-only terminal projections.
+15. Require an official versioned capability handshake before exposing interactive approval or authoritative final-Prompt inspection.
 
 ## Non-negotiable invariants
 

@@ -154,6 +154,41 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   const packageReady = await checkInstalledPackages(findings)
     && (!devMode || await checkInstalledCordisPackages(findings))
 
+  findings.push(
+    {
+      id: 'history.reader',
+      status: packageReady ? 'PASS' : 'UNKNOWN',
+      category: 'capability',
+      summary: packageReady
+        ? 'Public JSONL listSnapshots/inspect APIs are pinned and available for a read-only, workspace-scoped history projection.'
+        : 'History reader availability was not asserted because the pinned Harness package preflight failed.',
+    },
+    {
+      id: 'bridge.protocol',
+      status: 'UNKNOWN',
+      category: 'capability',
+      summary: 'Requires an upstream versioned request-routing extension; dshc does not fork the official JSON-RPC server or add private methods.',
+    },
+    {
+      id: 'approval.answerer',
+      status: 'UNKNOWN',
+      category: 'capability',
+      summary: 'Unavailable on protocol 0.0.1; approval remains fail-closed with shipped policy never.',
+    },
+    {
+      id: 'context.capacity',
+      status: 'UNKNOWN',
+      category: 'capability',
+      summary: 'Known only after a public request/context event advertises contextWindow for a prompted session; doctor runs no prompt.',
+    },
+    {
+      id: 'prompt.runtime-inspection',
+      status: 'UNKNOWN',
+      category: 'capability',
+      summary: 'Final assembled prompt sections and tool schemas are not published by the current transport; only dshc local requested layers can be inspected.',
+    },
+  )
+
   findings.push(devMode
     ? {
         id: 'workbench.mode',

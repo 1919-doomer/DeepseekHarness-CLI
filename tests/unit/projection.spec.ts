@@ -23,6 +23,28 @@ function sessionEvent(
 }
 
 describe('session projection', () => {
+  it('projects public request capacity and approval audit events without parsing prose', () => {
+    expect(normalizeNotification(sessionEvent('request/context', {
+      provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072,
+    }))).toMatchObject({
+      kind: 'request-context', provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072,
+    })
+    expect(normalizeNotification(sessionEvent('approval/asked', {
+      id: 'approval-1', toolName: 'pwsh', callId: 'call-1', reason: 'run tests',
+    }))).toMatchObject({
+      kind: 'approval-asked', requestId: 'approval-1', toolName: 'pwsh', callId: 'call-1', reason: 'run tests',
+    })
+    expect(normalizeNotification(sessionEvent('approval/decided', {
+      id: 'approval-1', outcome: 'allowed-once',
+    }))).toMatchObject({ kind: 'approval-decided', requestId: 'approval-1', outcome: 'allowed-once' })
+    expect(normalizeNotification(sessionEvent('approval/policy', {
+      policy: 'never', source: 'delegation',
+    }))).toMatchObject({ kind: 'approval-policy', policy: 'never', source: 'delegation' })
+    expect(normalizeNotification(sessionEvent('approval/decided', {
+      id: 'approval-1', outcome: 'allowed-forever',
+    }))).toMatchObject({ kind: 'internal', type: 'approval/decided' })
+  })
+
   it('recognizes only the durable inbox receipt for the submitted message', () => {
     const receipt = sessionEvent('agent/inbox/spliced', {
       inserted: [{ id: 'm1' }, { id: 'other' }],
@@ -152,6 +174,34 @@ describe('session projection', () => {
     const event = projector.ingest(sessionEvent('plugin/new-event', { value: 1 }))
     expect(event).toMatchObject({ kind: 'unknown', type: 'plugin/new-event' })
     expect(projector.state.unknownEventCount).toBe(1)
+  })
+
+  it('keeps malformed tool identities diagnostic instead of correlating them through a fabricated id', () => {
+    const projector = new SessionProjector('main')
+    const legitimate = projector.ingest(sessionEvent('tool/call', {
+      callId: 'unknown-call',
+      name: 'literal-id-tool',
+      arguments: '{}',
+    }))
+    const malformedCall = projector.ingest(sessionEvent('tool/call', {
+      name: 'missing-id',
+      arguments: '{}',
+    }))
+    const malformedResult = projector.ingest(sessionEvent('tool/result', {
+      message: {
+        role: 'tool',
+        content: [{ type: 'text', text: 'must not attach to the literal id' }],
+      },
+    }))
+
+    expect(legitimate).toMatchObject({ kind: 'tool-call', callId: 'unknown-call' })
+    expect(malformedCall).toMatchObject({ kind: 'unknown', type: 'tool/call' })
+    expect(malformedResult).toMatchObject({ kind: 'unknown', type: 'tool/result' })
+    const projected = projector.state.tools.get(toolProjectionKey('main', 'unknown-call'))
+    expect(projected).toMatchObject({ name: 'literal-id-tool' })
+    expect(projected).not.toHaveProperty('result')
+    expect(projector.state.tools.size).toBe(1)
+    expect(projector.state.unknownEventCount).toBe(2)
   })
 })
 

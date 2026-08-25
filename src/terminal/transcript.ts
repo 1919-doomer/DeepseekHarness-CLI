@@ -354,6 +354,11 @@ function genericEventMutations(
         },
       }]
     }
+    case 'request-context':
+    case 'approval-asked':
+    case 'approval-decided':
+    case 'approval-policy':
+      return []
     case 'session-status':
     case 'user-message':
     case 'session-title':
