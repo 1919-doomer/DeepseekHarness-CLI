@@ -72,7 +72,7 @@ Current capabilities:
 - the shipped composition remains authoritative; `<workspace>/.dshc/cordis.patch.yml` is the only automatic workspace layer, and `/config` separates base, patch and effective requested configuration;
 - `scout` / `planner` / `reviewer` / `oracle` read-only role subagents alongside the general `subagent`, mounted on the upstream delegation seam rather than on a scheduler of our own — see [subagent roles](docs/SUBAGENT-ROLES.md);
 - `/config`, `/config fork`, `/model`, `/provider` and `/reload` for inspecting and patching composition, each stating the session loss before it acts;
-- `/plugin search` and `/plugin install` for `@deepseek-ai/` packages only, with exact named confirmation, trial initialization before live replacement and patch rollback on failure.
+- `/plugin search` and `/plugin install` for `@deepseek-ai/` packages only, with exact named confirmation, immutable candidate profiles, private-patch trial initialization and atomic workspace-patch promotion only after success.
 
 ## Source usage
 

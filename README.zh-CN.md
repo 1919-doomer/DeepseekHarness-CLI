@@ -52,7 +52,7 @@ cd repository
 - `vision` 使用 `deepseek-v4-flash-vision-exp` 检视图片；`web_search`、`web_fetch` 与只读 `researcher` 角色由 Harness seam 和 timeout policy 提供；
 - 工作区可通过 patch 启用 MCP server，`/tools` 和 activity 保留 `mcp__<server>__<tool>` 来源；
 - shipped composition 始终是基线，工作区只自动应用 `.dshc/cordis.patch.yml`；
-- `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认、先试启动，失败时回滚 patch；
+- `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认；在不可变 candidate profile 中用私有 patch 试启动，成功后才原子发布 workspace patch；
 - resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
 - first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
