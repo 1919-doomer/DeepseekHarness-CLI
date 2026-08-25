@@ -2,7 +2,7 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: M6 public alpha (`0.1.0-alpha.5`); M7.0–M7.3 are implemented in the current source tree.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
+**Status: M7 public alpha (`0.1.0-alpha.9`), delivering the protocol-independent M7.0–M7.3 slices.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
 
 [简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 history/context/permissions](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 

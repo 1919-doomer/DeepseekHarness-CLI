@@ -6,6 +6,13 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 ## Unreleased
 
+## 0.1.0-alpha.9 — 2026-08-25
+
+Ships the protocol-independent M7.0–M7.3 slices for trustworthy history,
+context, prompt and permissions inspection. M7.4 remains the explicit upstream
+compatibility gate for authoritative runtime inspection and interactive
+approval answering.
+
 ### Added
 
 - read-only, workspace-scoped Harness JSONL history browsing through the pinned

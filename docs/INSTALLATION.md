@@ -82,7 +82,7 @@ npm install --global @liaosiyuan123/dshc@alpha
 Pin an exact build when reproducibility matters:
 
 ```bash
-npm install --global @liaosiyuan123/dshc@0.1.0-alpha.5
+npm install --global @liaosiyuan123/dshc@0.1.0-alpha.9
 ```
 
 The first npm publication was required by npm to create a `latest` tag, so
