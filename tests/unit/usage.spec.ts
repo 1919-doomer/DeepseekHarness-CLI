@@ -111,14 +111,21 @@ describe('usage accumulation', () => {
       assistantMessage('child', { inputTokens: 90_000, outputTokens: 1 }),
     ])
     expect(usage.latestInputTokens).toBe(100)
+    expect(usage.latestOutputTokens).toBe(1)
   })
 
-  it('tracks the latest request rather than the largest', () => {
+  it('tracks total input for the latest request rather than uncached input alone', () => {
     const usage = fold([
       assistantMessage('main', { inputTokens: 5000, outputTokens: 1 }),
-      assistantMessage('main', { inputTokens: 200, outputTokens: 1 }),
+      assistantMessage('main', {
+        inputTokens: 200,
+        outputTokens: 1,
+        cacheReadTokens: 800,
+        cacheWriteTokens: 50,
+      }),
     ])
-    expect(usage.latestInputTokens).toBe(200)
+    expect(usage.latestInputTokens).toBe(1050)
+    expect(usage.latestCacheReadTokens).toBe(800)
   })
 })
 
@@ -127,13 +134,26 @@ describe('usage presentation', () => {
     expect(formatSessionUsage(initialSessionUsage())).toBeUndefined()
   })
 
-  it('reports absolute numbers and a cache ratio', () => {
+  it('reports total latest input and a bounded cache share', () => {
     const usage = accumulateUsage(
       initialSessionUsage(),
       assistantMessage('main', { inputTokens: 4267, outputTokens: 2100, cacheReadTokens: 384 }),
       'main',
     )
-    expect(formatSessionUsage(usage)).toBe('ctx 4.3K out 2.1K cache 9%')
+    expect(formatSessionUsage(usage)).toBe('ctx 4.7K out 2.1K cache 8%')
+    expect(describeSessionUsage(usage)).toContain('cumulative total input: 4,651')
+    expect(describeSessionUsage(usage)).toContain('cumulative uncached input: 4,267')
+  })
+
+  it('does not exceed 100% when cache reads dwarf uncached input', () => {
+    // Re-captured from the reported 9b359409 session. Harness reports these as
+    // disjoint counts; the previous cacheRead/input formula rendered 9,776%.
+    const usage = accumulateUsage(
+      initialSessionUsage(),
+      assistantMessage('main', { inputTokens: 127, outputTokens: 1169, cacheReadTokens: 12_416 }),
+      'main',
+    )
+    expect(formatSessionUsage(usage)).toBe('ctx 12.5K out 1.2K cache 99%')
   })
 
   it('never renders a percentage of a context window', () => {

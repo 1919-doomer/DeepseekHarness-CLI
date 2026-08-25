@@ -17,6 +17,9 @@ import { configurationPlugin } from './configuration.js'
 import { pluginManagementPlugin } from './plugin-management.js'
 import { TerminalPluginHost } from './host.js'
 import { cordisEventTags, cordisEventToolName, workbenchPlugin } from './workbench.js'
+import { insightsPlugin } from './insights.js'
+import type { HistoryWorkbench } from './history.js'
+import { capabilityMatrix } from '../capabilities.js'
 
 const TRACE_PAGE_SIZE = 15
 const TRACE_USAGE = [
@@ -36,9 +39,19 @@ export interface TraceQuery {
   value?: string
 }
 
-export function createDefaultTerminalHost(options: { devMode?: boolean } = {}): TerminalPluginHost {
+export function createDefaultTerminalHost(options: {
+  devMode?: boolean
+  history?: HistoryWorkbench
+  env?: NodeJS.ProcessEnv
+} = {}): TerminalPluginHost {
   const host = new TerminalPluginHost()
   host.register(corePlugin())
+  host.register(insightsPlugin({
+    devMode: options.devMode,
+    env: options.env,
+    historyReaderAvailable: options.history !== undefined,
+  }))
+  if (options.history !== undefined) host.register(options.history.plugin())
   host.register(codingActivityPlugin())
   if (options.devMode === true) host.register(workbenchPlugin())
   host.register(activityPlugin())
@@ -189,6 +202,13 @@ function renderCapabilities(context: TerminalViewContext): string {
   const plugins = context.plugins.map(plugin => `${plugin.id}@${plugin.version}`).join(', ') || 'none'
   const renderers = context.renderers.map(renderer => `${renderer.id}@${renderer.pluginId}`).join(', ') || 'generic safe fallback only'
   const defaultShell = process.platform === 'win32' ? 'pwsh' : 'bash'
+  const contextCapacityObserved = context.events.some(event => event.kind === 'request-context'
+    && event.sessionId === context.session.sessionId
+    && event.contextWindow !== undefined)
+  const matrix = capabilityMatrix({
+    historyReaderAvailable: context.commands.some(command => command.name === 'history'),
+    contextCapacityObserved,
+  })
   return [
     'Harness boundary',
     `- runtime: ${context.runtime.serverName}/${context.runtime.protocolVersion}`,
@@ -198,6 +218,9 @@ function renderCapabilities(context: TerminalViewContext): string {
     '- runtime plugin inventory: partial/unavailable on SDK protocol 0.0.1',
     '- prompt cancel: unavailable',
     '- per-session close: unavailable',
+    '',
+    'M7 capability matrix',
+    ...matrix.map(item => `- ${item.id}: ${item.availability} — ${item.detail}`),
     '',
     'Shipped default coding baseline: locally validated; not runtime discovery; overrides may differ',
     `- tools: ${VALIDATED_DEFAULT_CODING_TOOLS.filter(tool => tool !== 'bash' && tool !== 'pwsh').join(', ')}, ${defaultShell}`,
@@ -321,6 +344,10 @@ function eventSessionIds(event: NormalizedEvent): readonly string[] {
     case 'turn-error':
     case 'session-title':
     case 'context-compacted':
+    case 'request-context':
+    case 'approval-asked':
+    case 'approval-decided':
+    case 'approval-policy':
       return [event.sessionId]
     case 'subagent-started':
     case 'subagent-finished':
@@ -386,6 +413,10 @@ export function formatTraceEvent(
     case 'turn-error': return `${prefix} turn.error ${short(event.sessionId)} ${preview(event.message)}`
     case 'context-compacted': return `${prefix} context.compacted ${short(event.sessionId)} ${event.shadowedEvents} events${event.shadowedTokens === undefined ? '' : ` · ${event.shadowedTokens} tokens`} shadowed`
     case 'session-title': return `${prefix} session.title ${short(event.sessionId)}${event.source === undefined ? '' : ` ${sanitizeTerminalText(event.source)}`} ${preview(event.title)}`
+    case 'request-context': return `${prefix} request.context ${short(event.sessionId)} ${sanitizeTerminalText(event.provider)}/${sanitizeTerminalText(event.model)}${event.contextWindow === undefined ? '' : ` window=${event.contextWindow}`}`
+    case 'approval-asked': return `${prefix} approval.asked ${short(event.sessionId)} ${sanitizeTerminalText(event.toolName)} ${short(event.requestId)}`
+    case 'approval-decided': return `${prefix} approval.decided ${short(event.sessionId)} ${sanitizeTerminalText(event.outcome)} ${short(event.requestId)}`
+    case 'approval-policy': return `${prefix} approval.policy ${short(event.sessionId)} ${event.policy}${event.source === undefined ? '' : ` ${event.source}`}`
     case 'internal': return `${prefix} internal${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.type)}`
     case 'unknown': return `${prefix} unknown${event.sessionId === undefined ? '' : ` ${short(event.sessionId)}`} ${sanitizeTerminalText(event.method)}${event.type === undefined ? '' : `/${sanitizeTerminalText(event.type)}`}`
   }

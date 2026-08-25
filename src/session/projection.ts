@@ -19,10 +19,11 @@ export interface UpstreamEventEnvelope {
 /**
  * Token accounting one model request reported, exactly as upstream sends it.
  *
- * There is no context-window total here, and the protocol does not expose the
- * model catalog where `contextWindow` lives, so dshc cannot honestly render a
- * percentage. `inputTokens` of the latest request is the closest true statement
- * about how large the context currently is.
+ * Counts are disjoint: `inputTokens` is uncached input, with cache reads and
+ * writes reported separately. Capacity is not part of this usage object;
+ * `/context` correlates it only with a separately observed public
+ * `request/context.contextWindow` event. The sum of the latest request's input
+ * fields is the true request-input size even when no capacity was advertised.
  */
 export interface TokenUsage {
   inputTokens: number
@@ -51,6 +52,10 @@ export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'turn-error'; sessionId: string; message: string }
   | { sequence: number; kind: 'session-title'; sessionId: string; title: string; source?: string }
   | { sequence: number; kind: 'context-compacted'; sessionId: string; shadowedEvents: number; shadowedTokens?: number; summary: string }
+  | { sequence: number; kind: 'request-context'; sessionId: string; provider: string; model: string; contextWindow?: number }
+  | { sequence: number; kind: 'approval-asked'; sessionId: string; requestId: string; toolName: string; callId?: string; reason?: string }
+  | { sequence: number; kind: 'approval-decided'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' }
+  | { sequence: number; kind: 'approval-policy'; sessionId: string; policy: 'ask' | 'never'; source?: 'delegation' }
   | { sequence: number; kind: 'internal'; sessionId?: string; type: string }
   | { sequence: number; kind: 'unknown'; sessionId?: string; method: string; type?: string }
 )
@@ -206,6 +211,10 @@ export function reduceProjection(state: ProjectionState, event: NormalizedEvent)
     case 'user-message':
     case 'session-title':
     case 'context-compacted':
+    case 'request-context':
+    case 'approval-asked':
+    case 'approval-decided':
+    case 'approval-policy':
     case 'internal':
       return state
   }
@@ -345,11 +354,15 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
   }
 
   if (type === 'tool/call') {
+    const callId = stringField(data, 'callId')
+    if (callId === undefined) {
+      return { sequence, kind: 'unknown', sessionId, method: notification.method, type }
+    }
     return {
       sequence,
       kind: 'tool-call',
       sessionId,
-      callId: stringField(data, 'callId') ?? 'unknown-call',
+      callId,
       name: stringField(data, 'name') ?? 'unknown-tool',
       arguments: stringField(data, 'arguments') ?? '',
     }
@@ -360,15 +373,18 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     const error = data === undefined ? undefined : recordField(data, 'error')
     const result = extractToolResult(message)
     const metadata = readToolResultMetadata(recordField(data, 'meta'))
+    const callId = result.callId
+      ?? stringField(recordField(message, 'source'), 'callId')
+      ?? stringField(message, 'toolCallId')
+      ?? stringField(data, 'callId')
+    if (callId === undefined) {
+      return { sequence, kind: 'unknown', sessionId, method: notification.method, type }
+    }
     return {
       sequence,
       kind: 'tool-result',
       sessionId,
-      callId: result.callId
-        ?? stringField(recordField(message, 'source'), 'callId')
-        ?? stringField(message, 'toolCallId')
-        ?? stringField(data, 'callId')
-        ?? 'unknown-call',
+      callId,
       ...(stringField(data, 'name') === undefined ? {} : { name: stringField(data, 'name') }),
       ...(metadata === undefined ? {} : { metadata }),
       text: result.text,
@@ -407,6 +423,66 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     }
   }
 
+  if (type === 'request/context') {
+    const provider = stringField(data, 'provider')
+    const model = stringField(data, 'model')
+    if (provider !== undefined && model !== undefined) {
+      const contextWindow = positiveSafeIntegerField(data, 'contextWindow')
+      return {
+        sequence,
+        kind: 'request-context',
+        sessionId,
+        provider,
+        model,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+      }
+    }
+    return { sequence, kind: 'internal', sessionId, type }
+  }
+
+  if (type === 'approval/asked') {
+    const requestId = stringField(data, 'id')
+    const toolName = stringField(data, 'toolName')
+    if (requestId !== undefined && toolName !== undefined) {
+      const callId = stringField(data, 'callId')
+      const reason = stringField(data, 'reason')
+      return {
+        sequence,
+        kind: 'approval-asked',
+        sessionId,
+        requestId,
+        toolName,
+        ...(callId === undefined ? {} : { callId }),
+        ...(reason === undefined ? {} : { reason }),
+      }
+    }
+    return { sequence, kind: 'internal', sessionId, type }
+  }
+
+  if (type === 'approval/decided') {
+    const requestId = stringField(data, 'id')
+    const outcome = stringField(data, 'outcome')
+    if (requestId !== undefined && isApprovalOutcome(outcome)) {
+      return { sequence, kind: 'approval-decided', sessionId, requestId, outcome }
+    }
+    return { sequence, kind: 'internal', sessionId, type }
+  }
+
+  if (type === 'approval/policy') {
+    const policy = stringField(data, 'policy')
+    const source = stringField(data, 'source')
+    if (policy === 'ask' || policy === 'never') {
+      return {
+        sequence,
+        kind: 'approval-policy',
+        sessionId,
+        policy,
+        ...(source === 'delegation' ? { source } : {}),
+      }
+    }
+    return { sequence, kind: 'internal', sessionId, type }
+  }
+
   if (type === 'turn/end') {
     const reason = data === undefined ? undefined : recordField(data, 'reason')
     if (stringField(reason, 'kind') === 'error') {
@@ -421,7 +497,7 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     return { sequence, kind: 'internal', sessionId, type }
   }
 
-  if (type === 'compaction/start' || type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header' || type === 'request/context') {
+  if (type === 'compaction/start' || type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header') {
     return { sequence, kind: 'internal', sessionId, type }
   }
 
@@ -501,12 +577,12 @@ function extractContentText(value: unknown): string {
 /** Read usage, keeping only the fields upstream actually reported. */
 function readTokenUsage(source: Record<string, unknown> | undefined): TokenUsage | undefined {
   if (source === undefined) return undefined
-  const inputTokens = numberField(source, 'inputTokens')
-  const outputTokens = numberField(source, 'outputTokens')
+  const inputTokens = nonNegativeSafeIntegerField(source, 'inputTokens')
+  const outputTokens = nonNegativeSafeIntegerField(source, 'outputTokens')
   if (inputTokens === undefined && outputTokens === undefined) return undefined
 
   const optional = (name: string): Record<string, number> => {
-    const value = numberField(source, name)
+    const value = nonNegativeSafeIntegerField(source, name)
     return value === undefined ? {} : { [name]: value }
   }
   return {
@@ -521,6 +597,20 @@ function readTokenUsage(source: Record<string, unknown> | undefined): TokenUsage
 function numberField(value: Record<string, unknown> | undefined, key: string): number | undefined {
   const field = value?.[key]
   return typeof field === 'number' && Number.isFinite(field) ? field : undefined
+}
+
+function positiveSafeIntegerField(value: Record<string, unknown> | undefined, key: string): number | undefined {
+  const field = nonNegativeSafeIntegerField(value, key)
+  return field !== undefined && field > 0 ? field : undefined
+}
+
+function nonNegativeSafeIntegerField(value: Record<string, unknown> | undefined, key: string): number | undefined {
+  const field = value?.[key]
+  return typeof field === 'number' && Number.isSafeInteger(field) && field >= 0 ? field : undefined
+}
+
+function isApprovalOutcome(value: string | undefined): value is 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' {
+  return value === 'allowed-once' || value === 'rejected' || value === 'cancelled' || value === 'unavailable'
 }
 
 function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {

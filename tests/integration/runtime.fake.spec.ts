@@ -133,6 +133,35 @@ describe('HarnessRuntime fake-process integration', () => {
     }
   })
 
+  it('rejects concurrent same-session activity while preserving sequential and cross-session use', async () => {
+    const root = await workspace()
+    const promptLog = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, 'slow-receipt-turn', { DSHC_FAKE_LOG: promptLog })
+    try {
+      const first = runtime.run('first', { sessionId: 'shared' })
+      await waitFor(async () => (await promptSessions(promptLog)).length === 1)
+      await expect(runtime.run('overlap', { sessionId: 'shared' })).rejects.toThrow(
+        /already has an active request/i,
+      )
+      await expect(first).resolves.toMatchObject({ sessionId: 'shared', finalResponse: 'hello' })
+
+      await expect(runtime.run('sequential', { sessionId: 'shared' })).resolves.toMatchObject({
+        sessionId: 'shared',
+        finalResponse: 'hello',
+      })
+      await expect(Promise.all([
+        runtime.run('left', { sessionId: 'left' }),
+        runtime.run('right', { sessionId: 'right' }),
+      ])).resolves.toEqual([
+        expect.objectContaining({ sessionId: 'left', finalResponse: 'hello' }),
+        expect.objectContaining({ sessionId: 'right', finalResponse: 'hello' }),
+      ])
+      expect(await promptSessions(promptLog)).toEqual(['shared', 'shared', 'left', 'right'])
+    } finally {
+      await runtime.close()
+    }
+  })
+
   it('does not resurrect a child when close races a pending start', async () => {
     const root = await workspace()
     const lifecycleLog = join(root, 'lifecycle.jsonl')
@@ -180,6 +209,9 @@ describe('HarnessRuntime fake-process integration', () => {
       await expect(runtime.run('wait forever', { sessionId: 'main' })).rejects.toMatchObject({
         code: 'activity-timeout',
       })
+      await expect(runtime.run('unsafe reuse', { sessionId: 'main' })).rejects.toThrow(
+        /previous request ended without an observed idle state/i,
+      )
       await expect(runtime.run('wait forever', { sessionId: 'other', activityTimeoutMs: 80 })).rejects.toThrow(
         /no prompt-level cancel/i,
       )
@@ -270,6 +302,18 @@ async function lifecycleEvents(path: string): Promise<string[]> {
     return text.trim().length === 0
       ? []
       : text.trim().split('\n').map(line => (JSON.parse(line) as { event: string }).event)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function promptSessions(path: string): Promise<string[]> {
+  try {
+    const text = await readFile(path, 'utf8')
+    return text.trim().length === 0
+      ? []
+      : text.trim().split('\n').map(line => (JSON.parse(line) as { sessionId: string }).sessionId)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error

@@ -4,6 +4,41 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
+## Unreleased
+
+### Added
+
+- read-only, workspace-scoped Harness JSONL history browsing through the pinned
+  public `listSnapshots()` and `inspect()` APIs, with bounded in-memory
+  projections and per-session corruption diagnostics;
+- `/history` and review-first `/history ask`, which injects only explicitly
+  confirmed message sequences into a fresh ordinary Harness session and keeps
+  source session/sequence citations;
+- `/context`, `/prompt` and `/permissions` views that distinguish local
+  requested projections from runtime-observed facts and leave unsupported
+  runtime inspection and approval answering fail-closed;
+- `doctor` capability-matrix findings plus a matching interactive startup
+  warning when Windows `TEMP`/`TMP` is inside the workspace and prevents the
+  Harness shell sandbox from creating its external temporary root.
+
+### Fixed
+
+- calculate the terminal cache percentage from total disjoint Harness input
+  counts, keeping it bounded at 100%, and show the selected session's latest
+  total request input instead of only its uncached portion.
+- preserve the user's `TEMP`/`TMP` and the upstream sandbox policy while
+  explaining the Windows shell failure instead of reporting pwsh as generally
+  unavailable;
+- make plugin installation transactional across dependencies, lockfiles and
+  shims by trialing immutable candidate profiles before an atomic workspace
+  patch switch; failed upgrades leave the last cold-startable version active;
+- reject concurrent activity in one Harness session and quarantine a session
+  whose prior request ended without an observed idle boundary;
+- retain and drain every superseded Harness runtime, surfacing close failures
+  instead of losing ownership after repeated restarts;
+- classify tool calls/results without a real call ID as unknown events instead
+  of correlating unrelated activity through a fabricated `unknown-call` ID.
+
 ## 0.1.0-alpha.5 — 2026-08-24
 
 Completes the M6 Plugin Workbench persistence and regression slice.

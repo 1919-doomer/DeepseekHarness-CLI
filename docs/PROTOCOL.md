@@ -118,6 +118,14 @@ subscribe session tree
 
 The receipt does not identify a later assistant message. Steering, injected context, queued work, tools, or descendants may contribute before idle. UI wording must not imply a stronger one-request/one-response contract.
 
+Because completion is session-scoped, `HarnessRuntime.run()` enforces one
+in-flight activity per session id. Different sessions may run concurrently and
+a session may be reused after its root `idle` is observed. If an activity
+throws or times out after its prompt may have crossed the transport but before
+root `idle`, that session remains quarantined for the lifetime of the runtime:
+protocol `0.0.1` has no cancellation or later message-scoped completion signal
+that could prove reuse safe. Start a new session or restart the runtime instead.
+
 ## Persistent session semantics
 
 M2/M3 reuse one initialized `HarnessRuntime` and repeatedly call the same supported prompt path.

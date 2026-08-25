@@ -99,6 +99,8 @@ export class HarnessRuntime {
   private closeTask: Promise<void> | undefined
   private lifecycle: RuntimeLifecycleState = 'idle'
   private diagnosticEnv: NodeJS.ProcessEnv
+  private readonly activeSessions = new Set<string>()
+  private readonly indeterminateSessions = new Set<string>()
 
   constructor(private readonly options: HarnessRuntimeOptions = {}) {
     this.workspace = resolve(options.workspace ?? process.cwd())
@@ -139,80 +141,108 @@ export class HarnessRuntime {
     if (input.length === 0) {
       throw new DshcRuntimeError('Prompt must not be empty.', 'configuration')
     }
-    await this.start()
-    const client = this.client
-    if (client === undefined) throw new DshcRuntimeError('Harness runtime did not initialize a client.', 'runtime')
-
     const sessionId = options.sessionId ?? `session-${randomUUID().replaceAll('-', '')}`
     const activityTimeoutMs = positiveTimeout(
       options.activityTimeoutMs,
       this.defaultActivityTimeoutMs,
       'activityTimeoutMs',
     )
-    const subscription = client.subscribeSessionTree(sessionId)
-    const projector = new SessionProjector(sessionId)
-    let eventHistory = initialRetainedTail<NormalizedEvent>()
-    let notificationHistory = initialRetainedTail<HarnessNotification>()
+    if (this.activeSessions.has(sessionId)) {
+      throw new DshcRuntimeError(
+        `Session ${sessionId} already has an active request; protocol 0.0.1 cannot correlate concurrent same-session completion.`,
+        'runtime',
+      )
+    }
+    if (this.indeterminateSessions.has(sessionId)) {
+      throw new DshcRuntimeError(
+        `Session ${sessionId} cannot be reused because its previous request ended without an observed idle state; start a new session or restart the runtime.`,
+        'runtime',
+      )
+    }
 
+    // Completion is session-level idle, not message-level. Own this session
+    // before the first await so two callers cannot both cross startup and then
+    // subscribe/prompt concurrently.
+    this.activeSessions.add(sessionId)
+    let promptAttempted = false
+    let idleObserved = false
     try {
-      const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
-      let receiptObserved = false
-      let deadline = Date.now() + activityTimeoutMs
+      await this.start()
+      const client = this.client
+      if (client === undefined) throw new DshcRuntimeError('Harness runtime did not initialize a client.', 'runtime')
 
-      while (true) {
-        const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs)
-        if (!receiptObserved) {
-          if (!isInboxReceipt(notification, sessionId, messageId)) continue
-          receiptObserved = true
-          // `activityTimeoutMs` is documented as receipt-to-idle. Waiting for
-          // the durable receipt is bounded by the same value, then the activity
-          // receives a fresh full window once ownership is proven.
-          deadline = Date.now() + activityTimeoutMs
+      const subscription = client.subscribeSessionTree(sessionId)
+      const projector = new SessionProjector(sessionId)
+      let eventHistory = initialRetainedTail<NormalizedEvent>()
+      let notificationHistory = initialRetainedTail<HarnessNotification>()
+
+      try {
+        promptAttempted = true
+        const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
+        let receiptObserved = false
+        let deadline = Date.now() + activityTimeoutMs
+
+        while (true) {
+          const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs)
+          if (!receiptObserved) {
+            if (!isInboxReceipt(notification, sessionId, messageId)) continue
+            receiptObserved = true
+            // `activityTimeoutMs` is documented as receipt-to-idle. Waiting for
+            // the durable receipt is bounded by the same value, then the activity
+            // receives a fresh full window once ownership is proven.
+            deadline = Date.now() + activityTimeoutMs
+          }
+
+          const rootIdle = notification.method === 'session.status'
+            && notification.params.sessionId === sessionId
+            && notification.params.status === 'idle'
+          if (rootIdle) idleObserved = true
+
+          // Protocol processing and projection always see the complete value.
+          // Retention happens only after callbacks/projector have consumed it, so
+          // local memory budgets can never backpressure or truncate Harness truth.
+          options.onNotification?.(notification)
+          const event = projector.ingest(notification)
+          options.onEvent?.(event, notification)
+
+          notificationHistory = appendRetainedTail(
+            notificationHistory,
+            retainHarnessNotification(notification),
+            MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
+          )
+          eventHistory = appendRetainedTail(
+            eventHistory,
+            retainNormalizedEvent(event),
+            MAX_RETAINED_ACTIVITY_EVENTS,
+          )
+
+          if (rootIdle) break
         }
 
-        // Protocol processing and projection always see the complete value.
-        // Retention happens only after callbacks/projector have consumed it, so
-        // local memory budgets can never backpressure or truncate Harness truth.
-        options.onNotification?.(notification)
-        const event = projector.ingest(notification)
-        options.onEvent?.(event, notification)
-
-        notificationHistory = appendRetainedTail(
-          notificationHistory,
-          retainHarnessNotification(notification),
-          MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
-        )
-        eventHistory = appendRetainedTail(
-          eventHistory,
-          retainNormalizedEvent(event),
-          MAX_RETAINED_ACTIVITY_EVENTS,
-        )
-
-        if (
-          notification.method === 'session.status'
-          && notification.params.sessionId === sessionId
-          && notification.params.status === 'idle'
-        ) {
-          break
+        return {
+          sessionId,
+          messageId,
+          finalResponse: projector.state.lastAssistantMessage,
+          events: [...eventHistory.items],
+          eventCount: eventHistory.total,
+          droppedEventCount: eventHistory.dropped,
+          notifications: [...notificationHistory.items],
+          notificationCount: notificationHistory.total,
+          droppedNotificationCount: notificationHistory.dropped,
+          projection: projector.state,
         }
-      }
-
-      return {
-        sessionId,
-        messageId,
-        finalResponse: projector.state.lastAssistantMessage,
-        events: [...eventHistory.items],
-        eventCount: eventHistory.total,
-        droppedEventCount: eventHistory.dropped,
-        notifications: [...notificationHistory.items],
-        notificationCount: notificationHistory.total,
-        droppedNotificationCount: notificationHistory.dropped,
-        projection: projector.state,
+      } finally {
+        subscription.close()
       }
     } catch (error) {
+      // Once a prompt may have crossed the transport, an exception before the
+      // root idle boundary leaves upstream work un-cancellable and its eventual
+      // events unowned. Quarantine only that session; other sessions may still
+      // be used, and a whole-runtime restart provides the recovery boundary.
+      if (promptAttempted && !idleObserved) this.indeterminateSessions.add(sessionId)
       throw classifyRuntimeError(error, this.diagnosticEnv)
     } finally {
-      subscription.close()
+      this.activeSessions.delete(sessionId)
     }
   }
 

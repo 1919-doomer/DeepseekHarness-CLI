@@ -31,6 +31,8 @@ export type TerminalCommandOutcome =
   | { kind: 'fork-composition' }
   | { kind: 'plugin-search'; query: string }
   | { kind: 'plugin-install'; spec: string; confirmed: boolean }
+  /** First-party Ask History handoff; creates no history database or resumed session. */
+  | { kind: 'submit-prompt'; prompt: string; displayText: string; sourceSummary: string; newSession: true }
   /**
    * Restart the owned runtime with a different selection. Protocol 0.0.1 has no
    * way to reconfigure a live runtime, so this is the only mechanism, and it

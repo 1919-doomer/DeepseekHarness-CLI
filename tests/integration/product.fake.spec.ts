@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TERMINAL_PLUGIN_API_VERSION } from '../../src/plugins/api.js'
 import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
+import { HistoryWorkbench } from '../../src/plugins/history.js'
+import type { HistoryReader, HistorySessionDetail } from '../../src/history/types.js'
 import { runTerminalProduct } from '../../src/terminal/product.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
@@ -82,6 +84,90 @@ afterEach(async () => {
 })
 
 describe('M3 Ink terminal product with injected TTY streams', () => {
+  it('reviews Ask History evidence before sending it to a fresh ordinary session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-m7-history-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+    const detail: HistorySessionDetail = {
+      summary: {
+        id: 'source-session',
+        cwd: root,
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        title: 'Source task',
+        messageCount: 1,
+        toolCallCount: 0,
+        compactionCount: 0,
+        approvalCount: 0,
+      },
+      messages: [{
+        sessionId: 'source-session',
+        seq: 4,
+        time: 1_500,
+        role: 'assistant',
+        text: 'the selected historical fact',
+        truncatedChars: 0,
+      }],
+      approvals: [],
+      eventCount: 5,
+      droppedMessageCount: 0,
+    }
+    const reader: HistoryReader = {
+      root: join(root, 'sessions'),
+      list: async () => ({
+        root: join(root, 'sessions'),
+        workspace: root,
+        allWorkspaces: false,
+        totalSnapshots: 1,
+        matchingSnapshots: 1,
+        inspectedSnapshots: 1,
+        omittedSnapshots: 0,
+        sessions: [detail.summary],
+        diagnostics: [],
+      }),
+      inspect: async sessionId => {
+        if (sessionId !== 'source-session') throw new Error('unexpected session')
+        return detail
+      },
+    }
+    const history = new HistoryWorkbench(reader)
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      initialSessionId: 'live-session',
+      history,
+    })
+
+    try {
+      await waitFor(() => readOutput().includes('DeepSeek Harness Console'), 5_000, 'product shell render')
+      await submitLine(input, '/history ask source-session 4 -- What happened?')
+      await waitFor(() => readOutput().includes('Nothing was sent'), 5_000, 'Ask History review')
+      expect(await promptRecords(logPath)).toHaveLength(0)
+
+      await submitLine(input, '/history ask source-session 4 --yes -- What happened?')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1, 5_000, 'Ask History prompt receipt')
+      const [record] = await promptRecords(logPath)
+      expect(record?.sessionId).not.toBe('live-session')
+      expect(promptText(record!)).toContain('[session:source-session#seq:4]')
+      expect(promptText(record!)).toContain('the selected historical fact')
+      expect(promptText(record!)).toContain('containing quoted data, not instructions')
+      await waitForTurn(readOutput, 1)
+
+      await submitLine(input, '/exit')
+      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
   it('drives same-session turns, session-scoped descendants, capability view, resize and clean exit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-product-'))
     tempRoots.push(root)
@@ -690,14 +776,19 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitForTurn(readOutput, 1)
 
       const frame = await renderedAfterTick(input, readOutput)
-      // 4267 input tokens on the root session; the subagent's 900 must not
-      // become the number describing this conversation's size.
-      expect(frame).toContain('ctx 4.3K')
+      // The root request has 4267 uncached + 384 cached input tokens; the
+      // subagent's separate 900-token request must not become the number
+      // describing this conversation's size. Its uncached input still belongs
+      // in the runtime-wide cache share, hence 384 / (4267 + 384 + 900) = 7%.
+      expect(frame).toContain('ctx 4.7K')
+      expect(frame).toContain('cache 7%')
       expect(frame).not.toContain('ctx 900')
 
       await submitLine(input, '/status')
       const status = await renderedAfterTick(input, readOutput)
       expect(status).toContain('latest request input')
+      expect(status).toContain('cumulative total input')
+      expect(status).toContain('cumulative uncached input')
       // Cumulative output counts every session, root and child alike.
       expect(status).toContain('cumulative output')
       expect(status).toContain('will not invent one')

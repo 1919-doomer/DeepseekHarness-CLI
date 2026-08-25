@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { shellTempRootFacts, type DoctorFinding } from '../../src/cli/doctor.js'
+import { startupWarnings } from '../../src/cli/main.js'
 
 function run(
   workspace: string,
@@ -58,5 +59,13 @@ describe('shell sandbox temp-root preflight', () => {
   it('reports nothing on platforms without the Windows ACL sandbox rule', () => {
     expect(run('/home/someone', { TEMP: '/home/someone/tmp' }, 'linux')).toEqual([])
     expect(run('/Users/someone', { TEMP: '/Users/someone/tmp' }, 'darwin')).toEqual([])
+  })
+
+  it('explains the same failure before an interactive session starts without changing TEMP', () => {
+    const env = { TEMP: String.raw`C:\work\tmp` }
+    const warning = startupWarnings(String.raw`C:\work`, env, false, 'win32')
+    expect(warning).toContain('Windows shell unavailable in this workspace')
+    expect(warning).toContain('will not relocate TEMP or weaken the Harness sandbox')
+    expect(env.TEMP).toBe(String.raw`C:\work\tmp`)
   })
 })

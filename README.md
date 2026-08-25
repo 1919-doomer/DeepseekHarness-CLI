@@ -2,9 +2,9 @@
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: M6 public alpha (`0.1.0-alpha.5`). M1-M6 Plugin Workbench are complete.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
+**Status: M6 public alpha (`0.1.0-alpha.5`); M7.0–M7.3 are implemented in the current source tree.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`.
 
-[简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
+[简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 history/context/permissions](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Install the public alpha
 
@@ -64,6 +64,9 @@ Current capabilities:
 - `dshc doctor` compatibility/startup preflight that performs `initialize` only and never issues a model prompt;
 - trusted `dshc --dev` for interactive host-only Cordis prototypes, with an always-visible process-authority warning, official lifecycle tools only, `/workbench` observation and no dshc-owned runner;
 - `dshc doctor --dev` checks exact Cordis packages, developer patch order and initialize without credentials or dynamic execution;
+- read-only `/history` browsing over Harness-owned JSONL artifacts, scoped to the current workspace by default, plus review-first Ask History into a fresh session;
+- `/context`, `/prompt` and `/permissions` distinguish observed runtime facts, requested local projections and capability gaps without inventing a context window, final Prompt or approval answerer;
+- Windows workspace-local `TEMP`/`TMP` is diagnosed both by `doctor` and before interactive startup; dshc explains why every pwsh/shell call fails without relocating TEMP or weakening the sandbox;
 - M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
 - a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
 - the shipped composition remains authoritative; `<workspace>/.dshc/cordis.patch.yml` is the only automatic workspace layer, and `/config` separates base, patch and effective requested configuration;
@@ -106,6 +109,10 @@ Inside the TTY product:
 /config        base, patch and effective requested configuration
 /plugin        search/install restricted Harness plugins
 /workbench     observed Cordis lifecycle timeline (dev mode only)
+/history       read-only Harness session browser; `ask` requires review
+/context       observed request usage, capacity metadata and compaction
+/prompt        dshc-owned local prompt-layer projection
+/permissions   fail-closed policy, capability and approval audit view
 /exit          close the owned Harness runtime and exit
 ```
 
@@ -226,7 +233,8 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M6** — publish the staged Plugin Workbench alpha line and close #57 after real package acceptance;
+- **M7.4** — validate an official versioned extension/approval capability handshake if Harness publishes one;
+- **M7.5** — only then add exact final-Prompt inspection and interactive Allow-once/Reject controls;
 - **#16** — retain unpromoted capability candidates behind the admission test.
 
 ## License and affiliation
