@@ -1,4 +1,31 @@
+import { TESTED_DSH_BASELINE } from './upstream/compatibility.js'
+
 export type CapabilityAvailability = 'available' | 'unavailable' | 'requires-upstream'
+
+/**
+ * Audited public M7.4 boundary. These names are also compile-time checked
+ * against the root-exported HarnessSdkRequestMap/NotificationMap in the test
+ * suite and probed against the real pinned server wire. A future upstream
+ * version must land as a separate compatibility batch before this can change.
+ */
+export const M7_UPSTREAM_GATE = Object.freeze({
+  auditedAt: '2026-08-26',
+  sdkPackageVersion: TESTED_DSH_BASELINE.sdkVersion,
+  wireProtocolVersion: TESTED_DSH_BASELINE.protocolVersion,
+  clientRequestMethods: ['initialize', 'session/prompt', 'shutdown'] as const,
+  serverNotificationMethods: [
+    'session.event',
+    'session.status',
+    'subagent.started',
+    'subagent.finished',
+  ] as const,
+  versionedExtensionRouter: false,
+  capabilitiesHandshake: false,
+  approvalAnswerer: false,
+  contextCapacityHandshake: false,
+  assembledPromptInspection: false,
+  sessionResume: false,
+})
 
 export interface CapabilityEntry {
   id: 'history.reader' | 'bridge.protocol' | 'approval.answerer' | 'context.capacity' | 'prompt.runtime-inspection'
@@ -23,12 +50,12 @@ export function capabilityMatrix(options: CapabilityMatrixOptions): readonly Cap
     {
       id: 'bridge.protocol',
       availability: 'requires-upstream',
-      detail: 'Protocol 0.0.1 has a closed request router; dshc does not add private methods or fork the server.',
+      detail: `Audited ${M7_UPSTREAM_GATE.auditedAt}: protocol ${M7_UPSTREAM_GATE.wireProtocolVersion} has a closed request router; dshc does not add private methods or fork the server.`,
     },
     {
       id: 'approval.answerer',
       availability: 'requires-upstream',
-      detail: 'No server-to-client approval request flow or answerer handshake; policy remains fail-closed.',
+      detail: 'No server-to-client approval request flow or answerer handshake is exported; policy remains fail-closed.',
     },
     {
       id: 'context.capacity',

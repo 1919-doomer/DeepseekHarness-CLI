@@ -51,6 +51,66 @@ describe('official JSONL history reader', () => {
     expect((await reader.list({ workspace: resolve(root, 'current'), allWorkspaces: true })).sessions).toHaveLength(1)
   })
 
+  it('rebuilds its bounded in-memory catalog and never serves a stale durable index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-history-rebuild-'))
+    tempRoots.push(root)
+    const workspace = resolve(root, 'workspace')
+    const reader = new JsonlHistoryReader({ root, compression: 'none' })
+
+    await writeOfficialSession(root, workspace)
+    expect((await reader.list({ workspace })).sessions).toHaveLength(1)
+    await writeOfficialSession(root, workspace)
+    expect((await reader.list({ workspace })).sessions).toHaveLength(2)
+  })
+
+  it('keeps concurrent official appends isolated from read-only catalog rebuilds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-history-concurrent-'))
+    tempRoots.push(root)
+    const workspace = resolve(root, 'workspace')
+    const ctx = new Context()
+    const sessions = ctx.plugin(SessionStore)
+    await sessions
+    const persistence = ctx.plugin(JsonlSessionPersistence, {
+      root,
+      compression: 'none',
+      packChunks: false,
+      writeBatchMaxDelayMs: 10,
+    })
+    await persistence
+    try {
+      const session = ctx.sessions.create(SessionId('concurrent-history'), { meta: { cwd: workspace } })
+      appendCompletedTurn(session)
+      await ctx.parallel('session/flush', session)
+      const reader = new JsonlHistoryReader({ root, compression: 'none' })
+
+      const reads = Array.from({ length: 6 }, () => reader.list({ workspace }))
+      appendCompletedTurn(session, 2, 'appended while history was rebuilding', 'second historical answer')
+      const catalogs = await Promise.all([
+        ...reads,
+        ctx.parallel('session/flush', session).then(() => reader.list({ workspace })),
+      ])
+
+      expect(catalogs).toHaveLength(7)
+      expect(catalogs.every(catalog => catalog.sessions.length === 1)).toBe(true)
+      expect((await reader.inspect('concurrent-history')).messages.map(message => message.text)).toContain('appended while history was rebuilding')
+    } finally {
+      await persistence.dispose()
+      await sessions.dispose()
+    }
+  })
+
+  it('propagates cancellation instead of misreporting every session as corrupt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-history-abort-'))
+    tempRoots.push(root)
+    const workspace = resolve(root, 'workspace')
+    await writeOfficialSession(root, workspace)
+    const controller = new AbortController()
+    controller.abort(new Error('history-view-cancelled'))
+
+    await expect(new JsonlHistoryReader({ root, compression: 'none' }).list({ workspace }, controller.signal))
+      .rejects.toThrow(/history-view-cancelled|abort/i)
+  })
+
   it('degrades a corrupt session to metadata without mutating its bytes or hiding healthy rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-history-corrupt-'))
     tempRoots.push(root)
@@ -110,11 +170,16 @@ async function writeOfficialSession(root: string, workspace: string): Promise<{ 
   return { artifact, sessionId }
 }
 
-function appendCompletedTurn(session: Session): void {
-  session.append('turn/start', { turn: 1 })
-  session.append('step/start', { turn: 1, step: 1 })
+function appendCompletedTurn(
+  session: Session,
+  turn = 1,
+  question = 'historical question',
+  answer = 'historical answer',
+): void {
+  session.append('turn/start', { turn })
+  session.append('step/start', { turn, step: 1 })
   session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: 'historical question' }],
+    content: [{ type: 'text', text: question }],
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   session.append('request/header', {
@@ -127,16 +192,16 @@ function appendCompletedTurn(session: Session): void {
     contextWindow: 8_192,
   })
   session.append('assistant/message', {
-    turn: 1,
+    turn,
     step: 1,
     message: createAssistantMessage({
-      content: [{ type: 'text', text: 'historical answer' }],
+      content: [{ type: 'text', text: answer }],
       source: { provider: 'test-provider', model: 'test-model' },
     }),
     usage: { inputTokens: 50, outputTokens: 4, cacheReadTokens: 100 },
   }, { surfaceOp: 'append' })
-  session.append('step/end', { turn: 1, step: 1 })
-  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  session.append('step/end', { turn, step: 1 })
+  session.append('turn/end', { turn, reason: { kind: 'completed' } })
 }
 
 async function sha256(path: string): Promise<string> {

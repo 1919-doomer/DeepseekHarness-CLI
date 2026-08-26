@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { capabilityMatrix } from '../../src/capabilities.js'
-import { contextPercentage, projectContextInsights, renderContext, renderPermissions, renderPrompt } from '../../src/plugins/insights.js'
+import { contextPercentage, projectApprovalAudit, projectContextInsights, renderContext, renderPermissions, renderPrompt } from '../../src/plugins/insights.js'
 import type { TerminalViewContext } from '../../src/plugins/api.js'
 
 function viewContext(overrides: Partial<TerminalViewContext> = {}): TerminalViewContext {
@@ -72,5 +72,31 @@ describe('M7 context and prompt projections', () => {
     expect(rendered).toContain('answerer: unavailable · fail-closed')
     expect(rendered).not.toContain('session-wide allow')
     expect(capabilityMatrix({ historyReaderAvailable: false }).find(item => item.id === 'approval.answerer')?.availability).toBe('requires-upstream')
+  })
+
+  it('does not let replayed, duplicate, orphan or cross-session audit events manufacture a grant', () => {
+    const events = [
+      { sequence: 1, kind: 'approval-asked', sessionId: 'main', requestId: 'a1', toolName: 'pwsh' },
+      { sequence: 2, kind: 'approval-decided', sessionId: 'other', requestId: 'a1', outcome: 'allowed-once' },
+      { sequence: 3, kind: 'approval-decided', sessionId: 'main', requestId: 'a1', outcome: 'rejected' },
+      { sequence: 4, kind: 'approval-decided', sessionId: 'main', requestId: 'a1', outcome: 'allowed-once' },
+      { sequence: 5, kind: 'approval-decided', sessionId: 'main', requestId: 'orphan', outcome: 'allowed-once' },
+      { sequence: 6, kind: 'approval-asked', sessionId: 'main', requestId: 'pending', toolName: 'bash' },
+      { sequence: 7, kind: 'approval-asked', sessionId: 'main', requestId: 'pending', toolName: 'bash' },
+    ] as const
+    const mainEvents = events.filter(event => event.sessionId === 'main')
+    const audit = projectApprovalAudit(mainEvents)
+    expect(audit.decisions.get('a1')?.outcome).toBe('rejected')
+    expect(audit.decisions.has('orphan')).toBe(false)
+    expect(audit.pendingCount).toBe(1)
+    expect(audit.anomalies).toHaveLength(3)
+
+    const rendered = renderPermissions(viewContext({ events }))
+    expect(rendered).toContain('3 asked · 3 decided · 1 pending')
+    expect(rendered).toContain('audit anomalies: 3')
+    expect(rendered).toContain('duplicate decision a1')
+    expect(rendered).toContain('decision without observed ask orphan')
+    expect(rendered).toContain('replayed ask pending')
+    expect(rendered).toContain('a1 · pwsh · rejected')
   })
 })

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { HistoryMessage, HistorySessionDetail } from './types.js'
 
@@ -69,6 +70,26 @@ export function buildHistoryAskPrompt(selection: HistoryAskSelection): string {
     '',
     ...sources,
   ].join('\n')
+}
+
+/**
+ * Bind confirmation to the exact prompt-bearing evidence that was reviewed.
+ * The digest is local control state, not a durable history index or an
+ * authentication primitive. It closes the review/confirm TOCTOU window when a
+ * Harness JSONL artifact is appended or replaced between the two commands.
+ */
+export function fingerprintHistoryAskSelection(selection: HistoryAskSelection): string {
+  const promptBearingValue = {
+    question: selection.question,
+    messages: selection.messages.map(message => ({
+      sessionId: message.sessionId,
+      seq: message.seq,
+      time: message.time,
+      role: message.role,
+      text: message.text,
+    })),
+  }
+  return createHash('sha256').update(JSON.stringify(promptBearingValue)).digest('hex')
 }
 
 export function renderHistoryAskReview(selection: HistoryAskSelection): string {

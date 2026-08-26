@@ -46,6 +46,7 @@
     "docs/EXTENSIONS.md",
     "docs/PLUGIN-WORKBENCH.md",
     "docs/HISTORY-CONTEXT-PERMISSIONS.md",
+    "docs/UPSTREAM-SDK-EXTENSIONS-PROPOSAL.md",
     "docs/assets/dshc-alpha.svg",
     "LICENSE"
   ],
@@ -59,8 +60,8 @@
     "dev": "tsx src/cli/bin.ts",
     "lint": "oxlint src tests scripts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --exclude tests/integration/official-runtime.spec.ts --exclude tests/integration/official-interactive.spec.ts --exclude tests/integration/official-repository-workflow.spec.ts --exclude tests/integration/official-sandbox-policy.spec.ts --exclude tests/integration/official-doctor.spec.ts --exclude tests/integration/official-event-contract.spec.ts --exclude tests/integration/official-cordis-workbench.spec.ts",
-    "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts tests/integration/official-repository-workflow.spec.ts tests/integration/official-sandbox-policy.spec.ts tests/integration/official-doctor.spec.ts tests/integration/official-event-contract.spec.ts tests/integration/official-cordis-workbench.spec.ts",
+    "test": "vitest run --exclude tests/integration/official-runtime.spec.ts --exclude tests/integration/official-interactive.spec.ts --exclude tests/integration/official-repository-workflow.spec.ts --exclude tests/integration/official-sandbox-policy.spec.ts --exclude tests/integration/official-doctor.spec.ts --exclude tests/integration/official-event-contract.spec.ts --exclude tests/integration/official-cordis-workbench.spec.ts --exclude tests/integration/official-m7-upstream-gate.spec.ts",
+    "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts tests/integration/official-repository-workflow.spec.ts tests/integration/official-sandbox-policy.spec.ts tests/integration/official-doctor.spec.ts tests/integration/official-event-contract.spec.ts tests/integration/official-cordis-workbench.spec.ts tests/integration/official-m7-upstream-gate.spec.ts",
     "test:all": "pnpm build && vitest run",
     "test:package": "node scripts/package-smoke.mjs",
     "pack:check": "node scripts/check-package.mjs",

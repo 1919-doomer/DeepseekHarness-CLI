@@ -214,8 +214,9 @@ Terminal user
 
 ## 下一阶段
 
-- **M7.4**：仅在 Harness 发布正式版本化扩展/approval 能力握手后进行兼容验证；
-- **M7.5**：通过门禁后再实现完整运行时 Prompt 检查和 Allow once/Reject 交互；
+- **M7.4**：已于 2026-08-26 复核；固定的官方 wire 仍无版本化扩展/approval 能力握手，闭合 SDK 路由对真实命名空间探测返回 `-32603` 与明确的 unknown-runtime-method 诊断；
+- **M7.5**：继续标记为 `requires-upstream`，不伪造完整运行时 Prompt 检查或 Allow once/Reject 交互；
+- **M7.6**：加固 Ask History 审阅绑定、取消/并发 JSONL 读取，以及 approval audit 的重放、重复和跨会话诊断；
 - **#16**：其余候选能力继续执行准入制。
 
 ## License 与关系说明

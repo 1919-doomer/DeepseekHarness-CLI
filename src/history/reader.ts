@@ -51,6 +51,11 @@ export class JsonlHistoryReader implements HistoryReader {
           const inspection = await backend.inspect(snapshot.header.id, signal)
           detail = projectHistorySession(inspection.meta, inspection.events)
         } catch (error) {
+          // Cancellation is lifecycle control (Ctrl+C/EOF/view replacement),
+          // never evidence that a durable session is corrupt. Preserve it so
+          // callers can stop promptly and do not render hundreds of false
+          // metadata-only diagnostics after an abort.
+          if (isAbort(error, signal)) throw error
           const message = `Session ${String(snapshot.header.id)} could not be inspected: ${errorMessage(error)}`
           diagnostics.push(message)
           detail = {
@@ -168,4 +173,10 @@ async function mapLimit<T, R>(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
+  if (signal?.aborted === true) return true
+  if (!(error instanceof Error)) return false
+  return error.name === 'AbortError' || (error as NodeJS.ErrnoException).code === 'ABORT_ERR'
 }

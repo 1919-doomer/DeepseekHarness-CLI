@@ -1,5 +1,6 @@
 import {
   buildHistoryAskPrompt,
+  fingerprintHistoryAskSelection,
   parseHistorySeqs,
   renderHistoryAskReview,
   selectHistoryEvidence,
@@ -40,6 +41,7 @@ type HistoryViewState =
  * while third-party views remain render-only and compatible.
  */
 export class HistoryWorkbench {
+  private pendingAskFingerprint: string | undefined
   private state: HistoryViewState = {
     kind: 'empty',
     message: 'Run /history to load the read-only Harness session catalog.',
@@ -182,17 +184,28 @@ export class HistoryWorkbench {
     assertHistoryScope(detail, workspace, crossWorkspace)
     const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question)
     const review = renderHistoryAskReview(selection)
+    const fingerprint = fingerprintHistoryAskSelection(selection)
     if (!confirmed) {
+      this.pendingAskFingerprint = fingerprint
       return {
         kind: 'message',
         title: 'Ask History review',
         text: [
           review,
+          `review fingerprint: ${fingerprint.slice(0, 16)}`,
           '',
           'Nothing was sent. Re-run the same command with --yes before -- after reviewing the source list.',
         ].join('\n'),
       }
     }
+    if (this.pendingAskFingerprint === undefined) {
+      throw new Error('Ask History confirmation requires a review in this terminal process; run the same command without --yes first')
+    }
+    if (this.pendingAskFingerprint !== fingerprint) {
+      this.pendingAskFingerprint = undefined
+      throw new Error('Ask History evidence changed after review; nothing was sent. Review the current evidence again before confirming')
+    }
+    this.pendingAskFingerprint = undefined
     return {
       kind: 'submit-prompt',
       prompt: buildHistoryAskPrompt(selection),

@@ -191,7 +191,7 @@ export async function runTerminalProduct(
     process.once('SIGTERM', onTerm)
     stdin.once('end', onEof)
 
-    instance = render(
+    const current = render(
       <TerminalProductApp
         runtimeRef={runtimeRef}
         trackRuntimeClose={runtime => runtimeClosures.track(runtime)}
@@ -219,12 +219,17 @@ export async function runTerminalProduct(
         patchConsole: false,
       },
     )
+    instance = current
+    // Register Ink's exit promise while the instance is definitely mounted.
+    // Waiting until after the UI invokes exit() causes Ink to attach a new
+    // beforeExit listener to an already-unmounted instance, where it can never
+    // be removed.
+    const exited = current.waitUntilExit().catch(() => undefined)
 
     const result = await finished
-    const current = instance
     instance = undefined
     current.unmount()
-    await current.waitUntilExit().catch(() => undefined)
+    await exited
     return result
   } finally {
     process.off('SIGINT', onInt)

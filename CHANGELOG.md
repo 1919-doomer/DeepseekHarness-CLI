@@ -6,6 +6,27 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 ## Unreleased
 
+### Added
+
+- an executable M7.4 compatibility gate that compile-time checks the published
+  SDK request/notification maps and probes the real official server's closed
+  namespaced extension router before any M7.5 capability can be claimed;
+- a public DeepSeek Harness proposal for versioned SDK capabilities and typed
+  server-to-client requests, tracked in upstream discussion #4583;
+- M7.6 approval-audit anomaly projection for replayed asks, orphan/late or
+  duplicate decisions and cross-session routing isolation.
+
+### Fixed
+
+- require Ask History review before confirmation and bind it to the exact
+  prompt-bearing evidence so concurrent JSONL changes invalidate consent and
+  send nothing;
+- propagate history cancellation instead of misreporting aborted inspections
+  as damaged sessions, and cover bounded index rebuilds during official JSONL
+  appends;
+- register Ink exit observation before unmount, preventing one leaked process
+  `beforeExit` listener after every completed terminal run.
+
 ## 0.1.0-alpha.9 — 2026-08-25
 
 Ships the protocol-independent M7.0–M7.3 slices for trustworthy history,
