@@ -161,13 +161,13 @@
     "react": "19.2.8"
   },
   "devDependencies": {
-    "@modelcontextprotocol/server-everything": "2026.7.4",
+    "@modelcontextprotocol/server-everything": "2026.8.18",
     "@types/js-yaml": "4.0.9",
     "@types/node": "22.20.0",
     "@types/react": "19.2.18",
-    "oxlint": "1.76.0",
-    "tsx": "4.22.4",
+    "oxlint": "1.79.0",
+    "tsx": "4.23.12",
     "typescript": "6.0.3",
-    "vitest": "4.1.8"
+    "vitest": "4.1.11"
   }
 }
