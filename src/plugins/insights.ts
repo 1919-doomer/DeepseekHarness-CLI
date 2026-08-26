@@ -23,6 +23,15 @@ export interface InsightsPluginOptions {
   historyReaderAvailable?: boolean
 }
 
+type ApprovalAskedEvent = Extract<NormalizedEvent, { kind: 'approval-asked' }>
+type ApprovalDecidedEvent = Extract<NormalizedEvent, { kind: 'approval-decided' }>
+
+export interface ApprovalAuditProjection {
+  readonly decisions: ReadonlyMap<string, ApprovalDecidedEvent>
+  readonly pendingCount: number
+  readonly anomalies: readonly string[]
+}
+
 export function insightsPlugin(options: InsightsPluginOptions = {}): TerminalPluginSpec {
   return {
     id: 'dshc.insights',
@@ -149,7 +158,7 @@ export function renderPermissions(context: TerminalViewContext): string {
   const policyEvent = latest(events, 'approval-policy')
   const asked = events.filter(event => event.kind === 'approval-asked')
   const decided = events.filter(event => event.kind === 'approval-decided')
-  const decisions = new Map(decided.map(event => event.kind === 'approval-decided' ? [event.requestId, event] : ['', event]))
+  const audit = projectApprovalAudit(events)
   const matrix = capabilityMatrix({
     historyReaderAvailable: context.commands.some(command => command.name === 'history'),
     contextCapacityObserved: latest(events, 'request-context')?.contextWindow !== undefined,
@@ -165,15 +174,63 @@ export function renderPermissions(context: TerminalViewContext): string {
     'Capability matrix',
     ...matrix.map(item => `- ${item.id}: ${item.availability} — ${item.detail}`),
     '',
-    `retained approval audit: ${asked.length} asked · ${decided.length} decided`,
+    `retained approval audit: ${asked.length} asked · ${decided.length} decided · ${audit.pendingCount} pending`,
+    ...(audit.anomalies.length === 0
+      ? []
+      : [
+          `audit anomalies: ${audit.anomalies.length} (observed only; never treated as authorization)`,
+          ...audit.anomalies.slice(-5).map(item => `- ${item}`),
+        ]),
     ...asked.slice(-10).map(event => {
       if (event.kind !== 'approval-asked') return ''
-      const decision = decisions.get(event.requestId)
+      const decision = audit.decisions.get(event.requestId)
       return `- ${short(event.requestId)} · ${sanitizeTerminalText(event.toolName)}${event.callId === undefined ? '' : ` · call ${short(event.callId)}`} · ${decision?.kind === 'approval-decided' ? decision.outcome : 'pending/unobserved'}`
     }),
     '',
     'Policy switching and Allow once/Reject controls require a supported upstream answerer handshake; no private bridge is installed.',
   ].join('\n')
+}
+
+/**
+ * Fold the retained audit as an append-only log. Only the first decision after
+ * an observed ask is correlated. Replayed asks, orphan/late decisions and
+ * duplicate answers stay visible as anomalies and cannot overwrite a prior
+ * outcome or manufacture a grant.
+ */
+export function projectApprovalAudit(events: readonly NormalizedEvent[]): ApprovalAuditProjection {
+  const states = new Map<string, { asked?: ApprovalAskedEvent; decision?: ApprovalDecidedEvent }>()
+  const anomalies: string[] = []
+  for (const event of events) {
+    if (event.kind === 'approval-asked') {
+      const state = states.get(event.requestId) ?? {}
+      if (state.asked !== undefined) {
+        anomalies.push(`replayed ask ${short(event.requestId)} at event ${event.sequence}`)
+      } else {
+        state.asked = event
+      }
+      states.set(event.requestId, state)
+      continue
+    }
+    if (event.kind !== 'approval-decided') continue
+    const state = states.get(event.requestId)
+    if (state?.asked === undefined) {
+      anomalies.push(`decision without observed ask ${short(event.requestId)} at event ${event.sequence}`)
+      continue
+    }
+    if (state.decision !== undefined) {
+      anomalies.push(`duplicate decision ${short(event.requestId)} at event ${event.sequence}`)
+      continue
+    }
+    state.decision = event
+  }
+  const decisions = new Map<string, ApprovalDecidedEvent>()
+  let pendingCount = 0
+  for (const [requestId, state] of states) {
+    if (state.asked === undefined) continue
+    if (state.decision === undefined) pendingCount += 1
+    else decisions.set(requestId, state.decision)
+  }
+  return { decisions, pendingCount, anomalies }
 }
 
 export function contextPercentage(inputTokens: number, contextWindow: number): number {

@@ -157,12 +157,16 @@ The source tree now contains the protocol-independent M7.0–M7.3 slices:
   runtime/observed and unavailable facts explicitly;
 - durable approval audit projection while the shipped policy remains `never`.
 
-M7.4 is a deliberate upstream compatibility gate. Protocol `0.0.1` has no
-versioned extension router, approval answerer handshake or authoritative final
-prompt inspection. Consequently the exact M7.5 permission controls and complete
-runtime Prompt inspection remain `requires-upstream`: this repository does not
-replace the official server, import private subpaths or add a private side
-protocol. See
+M7.4 was re-audited on 2026-08-26 against the published root types and real
+official server wire. Protocol `0.0.1` still has no versioned extension router,
+approval answerer handshake or authoritative final prompt inspection, and the
+namespaced capability probe returns JSON-RPC `-32603` with the server's explicit
+`unknown DeepSeek Harness SDK runtime method` diagnostic. Consequently the exact
+M7.5 permission controls and complete runtime Prompt inspection remain
+`requires-upstream`: this repository does not replace the official server,
+import private subpaths or add a private side protocol. M7.6 independently
+hardens review/confirmation binding, cancellation, concurrent history rebuilds
+and approval-audit anomaly handling. See
 [HISTORY-CONTEXT-PERMISSIONS.md](HISTORY-CONTEXT-PERMISSIONS.md).
 
 ## Post-M6 candidate pool — #16

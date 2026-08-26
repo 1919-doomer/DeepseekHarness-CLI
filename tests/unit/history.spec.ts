@@ -167,4 +167,54 @@ describe('read-only history projection', () => {
     expect(queries.at(-1)?.text).toBe('2026-08 model')
     expect(workbench.render()).toContain('focus=list')
   })
+
+  it('requires review and binds confirmation to unchanged evidence', async () => {
+    let detail = projectHistorySession(header, [
+      event(4, 'assistant/message', {
+        message: {
+          role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' },
+          content: [{ type: 'text', text: 'reviewed value' }],
+        },
+      }),
+    ])
+    const reader: HistoryReader = {
+      root: 'C:\\sessions',
+      list: async query => ({
+        root: 'C:\\sessions', workspace: query.workspace, allWorkspaces: false,
+        totalSnapshots: 1, matchingSnapshots: 1, inspectedSnapshots: 1, omittedSnapshots: 0,
+        sessions: [detail.summary], diagnostics: [],
+      }),
+      inspect: async () => detail,
+    }
+    const command = new HistoryWorkbench(reader).plugin().commands?.[0]
+    if (command === undefined) throw new Error('history command missing')
+    const context = {
+      runtime: { workspace: 'C:\\workspace', provider: 'p', model: 'm', serverName: 's', protocolVersion: '0.0.1' },
+      session: { sessionId: 'live', turnCount: 0, generation: 0 },
+      phase: 'idle' as const,
+      totalTurns: 0,
+    }
+
+    await expect(command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?']))
+      .rejects.toThrow(/requires a review/i)
+    const review = await command.execute(context, ['ask', 'history-session', '4', '--', 'What?'])
+    expect(review).toMatchObject({ kind: 'message', title: 'Ask History review' })
+    expect(review.kind === 'message' ? review.text : '').toContain('review fingerprint:')
+
+    detail = projectHistorySession(header, [
+      event(4, 'assistant/message', {
+        message: {
+          role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' },
+          content: [{ type: 'text', text: 'changed after review' }],
+        },
+      }),
+    ])
+    await expect(command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?']))
+      .rejects.toThrow(/evidence changed/i)
+
+    await command.execute(context, ['ask', 'history-session', '4', '--', 'What?'])
+    const confirmed = await command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?'])
+    expect(confirmed).toMatchObject({ kind: 'submit-prompt', newSession: true })
+    expect(confirmed.kind === 'submit-prompt' ? confirmed.prompt : '').toContain('changed after review')
+  })
 })

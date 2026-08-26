@@ -233,8 +233,9 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 
 ## Next milestones
 
-- **M7.4** — validate an official versioned extension/approval capability handshake if Harness publishes one;
-- **M7.5** — only then add exact final-Prompt inspection and interactive Allow-once/Reject controls;
+- **M7.4** — re-audited on 2026-08-26: the pinned official wire still has no versioned extension/approval capability handshake, and its closed SDK router rejects a real namespaced probe with `-32603` plus an explicit unknown-runtime-method diagnostic;
+- **M7.5** — remains `requires-upstream`; exact final-Prompt inspection and interactive Allow-once/Reject controls are not fabricated;
+- **M7.6** — hardens Ask History review binding, cancellation/concurrent JSONL reads and approval-audit replay/duplicate/cross-session diagnostics;
 - **#16** — retain unpromoted capability candidates behind the admission test.
 
 ## License and affiliation

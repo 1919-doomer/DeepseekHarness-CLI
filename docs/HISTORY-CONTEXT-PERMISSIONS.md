@@ -92,6 +92,54 @@ versioned and capability-negotiated Harness extension. Until that exists, dshc
 does not fork the SDK server, import private subpaths, parse prose into protocol
 facts or create a named-pipe side protocol.
 
+### M7.4 audit — 2026-08-26
+
+The compatibility gate was re-run against the public
+`@deepseek-ai/dsh-sdk-protocol@0.1.1-rc.2` root exports and a real pinned
+`deepseek-harness-sdk-runtime` child:
+
+- `InitializeResult` contains only `serverInfo`; there is no capabilities
+  handshake;
+- the complete client request map remains `initialize`, `session/prompt` and
+  `shutdown`;
+- the complete server notification map remains `session.event`,
+  `session.status`, `subagent.started` and `subagent.finished`;
+- the initialized wire identity remains `0.0.1`;
+- a namespaced `dshc/capabilities` probe returns JSON-RPC `-32603` with the
+  server's explicit `unknown DeepSeek Harness SDK runtime method` diagnostic;
+- no server-to-client request is emitted during initialize/shutdown, and the
+  official protocol documentation still describes that direction as a future
+  approval capability rather than a served contract.
+
+The Harness in-process approval service and system-prompt assembly APIs are
+public Cordis plugin seams, but dshc runs out of process through the SDK wire.
+They do not authorize a client to import server internals or attach a
+process-global answerer. M7.5 therefore remains `requires-upstream` instead of
+being simulated through a private route.
+
+The concrete downstream contract request is recorded in
+[UPSTREAM-SDK-EXTENSIONS-PROPOSAL.md](UPSTREAM-SDK-EXTENSIONS-PROPOSAL.md).
+
+## M7.6 hardening
+
+- Ask History confirmation is mandatory and bound to a fingerprint of the
+  exact prompt-bearing evidence and question reviewed in the current terminal
+  process. A concurrent append/replacement invalidates the review and sends
+  nothing until the new evidence is reviewed.
+- Ctrl+C/abort propagates out of JSONL inspection instead of degrading every
+  cancelled row into a false corruption diagnostic.
+- Catalog rebuilds are tested against concurrent official JSONL appends and do
+  not introduce a durable secondary index.
+- Permission audit folding accepts only the first decision that follows an
+  observed ask. Replayed asks, orphan/late decisions, duplicate decisions and
+  cross-session events remain visible diagnostics and never become authority.
+- The real-runtime M7.4 closed-router probe is part of the blocking official
+  test suite, so an upstream wire change fails compatibility before dshc claims
+  support.
+- Terminal exit observation is registered before Ink can unmount. Repeated
+  `/exit`, Ctrl+C and EOF lifecycles no longer accumulate process `beforeExit`
+  listeners.
+
 The interaction research borrowed only broad product concepts from free-code
 (history picker/search/actions, token budget/compaction reminders, prompt dump
 and shell-risk explanations). No free-code source, text or assets are copied,

@@ -136,6 +136,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       },
     }
     const history = new HistoryWorkbench(reader)
+    const beforeExitListeners = process.listenerCount('beforeExit')
     const product = runTerminalProduct(runtime, {
       stdin: input as unknown as NodeJS.ReadStream,
       stdout: output as unknown as NodeJS.WriteStream,
@@ -162,6 +163,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
       await submitLine(input, '/exit')
       await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
+      expect(process.listenerCount('beforeExit')).toBe(beforeExitListeners)
     } finally {
       input.end()
       await runtime.close()

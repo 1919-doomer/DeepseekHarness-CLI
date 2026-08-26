@@ -1,6 +1,7 @@
 import { constants, realpathSync } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { resolve, win32 } from 'node:path'
+import { M7_UPSTREAM_GATE } from '../capabilities.js'
 import {
   MAX_RETAINED_ACTIVITY_EVENTS,
   MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
@@ -167,13 +168,14 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       id: 'bridge.protocol',
       status: 'UNKNOWN',
       category: 'capability',
-      summary: 'Requires an upstream versioned request-routing extension; dshc does not fork the official JSON-RPC server or add private methods.',
+      summary: `requires-upstream: pinned SDK ${M7_UPSTREAM_GATE.sdkPackageVersion} / wire ${M7_UPSTREAM_GATE.wireProtocolVersion} exposes no versioned request-routing extension.`,
+      detail: `Audited ${M7_UPSTREAM_GATE.auditedAt}; public requests: ${M7_UPSTREAM_GATE.clientRequestMethods.join(', ')}.`,
     },
     {
       id: 'approval.answerer',
       status: 'UNKNOWN',
       category: 'capability',
-      summary: 'Unavailable on protocol 0.0.1; approval remains fail-closed with shipped policy never.',
+      summary: `requires-upstream: unavailable on protocol ${M7_UPSTREAM_GATE.wireProtocolVersion}; approval remains fail-closed with shipped policy never.`,
     },
     {
       id: 'context.capacity',
@@ -185,7 +187,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       id: 'prompt.runtime-inspection',
       status: 'UNKNOWN',
       category: 'capability',
-      summary: 'Final assembled prompt sections and tool schemas are not published by the current transport; only dshc local requested layers can be inspected.',
+      summary: 'requires-upstream: final assembled prompt sections and tool schemas are not published by the current transport; only dshc local requested layers can be inspected.',
     },
   )
 
