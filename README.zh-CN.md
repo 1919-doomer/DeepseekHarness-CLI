@@ -2,7 +2,7 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：M7 public alpha（`0.1.0-alpha.9`），已交付不依赖上游扩展的 M7.0–M7.3。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
+**当前状态：M7 public alpha（`0.1.0-alpha.10`），已交付不依赖上游扩展的 M7.0–M7.3、M7.4 兼容门禁与 M7.6 加固。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
 
 [English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 历史/上下文/权限](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 

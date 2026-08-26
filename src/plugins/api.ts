@@ -49,7 +49,11 @@ export interface TerminalCommandSpec {
   aliases?: readonly string[]
   summary: string
   usage?: string
-  execute(context: TerminalCommandContext, args: readonly string[]): TerminalCommandOutcome | Promise<TerminalCommandOutcome>
+  execute(
+    context: TerminalCommandContext,
+    args: readonly string[],
+    signal?: AbortSignal,
+  ): TerminalCommandOutcome | Promise<TerminalCommandOutcome>
 }
 
 export type TranscriptBlockKind = 'user' | 'assistant' | 'tool' | 'agent' | 'error' | 'system' | 'debug'

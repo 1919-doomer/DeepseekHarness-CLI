@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, stat, writeFile, type FileHandle } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { healProfilesModuleFallback, loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
@@ -24,6 +24,7 @@ export type NpmRunner = (
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeout?: number,
+  signal?: AbortSignal,
 ) => Promise<string>
 
 export interface ResolvedPluginSpec {
@@ -37,6 +38,7 @@ export async function searchDeepseekPlugins(
   workspace: string,
   env: NodeJS.ProcessEnv = process.env,
   runner: NpmRunner = runNpm,
+  signal?: AbortSignal,
 ): Promise<readonly PluginSearchResult[]> {
   const term = query.trim()
   if (term.length === 0 || term.length > 120) {
@@ -46,6 +48,8 @@ export async function searchDeepseekPlugins(
     ['search', '--json', '--searchlimit=30', `${ALLOWED_SCOPE} ${term}`],
     workspace,
     env,
+    undefined,
+    signal,
   )
   let parsed: unknown
   try {
@@ -75,6 +79,7 @@ export async function resolveDeepseekPlugin(
   workspace: string,
   env: NodeJS.ProcessEnv = process.env,
   runner: NpmRunner = runNpm,
+  signal?: AbortSignal,
 ): Promise<ResolvedPluginSpec> {
   const match = PLUGIN_SPEC.exec(spec)
   const name = match?.[1]
@@ -82,7 +87,7 @@ export async function resolveDeepseekPlugin(
   if (name === undefined) {
     throw new DshcRuntimeError('Only @deepseek-ai/package names and exact npm versions are supported.', 'configuration')
   }
-  const stdout = await runner(['view', spec, 'version', '--json'], workspace, env)
+  const stdout = await runner(['view', spec, 'version', '--json'], workspace, env, undefined, signal)
   let version: unknown
   try {
     version = JSON.parse(stdout)
@@ -105,10 +110,11 @@ export interface PluginInstallTransactionOptions<T> {
   exactSpec: string
   installAnchor: string
   env?: NodeJS.ProcessEnv
+  signal?: AbortSignal
   npmRunner?: NpmRunner
   healFallback?: (installAnchor: string, home: string) => void
   /** Trial the immutable candidate against its private patch, without reading the live workspace patch. */
-  trial(moduleBasePath: string, candidatePatchPath: string): Promise<T>
+  trial(moduleBasePath: string, candidatePatchPath: string, signal?: AbortSignal): Promise<T>
   /** Dispose a successful trial value if the later atomic publish cannot commit. */
   discardTrial(value: T): Promise<void>
   /** Test seam for the single authoritative publish operation. */
@@ -130,7 +136,9 @@ export async function installWorkspacePlugin<T>(
     options.workspace,
     options.env,
     options.npmRunner,
+    options.signal,
   )
+  options.signal?.throwIfAborted()
   if (resolvedSpec.exactSpec !== options.exactSpec) {
     throw new DshcRuntimeError(
       `Confirmation must name the exact package and version: ${resolvedSpec.exactSpec}.`,
@@ -182,7 +190,9 @@ export async function installWorkspacePlugin<T>(
       profilePath,
       options.env ?? process.env,
       120_000,
+      options.signal,
     )
+    options.signal?.throwIfAborted()
 
     const entriesPath = join(profilePath, 'entries')
     const moduleShim = join(entriesPath, `${identity.id}.mjs`)
@@ -194,21 +204,40 @@ export async function installWorkspacePlugin<T>(
       '',
     ].join('\n'), 'utf8')
 
-    const patches = loadOptionalPatches('dshc', options.patchPath) ?? []
-    const nextPatches = upsertPluginPatch(patches, identity.id, moduleShim)
-    const nextPatch = dump(nextPatches, {
-      schema: entryListSchema,
-      noRefs: true,
-      lineWidth: 120,
-    })
-    await writeFile(candidatePatchPath, nextPatch, 'utf8')
+    const releaseLock = await acquirePluginInstallLock(home, options.signal)
+    try {
+      const baselinePatch = await readPatchSnapshot(options.patchPath)
+      const patches = loadOptionalPatches('dshc', options.patchPath) ?? []
+      const nextPatches = upsertPluginPatch(patches, identity.id, moduleShim)
+      const nextPatch = dump(nextPatches, {
+        schema: entryListSchema,
+        noRefs: true,
+        lineWidth: 120,
+      })
+      await writeFile(candidatePatchPath, nextPatch, 'utf8')
 
-    stage = 'trial'
-    trialValue = await options.trial(moduleAnchor, candidatePatchPath)
-    trialCompleted = true
-    stage = 'commit'
-    await (options.publishPatch ?? writeFileAtomic)(options.patchPath, nextPatch)
-    return { ...resolvedSpec, patchPath: options.patchPath, profilePath, value: trialValue }
+      stage = 'trial'
+      trialValue = await options.trial(moduleAnchor, candidatePatchPath, options.signal)
+      trialCompleted = true
+      options.signal?.throwIfAborted()
+      stage = 'commit'
+      const currentPatch = await readPatchSnapshot(options.patchPath)
+      if (currentPatch !== baselinePatch) {
+        throw new DshcRuntimeError(
+          'The workspace plugin patch changed while the candidate was being tested; nothing was committed. Retry against the current patch.',
+          'configuration',
+        )
+      }
+      options.signal?.throwIfAborted()
+      if (options.publishPatch === undefined) {
+        await writeFileAtomic(options.patchPath, nextPatch, options.signal)
+      } else {
+        await options.publishPatch(options.patchPath, nextPatch)
+      }
+      return { ...resolvedSpec, patchPath: options.patchPath, profilePath, value: trialValue }
+    } finally {
+      await releaseLock()
+    }
   } catch (error) {
     const cleanupFailures: unknown[] = []
     if (trialCompleted) {
@@ -271,14 +300,134 @@ function pluginIdentity(packageName: string): { id: string; digest: string } {
   return { id: `workspace-${suffix}-${digest}`, digest }
 }
 
-async function writeFileAtomic(path: string, content: string): Promise<void> {
+async function writeFileAtomic(path: string, content: string, signal?: AbortSignal): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.${randomUUID().replaceAll('-', '')}.tmp`
   try {
     await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' })
+    signal?.throwIfAborted()
     await rename(temporary, path)
   } finally {
     await rm(temporary, { force: true })
+  }
+}
+
+const PLUGIN_LOCK_WAIT_MS = 50
+const PLUGIN_LOCK_TIMEOUT_MS = 180_000
+const INCOMPLETE_LOCK_STALE_MS = 5_000
+
+interface PluginLockOwner {
+  pid: number
+  token: string
+  createdAt: number
+}
+
+/** Serialize the read/trial/commit window across dshc processes in one workspace. */
+async function acquirePluginInstallLock(
+  home: string,
+  signal?: AbortSignal,
+): Promise<() => Promise<void>> {
+  const path = join(home, 'plugin-install.lock')
+  const owner: PluginLockOwner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() }
+  const deadline = Date.now() + PLUGIN_LOCK_TIMEOUT_MS
+
+  while (true) {
+    signal?.throwIfAborted()
+    let handle: FileHandle
+    try {
+      handle = await open(path, 'wx')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (await clearStalePluginLock(path)) continue
+      if (Date.now() >= deadline) {
+        throw new DshcRuntimeError(
+          `Timed out waiting for another workspace plugin transaction to release ${path}.`,
+          'configuration',
+        )
+      }
+      await abortableDelay(PLUGIN_LOCK_WAIT_MS, signal)
+      continue
+    }
+
+    try {
+      await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8')
+    } catch (error) {
+      await handle.close().catch(() => undefined)
+      await rm(path, { force: true }).catch(() => undefined)
+      throw error
+    }
+
+    let released = false
+    return async () => {
+      if (released) return
+      released = true
+      await handle.close().catch(() => undefined)
+      try {
+        const current = JSON.parse(await readFile(path, 'utf8')) as Partial<PluginLockOwner>
+        if (current.token === owner.token) await rm(path, { force: true })
+      } catch {
+        // A missing or externally replaced lock is not allowed to invalidate a
+        // patch that has already committed successfully.
+      }
+    }
+  }
+}
+
+async function clearStalePluginLock(path: string): Promise<boolean> {
+  try {
+    const owner = JSON.parse(await readFile(path, 'utf8')) as Partial<PluginLockOwner>
+    if (typeof owner.pid === 'number' && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
+      if (processIsAlive(owner.pid)) return false
+      await rm(path, { force: true })
+      return true
+    }
+  } catch {
+    try {
+      const facts = await stat(path)
+      if (Date.now() - facts.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false
+      await rm(path, { force: true })
+      return true
+    } catch {
+      return true
+    }
+  }
+  return false
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+async function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) {
+    await new Promise(resolve => setTimeout(resolve, ms))
+    return
+  }
+  signal.throwIfAborted()
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function readPatchSnapshot(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
   }
 }
 
@@ -287,6 +436,7 @@ async function runNpm(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeout = 30_000,
+  signal?: AbortSignal,
 ): Promise<string> {
   try {
     const command = process.platform === 'win32' ? process.execPath : 'npm'
@@ -299,6 +449,7 @@ async function runNpm(
       timeout,
       maxBuffer: 4 * 1024 * 1024,
       windowsHide: true,
+      signal,
     })
     return result.stdout
   } catch (error) {

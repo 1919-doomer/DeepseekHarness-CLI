@@ -104,6 +104,25 @@ describe('read-only history projection', () => {
     expect(review).not.toContain('secret-value')
   })
 
+  it('never presents a bounded projection as the complete source session', () => {
+    const projected = projectHistorySession(header, [
+      event(7, 'assistant/message', {
+        message: {
+          role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' },
+          content: [{ type: 'text', text: 'retained evidence' }],
+        },
+      }),
+    ])
+    const detail = { ...projected, droppedMessageCount: 12 }
+    const selection = selectHistoryEvidence(detail, undefined, 'What happened?')
+    expect(selection.truncated).toBe(true)
+    expect(selection.omittedMessageCount).toBe(12)
+    expect(renderHistoryAskReview(selection)).toContain('"all" is not the complete source session')
+
+    const explicit = selectHistoryEvidence(detail, [7], 'What happened?')
+    expect(explicit.omittedMessageCount).toBe(0)
+  })
+
   it('sanitizes malicious terminal controls in evidence review while preserving a quoted model value', () => {
     const detail = projectHistorySession(header, [
       event(1, 'user/message', {

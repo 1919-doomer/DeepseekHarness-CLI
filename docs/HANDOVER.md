@@ -10,10 +10,11 @@ defects and would otherwise be lost.
 ## Where things stand
 
 `0.1.0-alpha.5` completed M6 with trusted Cordis developer mode, Workbench
-projection and replay/persistence guidance. `0.1.0-alpha.9` delivers the
-protocol-independent M7.0–M7.3 history, context, prompt and permissions slices
-against the exact `0.1.1-rc.2` closure. The established cross-platform gate
-remains Windows/macOS/Ubuntu against Node 22.19 and 24.
+projection and replay/persistence guidance. `0.1.0-alpha.10` delivers the
+protocol-independent M7.0–M7.3 history, context, prompt and permissions slices,
+the M7.4 compatibility gate and M7.6 lifecycle/security hardening against the
+exact `0.1.1-rc.2` closure. The established cross-platform gate remains
+Windows/macOS/Ubuntu against Node 22.19 and 24.
 
 `main` is protected: five required status checks, strict up-to-date merges,
 `enforce_admins` on, no force push, no branch deletion, zero required reviewing

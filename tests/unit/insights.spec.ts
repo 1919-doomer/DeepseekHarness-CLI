@@ -68,7 +68,8 @@ describe('M7 context and prompt projections', () => {
 
   it('keeps permissions fail-closed without an upstream answerer', () => {
     const rendered = renderPermissions(viewContext())
-    expect(rendered).toContain('effective policy: never')
+    expect(rendered).toContain('effective policy: unavailable')
+    expect(rendered).toContain('shipped requested default: never (local/requested)')
     expect(rendered).toContain('answerer: unavailable · fail-closed')
     expect(rendered).not.toContain('session-wide allow')
     expect(capabilityMatrix({ historyReaderAvailable: false }).find(item => item.id === 'approval.answerer')?.availability).toBe('requires-upstream')

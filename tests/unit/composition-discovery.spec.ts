@@ -54,4 +54,10 @@ describe('composition discovery', () => {
     expect(resolved.source).toBe('override')
     expect(resolved.path).not.toBe(shipped)
   })
+
+  it('does not misreport a broken workspace patch path as an absent patch', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dshc-discovery-broken-'))
+    await writeFile(join(dir, '.dshc'), 'not a directory', 'utf8')
+    await expect(resolveComposition(dir, undefined, shipped)).rejects.toThrow('parent is not a directory')
+  })
 })

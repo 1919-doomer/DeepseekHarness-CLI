@@ -43,7 +43,13 @@ export class ActivityTimeoutError extends DshcRuntimeError {
 }
 
 export function classifyRuntimeError(error: unknown, env: NodeJS.ProcessEnv = process.env): DshcRuntimeError {
-  if (error instanceof DshcRuntimeError) return error
+  if (error instanceof DshcRuntimeError) {
+    const message = redactSensitiveText(error.message, env)
+    if (message === error.message) return error
+    const redacted = new DshcRuntimeError(message, error.code, { cause: error.cause })
+    redacted.name = error.name
+    return redacted
+  }
 
   let code: RuntimeErrorCode = 'runtime'
   if (error instanceof JsonRpcResponseError || error instanceof SdkProtocolError) code = 'protocol'
@@ -67,6 +73,11 @@ export function redactSensitiveText(text: string, env: NodeJS.ProcessEnv = proce
   }
 
   result = result
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, '$1***@')
+    .replace(
+      /([?&](?:api[_-]?key|token|secret|password|authorization|credential)=)[^&#\s]*/gi,
+      '$1[REDACTED]',
+    )
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]')
     .replace(/\b(?:sk|api)[-_][A-Za-z0-9._-]{8,}\b/g, '[REDACTED]')
 

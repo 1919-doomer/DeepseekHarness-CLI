@@ -169,6 +169,61 @@ describe('plugin install transaction', () => {
     expect(second.profilePath).not.toBe(first.profilePath)
   })
 
+  it('serializes concurrent workspace installs so both committed entries survive', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-concurrent-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    let activeTrials = 0
+    let maxActiveTrials = 0
+    const install = (name: string) => installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: `@deepseek-ai/${name}@1.2.3`,
+      installAnchor: join(workspace, 'host-package.json'),
+      npmRunner: runner,
+      healFallback: () => undefined,
+      trial: async () => {
+        activeTrials += 1
+        maxActiveTrials = Math.max(maxActiveTrials, activeTrials)
+        await new Promise(resolve => setTimeout(resolve, 40))
+        activeTrials -= 1
+        return name
+      },
+      discardTrial: async () => undefined,
+    })
+
+    const results = await Promise.all([install('one'), install('two')])
+    const patch = await readFile(patchPath, 'utf8')
+    expect(results).toHaveLength(2)
+    expect(maxActiveTrials).toBe(1)
+    expect(patch).toContain('workspace-one-')
+    expect(patch).toContain('workspace-two-')
+  })
+
+  it('discards an initialized candidate when shutdown aborts before commit', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-abort-'))
+    const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')
+    const controller = new AbortController()
+    const discardTrial = vi.fn(async () => undefined)
+
+    await expect(installWorkspacePlugin({
+      workspace,
+      patchPath,
+      exactSpec: '@deepseek-ai/example@1.2.3',
+      installAnchor: join(workspace, 'host-package.json'),
+      signal: controller.signal,
+      npmRunner: runner,
+      healFallback: () => undefined,
+      trial: async () => {
+        controller.abort(new Error('terminal shutdown'))
+        return 'candidate-runtime'
+      },
+      discardTrial,
+    })).rejects.toThrow('immutable candidate was discarded')
+
+    expect(discardTrial).toHaveBeenCalledWith('candidate-runtime')
+    await expect(readFile(patchPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('deletes a candidate when package preparation fails before trial', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dshc-plugin-prepare-'))
     const patchPath = join(workspace, '.dshc', 'cordis.patch.yml')

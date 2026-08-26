@@ -40,6 +40,8 @@ jobs:
       - run: pnpm audit:prod
       - run: pnpm check
       - run: pnpm test:official-runtime
+        env:
+          DSHC_LIVE_PLUGIN_INSTALL: '1'
       - name: Verify tag and release identity
         run: pnpm release:verify -- "${RELEASE_TAG}"
       - name: Create the release tarball and checksum

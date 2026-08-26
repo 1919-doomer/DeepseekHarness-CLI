@@ -37,6 +37,16 @@ describe('network facts', () => {
     expect(facts.registry).toEqual({ url: 'https://mirror.example/', source: 'npm_config_registry' })
   })
 
+  it('removes credentials and secret query values from registry projections', () => {
+    const facts = readNetworkFacts({
+      npm_config_registry: 'https://alice:hunter2@mirror.example/npm?token=registry-secret',
+    }, workspace)
+    expect(facts.registry?.url).toBe('https://***@mirror.example/npm?token=[REDACTED]')
+    expect(JSON.stringify(facts)).not.toContain('hunter2')
+    expect(JSON.stringify(facts)).not.toContain('registry-secret')
+    expect(buildPersona({ platform: 'linux', workspace: '/w', network: facts })).not.toContain('hunter2')
+  })
+
   it('reads the workspace .npmrc, taking the last default registry line', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'dshc-npmrc-'))
     await writeFile(join(dir, '.npmrc'), [

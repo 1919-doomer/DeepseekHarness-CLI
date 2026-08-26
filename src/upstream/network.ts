@@ -73,21 +73,25 @@ export function readNetworkFacts(env: NodeJS.ProcessEnv, workspace: string): Net
  */
 export function redactProxyTarget(target: string): string {
   const at = target.lastIndexOf('@')
-  if (at < 0) return target
   const scheme = target.indexOf('://')
-  if (scheme < 0 || at < scheme) return target
-  return `${target.slice(0, scheme + 3)}***@${target.slice(at + 1)}`
+  const withoutUserInfo = at >= 0 && scheme >= 0 && at >= scheme
+    ? `${target.slice(0, scheme + 3)}***@${target.slice(at + 1)}`
+    : target
+  return withoutUserInfo.replace(
+    /([?&](?:api[_-]?key|token|secret|password|authorization|credential)=)[^&#]*/gi,
+    '$1[REDACTED]',
+  )
 }
 
 function readRegistry(env: NodeJS.ProcessEnv, workspace: string): RegistryFact | undefined {
   const fromEnv = env.npm_config_registry ?? env.NPM_CONFIG_REGISTRY
   if (fromEnv !== undefined && fromEnv.trim().length > 0) {
-    return { url: fromEnv.trim(), source: 'npm_config_registry' }
+    return { url: redactProxyTarget(fromEnv.trim()), source: 'npm_config_registry' }
   }
 
   for (const candidate of [join(workspace, '.npmrc'), join(homedir(), '.npmrc')]) {
     const url = readRegistryLine(candidate)
-    if (url !== undefined) return { url, source: candidate }
+    if (url !== undefined) return { url: redactProxyTarget(url), source: candidate }
   }
   return undefined
 }

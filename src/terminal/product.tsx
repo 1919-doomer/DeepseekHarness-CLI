@@ -95,16 +95,16 @@ export interface TerminalProductOptions {
   /** Composition summary for `/config`; display only. */
   composition?: CompositionSummary
   /** Creates the workspace patch layer without overwriting an existing one. */
-  forkComposition?: (from: string) => Promise<CompositionForkResult>
+  forkComposition?: (from: string, signal?: AbortSignal) => Promise<CompositionForkResult>
   /**
    * Starts a fresh runtime with the given selection. Protocol 0.0.1 has no way
    * to reconfigure a live runtime, so every configuration change is a restart,
    * and a restart starts a new session.
    */
-  restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
-  searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
-  resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
-  installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
+  restart?: (selection: RuntimeSelection, signal?: AbortSignal) => Promise<RuntimeRestart>
+  searchPlugins?: (query: string, signal?: AbortSignal) => Promise<readonly PluginSearchResult[]>
+  resolvePlugin?: (spec: string, signal?: AbortSignal) => Promise<ResolvedPluginSpec>
+  installPlugin?: (exactSpec: string, signal?: AbortSignal) => Promise<PluginInstallRestart>
   /** First-party read-only history controller; not part of terminal plugin API v1. */
   history?: HistoryWorkbench
   initialSessionId?: string
@@ -149,6 +149,16 @@ export async function runTerminalProduct(
   let instance: ReturnType<typeof render> | undefined
   let latest = { totalTurns: 0, sessionId: initialSessionId }
   let signalClosing = false
+  const shutdown = new AbortController()
+  const localTasks = new Set<Promise<void>>()
+
+  const trackLocalTask = (task: Promise<void>): void => {
+    localTasks.add(task)
+    void task.finally(() => { localTasks.delete(task) }).catch(() => undefined)
+  }
+  const drainLocalTasks = async (): Promise<void> => {
+    while (localTasks.size > 0) await Promise.allSettled(localTasks)
+  }
 
   let finishResolve!: (result: FinishResult) => void
   const finished = new Promise<FinishResult>(resolve => { finishResolve = resolve })
@@ -156,6 +166,7 @@ export async function runTerminalProduct(
   const finish = (result: FinishResult): void => {
     if (finishedOnce) return
     finishedOnce = true
+    shutdown.abort(new Error('terminal product is closing'))
     finishResolve(result)
   }
 
@@ -195,6 +206,9 @@ export async function runTerminalProduct(
       <TerminalProductApp
         runtimeRef={runtimeRef}
         trackRuntimeClose={runtime => runtimeClosures.track(runtime)}
+        shutdownSignal={shutdown.signal}
+        requestShutdown={() => shutdown.abort(new Error('terminal product is closing'))}
+        trackLocalTask={trackLocalTask}
         metadata={metadata}
         {...(options.restart === undefined ? {} : { restart: options.restart })}
         {...(options.composition === undefined ? {} : { composition: options.composition })}
@@ -227,6 +241,7 @@ export async function runTerminalProduct(
     const exited = current.waitUntilExit().catch(() => undefined)
 
     const result = await finished
+    await drainLocalTasks()
     instance = undefined
     current.unmount()
     await exited
@@ -237,6 +252,8 @@ export async function runTerminalProduct(
     stdin.off('end', onEof)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
+    shutdown.abort(new Error('terminal product is closing'))
+    await drainLocalTasks()
     await runtimeClosures.drain(runtimeRef.current)
   }
 }
@@ -246,13 +263,19 @@ interface AppProps {
   runtimeRef: { current: HarnessRuntime }
   /** Starts a close and retains its result until the product's final drain. */
   trackRuntimeClose(runtime: HarnessRuntime): Promise<void>
+  /** Aborted before terminal teardown so local commands cannot commit after exit. */
+  shutdownSignal: AbortSignal
+  /** Abort local work as soon as an exit decision is made, before runtime close waits. */
+  requestShutdown(): void
+  /** Retains local command work until it has observed shutdown and released resources. */
+  trackLocalTask(task: Promise<void>): void
   metadata: HarnessRuntimeMetadata
-  restart?: (selection: RuntimeSelection) => Promise<RuntimeRestart>
+  restart?: (selection: RuntimeSelection, signal?: AbortSignal) => Promise<RuntimeRestart>
   composition?: CompositionSummary
-  forkComposition?: (from: string) => Promise<CompositionForkResult>
-  searchPlugins?: (query: string) => Promise<readonly PluginSearchResult[]>
-  resolvePlugin?: (spec: string) => Promise<ResolvedPluginSpec>
-  installPlugin?: (exactSpec: string) => Promise<PluginInstallRestart>
+  forkComposition?: (from: string, signal?: AbortSignal) => Promise<CompositionForkResult>
+  searchPlugins?: (query: string, signal?: AbortSignal) => Promise<readonly PluginSearchResult[]>
+  resolvePlugin?: (spec: string, signal?: AbortSignal) => Promise<ResolvedPluginSpec>
+  installPlugin?: (exactSpec: string, signal?: AbortSignal) => Promise<PluginInstallRestart>
   history?: HistoryWorkbench
   host: TerminalPluginHost
   debug: boolean
@@ -290,8 +313,10 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [eventHistory, setEventHistory] = useState<TerminalEventHistory>(initialTerminalEventHistory)
   const [agentTopology, setAgentTopology] = useState<AgentTopologyHistory>(initialAgentTopologyHistory)
   const [input, setInput] = useState('')
+  const inputRef = useRef('')
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
   const [cursor, setCursor] = useState(0)
+  const cursorRef = useRef(0)
   const [activeView, setActiveView] = useState<string | undefined>()
   const [, setFirstPartyViewRevision] = useState(0)
   const [metadata, setMetadata] = useState(props.metadata)
@@ -351,8 +376,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const sessionRef = useRef(sessionId)
   const idRef = useRef(0)
   const mountedRef = useRef(true)
+  const chunkQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   sessionRef.current = sessionId
+  inputRef.current = input
+  cursorRef.current = cursor
   totalTurnsRef.current = totalTurns
   menuIndexRef.current = menuIndex
   menuDismissedRef.current = menuDismissed
@@ -405,6 +433,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   }), [agentTopology, commandContext, composition, eventHistory, props.host, transcript.droppedBlockCount])
 
   const finish = useCallback((exitCode: number, interrupted: boolean): void => {
+    props.requestShutdown()
     props.onFinish({
       exitCode,
       interrupted,
@@ -420,6 +449,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     const running = runningRef.current
     const restart = props.restart
     if (!running || restart === undefined) {
+      props.requestShutdown()
       if (running) {
         setTranscript(state => appendSystemMessage(
           state,
@@ -576,7 +606,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     })
   }, [nextId, props.trackRuntimeClose])
 
-  const applyOutcome = useCallback(async (outcome: TerminalCommandOutcome): Promise<void> => {
+  const applyOutcome = useCallback(async (
+    outcome: TerminalCommandOutcome,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    if (isAborted(signal)) return
     switch (outcome.kind) {
       case 'message':
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
@@ -594,7 +628,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           return
         }
         try {
-          const result = await fork(source.path)
+          const result = await fork(source.path, signal)
+          if (isAborted(signal)) return
           setTranscript(state => appendSystemMessage(
             state,
             result.created
@@ -616,6 +651,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             nextId('fork'),
           ))
         } catch (error) {
+          if (isAborted(signal)) return
           const failure = classifyRuntimeError(error)
           setTranscript(state => appendSystemMessage(
             state,
@@ -632,7 +668,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           return
         }
         try {
-          const results = await props.searchPlugins(outcome.query)
+          const results = await props.searchPlugins(outcome.query, signal)
+          if (isAborted(signal)) return
           const text = results.length === 0
             ? `No @deepseek-ai packages matched ${sanitizeTerminalText(outcome.query)}.`
             : results.map(result => [
@@ -641,6 +678,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               ].filter(Boolean).join('\n')).join('\n')
           setTranscript(state => appendSystemMessage(state, text, 'plugin search', nextId('plugin-search')))
         } catch (error) {
+          if (isAborted(signal)) return
           const failure = classifyRuntimeError(error)
           setTranscript(state => appendSystemMessage(state, failure.message, `plugin search error · ${failure.code}`, nextId('plugin-error')))
         }
@@ -653,7 +691,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             return
           }
           try {
-            const candidate = await props.resolvePlugin(outcome.spec)
+            const candidate = await props.resolvePlugin(outcome.spec, signal)
+            if (isAborted(signal)) return
             setTranscript(state => appendSystemMessage(
               state,
               [
@@ -669,6 +708,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               nextId('plugin-confirm'),
             ))
           } catch (error) {
+            if (isAborted(signal)) return
             const failure = classifyRuntimeError(error)
             setTranscript(state => appendSystemMessage(state, failure.message, `plugin error · ${failure.code}`, nextId('plugin-error')))
           }
@@ -679,7 +719,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           return
         }
         try {
-          const next = await props.installPlugin(outcome.spec)
+          const next = await props.installPlugin(outcome.spec, signal)
+          if (isAborted(signal) || !mountedRef.current) {
+            await props.trackRuntimeClose(next.runtime).catch(() => undefined)
+            return
+          }
           const previous = props.runtimeRef.current
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
@@ -693,12 +737,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           jumpToNewest()
           setTranscript(state => appendSystemMessage(state, `${next.message}\nNew session ${fresh}.`, 'plugin installed', nextId('plugin-install')))
         } catch (error) {
+          if (isAborted(signal)) return
           const failure = classifyRuntimeError(error)
           setTranscript(state => appendSystemMessage(state, failure.message, `plugin install error · ${failure.code}`, nextId('plugin-error')))
         }
         return
       }
       case 'submit-prompt':
+        if (isAborted(signal)) return
         selectView(undefined)
         jumpToNewest()
         await runHarnessPrompt(outcome.prompt, outcome.displayText, outcome.newSession, outcome.sourceSummary)
@@ -723,7 +769,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         try {
           // Start the replacement before closing the old one, so a rejected
           // composition leaves the session working instead of stranded.
-          const next = await restart(outcome.selection)
+          const next = await restart(outcome.selection, signal)
+          if (isAborted(signal) || !mountedRef.current) {
+            await props.trackRuntimeClose(next.runtime).catch(() => undefined)
+            return
+          }
           const previous = props.runtimeRef.current
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
@@ -742,6 +792,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             nextId('restart'),
           ))
         } catch (error) {
+          if (isAborted(signal)) return
           const failure = classifyRuntimeError(error)
           setTranscript(state => appendSystemMessage(
             state,
@@ -813,31 +864,36 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return true
     }
 
-    commandRunningRef.current = true
-    setCommandBusy(true)
-    try {
-      const outcome = await command.execute(commandContext(), parsed.args)
-      await applyOutcome(outcome)
-    } catch (error) {
-      setTranscript(state => appendSystemMessage(
-        state,
-        pluginErrorMessage(error),
-        `command error · /${parsed.name}`,
-        nextId('command-error'),
-      ))
-    } finally {
-      commandRunningRef.current = false
-      setCommandBusy(false)
-    }
+    const operation = (async (): Promise<void> => {
+      commandRunningRef.current = true
+      setCommandBusy(true)
+      try {
+        const outcome = await command.execute(commandContext(), parsed.args, props.shutdownSignal)
+        if (props.shutdownSignal.aborted) return
+        await applyOutcome(outcome, props.shutdownSignal)
+      } catch (error) {
+        if (props.shutdownSignal.aborted) return
+        setTranscript(state => appendSystemMessage(
+          state,
+          pluginErrorMessage(error),
+          `command error · /${parsed.name}`,
+          nextId('command-error'),
+        ))
+      } finally {
+        commandRunningRef.current = false
+        if (mountedRef.current) setCommandBusy(false)
+      }
+    })()
+    props.trackLocalTask(operation)
+    await operation
     return true
-  }, [applyOutcome, commandContext, nextId, props.host])
+  }, [applyOutcome, commandContext, nextId, props.host, props.shutdownSignal, props.trackLocalTask])
 
   const submit = useCallback(async (): Promise<void> => {
     if (runningRef.current || commandRunningRef.current) return
-    const raw = input
+    const raw = inputRef.current
     if (raw.trim().length === 0) return
-    setInput('')
-    setCursor(0)
+    setEditor('', 0)
     setHistoryIndex(undefined)
 
     if (raw.startsWith('/') && !raw.startsWith('//')) {
@@ -848,7 +904,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     const prompt = raw.startsWith('//') ? raw.slice(1) : raw
     jumpToNewest()
     await runHarnessPrompt(prompt, prompt)
-  }, [input, jumpToNewest, runCommand, runHarnessPrompt])
+  }, [jumpToNewest, runCommand, runHarnessPrompt])
 
   useInput((keyInput, key) => {
     // Ink reports one parsed key per stdin chunk, but a chunk can carry several
@@ -856,8 +912,34 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     // chunk pairing a submit character with the next keystroke would otherwise
     // fail every `key.*` test and be inserted verbatim, losing the submit and
     // leaving a raw control character in the prompt.
-    for (const stroke of splitKeystrokes(keyInput, key)) handleKeystroke(stroke.text, stroke.key)
+    const strokes = splitKeystrokes(keyInput, key)
+    if (strokes.length === 1) {
+      const stroke = strokes[0]!
+      handleKeystroke(stroke.text, stroke.key)
+      return
+    }
+    const task = chunkQueueRef.current.then(() => processKeystrokeChunk(strokes))
+    chunkQueueRef.current = task.catch(() => undefined)
+    props.trackLocalTask(task)
   })
+
+  async function processKeystrokeChunk(strokes: readonly Keystroke[]): Promise<void> {
+    for (const stroke of strokes) {
+      if (props.shutdownSignal.aborted) return
+      if (
+        stroke.key.return
+        && activeViewRef.current === undefined
+        && !toolFocusRef.current
+        && !runningRef.current
+        && !commandRunningRef.current
+      ) {
+        jumpToNewest()
+        await submit()
+      } else {
+        handleKeystroke(stroke.text, stroke.key)
+      }
+    }
+  }
 
   function handleKeystroke(keyInput: string, key: InputKey): void {
     if (key.ctrl && keyInput.toLowerCase() === 'c') {
@@ -892,9 +974,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           if (key.return && !commandRunningRef.current) {
             commandRunningRef.current = true
             setCommandBusy(true)
-            void props.history.commitSearch()
-              .then(changed => { if (changed) setFirstPartyViewRevision(value => value + 1) })
+            const task = props.history.commitSearch(props.shutdownSignal)
+              .then(changed => {
+                if (changed && !props.shutdownSignal.aborted) setFirstPartyViewRevision(value => value + 1)
+              })
               .catch(error => {
+                if (props.shutdownSignal.aborted) return
                 setTranscript(state => appendSystemMessage(
                   state,
                   pluginErrorMessage(error),
@@ -904,8 +989,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               })
               .finally(() => {
                 commandRunningRef.current = false
-                setCommandBusy(false)
+                if (mountedRef.current) setCommandBusy(false)
               })
+            props.trackLocalTask(task)
             return
           }
           if (!key.ctrl && !key.meta && keyInput.length > 0) {
@@ -922,8 +1008,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           const command = props.history.continuationCommand()
           if (command !== undefined) {
             selectView(undefined)
-            setInput(command)
-            setCursor(graphemeCount(command))
+            setEditor(command, graphemeCount(command))
             setHistoryIndex(undefined)
           }
           return
@@ -935,9 +1020,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         if (key.return && !commandRunningRef.current) {
           commandRunningRef.current = true
           setCommandBusy(true)
-          void props.history.openSelected()
-            .then(changed => { if (changed) setFirstPartyViewRevision(value => value + 1) })
+          const task = props.history.openSelected(props.shutdownSignal)
+            .then(changed => {
+              if (changed && !props.shutdownSignal.aborted) setFirstPartyViewRevision(value => value + 1)
+            })
             .catch(error => {
+              if (props.shutdownSignal.aborted) return
               setTranscript(state => appendSystemMessage(
                 state,
                 pluginErrorMessage(error),
@@ -948,8 +1036,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             })
             .finally(() => {
               commandRunningRef.current = false
-              setCommandBusy(false)
+              if (mountedRef.current) setCommandBusy(false)
             })
+          props.trackLocalTask(task)
           return
         }
         return
@@ -1025,45 +1114,40 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return
     }
     if (key.backspace || key.delete) {
-      if (cursor === 0) return
-      const edited = deleteGraphemeBefore(input, cursor)
-      setInput(edited.value)
-      setCursor(edited.cursor)
+      if (cursorRef.current === 0) return
+      const edited = deleteGraphemeBefore(inputRef.current, cursorRef.current)
+      setEditor(edited.value, edited.cursor)
       return
     }
     if (key.leftArrow) {
-      setCursor(value => Math.max(0, value - 1))
+      setEditor(inputRef.current, Math.max(0, cursorRef.current - 1))
       return
     }
     if (key.rightArrow) {
-      setCursor(value => Math.min(graphemeCount(input), value + 1))
+      setEditor(inputRef.current, Math.min(graphemeCount(inputRef.current), cursorRef.current + 1))
       return
     }
     if (key.upArrow && history.length > 0) {
       const next = historyIndex === undefined ? history.length - 1 : Math.max(0, historyIndex - 1)
       const value = history[next] ?? ''
       setHistoryIndex(next)
-      setInput(value)
-      setCursor(graphemeCount(value))
+      setEditor(value, graphemeCount(value))
       return
     }
     if (key.downArrow && historyIndex !== undefined) {
       const next = historyIndex + 1
       if (next >= history.length) {
         setHistoryIndex(undefined)
-        setInput('')
-        setCursor(0)
+        setEditor('', 0)
       } else {
         const value = history[next] ?? ''
         setHistoryIndex(next)
-        setInput(value)
-        setCursor(graphemeCount(value))
+        setEditor(value, graphemeCount(value))
       }
       return
     }
     if (key.ctrl && keyInput.toLowerCase() === 'u') {
-      setInput('')
-      setCursor(0)
+      setEditor('', 0)
       setHistoryIndex(undefined)
       return
     }
@@ -1100,16 +1184,21 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     const selected = suggestionsRef.current[menuIndexRef.current]
     if (selected === undefined) return false
     const completed = `/${selected.name} `
-    if (input === completed || input === `/${selected.name}`) return false
-    setInput(completed)
-    setCursor(graphemeCount(completed))
+    if (inputRef.current === completed || inputRef.current === `/${selected.name}`) return false
+    setEditor(completed, graphemeCount(completed))
     return true
   }
 
+  function setEditor(value: string, nextCursor: number): void {
+    inputRef.current = value
+    cursorRef.current = nextCursor
+    setInput(value)
+    setCursor(nextCursor)
+  }
+
   function insertInput(text: string): void {
-    const edited = insertAtGrapheme(input, cursor, text)
-    setInput(edited.value)
-    setCursor(edited.cursor)
+    const edited = insertAtGrapheme(inputRef.current, cursorRef.current, text)
+    setEditor(edited.value, edited.cursor)
   }
 
   const status = useMemo(() => {
@@ -1477,9 +1566,49 @@ function activityColor(state: ToolActivityState): string | undefined {
 
 export function parseTerminalCommand(raw: string): ParsedTerminalCommand | undefined {
   if (!raw.startsWith('/') || raw.startsWith('//')) return undefined
-  const tokens = raw.trim().slice(1).split(/\s+/).filter(Boolean)
+  const tokens = terminalCommandTokens(raw.trim().slice(1))
   const name = (tokens.shift() ?? '').toLowerCase()
   return { name, args: tokens }
+}
+
+/** Minimal quoting for paths/arguments; backslashes remain ordinary Windows path characters. */
+function terminalCommandTokens(value: string): string[] {
+  const tokens: string[] = []
+  let token = ''
+  let started = false
+  let quote: '"' | "'" | undefined
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!
+    if (quote !== undefined) {
+      if (char === quote) {
+        quote = undefined
+      } else if (quote === '"' && char === '\\' && value[index + 1] === '"') {
+        token += '"'
+        index += 1
+      } else {
+        token += char
+      }
+      started = true
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      started = true
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (started) {
+        tokens.push(token)
+        token = ''
+        started = false
+      }
+      continue
+    }
+    token += char
+    started = true
+  }
+  if (started) tokens.push(token)
+  return tokens
 }
 
 function TranscriptBlockView({ block, width, condensed = false }: {
@@ -1825,5 +1954,9 @@ function renderStatusSegmentSafely(
 }
 
 function pluginErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return classifyRuntimeError(error).message
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
 }
