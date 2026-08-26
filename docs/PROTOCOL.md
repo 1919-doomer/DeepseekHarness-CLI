@@ -189,15 +189,17 @@ The validated protocol still has **no per-prompt cancel** and **no per-session c
 Therefore:
 
 - activity timeout reports an unresolved activity without claiming cancellation;
-- Ctrl+C during an active terminal interaction closes the entire owned Harness runtime and returns signal-style status where supported;
-- Ctrl+C must never be described as successful prompt cancellation;
+- active-turn Ctrl+C in the standard TTY product stops the entire owned Harness
+  runtime, relaunches the same effective selection and starts a fresh session;
+- that hard interrupt must never be described as prompt cancellation or session
+  resume; if no restart provider exists, Ctrl+C retains whole-product exit 130;
 - EOF in line-oriented non-TTY mode remains a clean exit boundary;
 - `/clear` affects local presentation only;
 - `/exit` uses the whole-runtime close path;
 - alternate-screen teardown is a terminal lifecycle concern and must execute even if product rendering fails;
 - transport/runtime failure remains distinct from a model/tool turn error.
 
-A future official prompt-cancel or session-close method should be implemented behind `src/upstream/` before the terminal exposes corresponding controls.
+A future official prompt-cancel or session-close method should be implemented behind `src/upstream/`; until then the replacement-runtime interrupt remains explicitly separate from either capability.
 
 ## Credential-free contract gates
 

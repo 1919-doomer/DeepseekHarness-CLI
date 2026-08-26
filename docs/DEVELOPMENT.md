@@ -60,7 +60,9 @@ Never import private Harness implementation objects into terminal/plugin modules
 - `/new` selects a fresh session but cannot close the previous upstream session under protocol `0.0.1`.
 - Local slash commands are intercepted before the model boundary; malformed local commands remain local errors.
 - `//text` sends a literal slash-prefixed prompt.
-- Ctrl+C closes the whole owned runtime while upstream lacks prompt cancellation.
+- active-turn Ctrl+C uses whole-runtime replacement and a fresh session while
+  upstream lacks prompt cancellation; injected products without restart retain
+  the whole-product exit path.
 - SIGINT/SIGTERM ownership begins before runtime startup. A close request during workspace/version/launch/initialize work is terminal: startup must not later publish a live client or successful metadata, and repeated close calls remain idempotent.
 
 ## Terminal plugin discipline
@@ -111,7 +113,11 @@ Cover pure logic including argument/command parsing, malformed slash input, doct
 - command/view/status plugin callback failures stay inside presentation;
 - resize handling;
 - clean `/exit`;
-- active-turn Ctrl+C returns 130, closes the whole runtime truthfully, and restores terminal state;
+- active-turn Ctrl+C with a restart provider closes the old runtime, initializes
+  a replacement, starts a fresh session and can submit another turn;
+- missing or failed interrupt recovery remains fail-closed: the injected
+  no-provider path returns 130, and a replacement failure renders its diagnostic
+  before restoring terminal state;
 - no hidden reasoning leakage.
 
 This test is part of normal `pnpm test`, so the Runtime matrix exercises it on Windows, macOS and Ubuntu instead of relying on Linux-only pseudo-terminal tooling. POSIX OS-signal injection remains separately covered where Node exposes those semantics.
