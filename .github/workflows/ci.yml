@@ -66,5 +66,7 @@ jobs:
         run: pnpm test
       - name: Official DSH runtime + built CLI smoke
         run: pnpm test:official-runtime
+        env:
+          DSHC_LIVE_PLUGIN_INSTALL: '1'
       - name: Packed global install / repair / doctor / uninstall
         run: pnpm test:package

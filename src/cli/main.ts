@@ -144,6 +144,23 @@ function createRuntime(
   })
 }
 
+/** Close a command-owned candidate promptly when the terminal begins shutdown. */
+async function startRuntimeWithAbort(
+  runtime: HarnessRuntime,
+  signal?: AbortSignal,
+): Promise<Awaited<ReturnType<HarnessRuntime['start']>>> {
+  signal?.throwIfAborted()
+  const onAbort = (): void => { void runtime.close().catch(() => undefined) }
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const metadata = await runtime.start()
+    signal?.throwIfAborted()
+    return metadata
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
 async function runDoctorCommand(options: CliOptions): Promise<number> {
   try {
     const report = await collectDoctorReport({
@@ -202,13 +219,13 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
           ...(composition === undefined ? {} : { composition }),
           // A fork lands beside the workspace so it travels with the project
           // rather than with this machine.
-          forkComposition: (from) => forkComposition(
+          forkComposition: (from, _signal) => forkComposition(
             from,
             workspaceCompositionPath(options.workspace ?? process.cwd()),
           ),
           // Construction and startup live here; the product owns presentation
           // and lifecycle, not how a runtime is built.
-          restart: async (selection) => {
+          restart: async (selection, signal) => {
             if (activeOptions.dev && selection.runtimeConfig !== undefined) {
               throw new DshcRuntimeError('Developer mode cannot reload an explicit runtime config; persist changes through the workspace patch.', 'configuration')
             }
@@ -227,7 +244,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
             )
             const next = createRuntime(nextOptions, nextResolved)
             try {
-              const metadata = await next.start()
+              const metadata = await startRuntimeWithAbort(next, signal)
               const nextComposition = await readCompositionSummary(
                 nextResolved.path,
                 nextResolved.source,
@@ -244,15 +261,21 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
               throw error
             }
           },
-          searchPlugins: query => searchDeepseekPlugins(
+          searchPlugins: (query, signal) => searchDeepseekPlugins(
             query,
             activeOptions.workspace ?? process.cwd(),
+            process.env,
+            undefined,
+            signal,
           ),
-          resolvePlugin: spec => resolveDeepseekPlugin(
+          resolvePlugin: (spec, signal) => resolveDeepseekPlugin(
             spec,
             activeOptions.workspace ?? process.cwd(),
+            process.env,
+            undefined,
+            signal,
           ),
-          installPlugin: async (exactSpec) => {
+          installPlugin: async (exactSpec, signal) => {
             if (activeOptions.runtimeConfig !== undefined) {
               throw new DshcRuntimeError(
                 'Workspace plugin installation requires the shipped base composition; remove --runtime-config first.',
@@ -265,7 +288,8 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
               exactSpec,
               patchPath: workspaceCompositionPath(workspace),
               installAnchor: defaultRuntimeInstallAnchor(),
-              trial: async (moduleBasePath, candidatePatchPath) => {
+              signal,
+              trial: async (moduleBasePath, candidatePatchPath, trialSignal) => {
                 const nextResolved = await resolveComposition(
                   workspace,
                   undefined,
@@ -281,7 +305,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
                 }
                 const next = createRuntime(activeOptions, trialResolved, moduleBasePath)
                 try {
-                  const metadata = await next.start()
+                  const metadata = await startRuntimeWithAbort(next, trialSignal)
                   return {
                     runtime: next,
                     metadata,

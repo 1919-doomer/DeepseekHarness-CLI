@@ -29,7 +29,16 @@ export class RuntimeCloseTracker<T extends RuntimeCloseTarget = RuntimeCloseTarg
 
   async drain(current: T): Promise<void> {
     this.track(current)
-    const settled = await Promise.allSettled(this.tasks.values())
+    const settled: PromiseSettledResult<void>[] = []
+    let observed = 0
+    // A local command may publish a replacement while shutdown is already
+    // waiting on an older generation. Keep taking snapshots until ownership is
+    // quiescent so a late tracked runtime cannot escape the final drain.
+    while (observed < this.tasks.size) {
+      const snapshot = [...this.tasks.values()].slice(observed)
+      observed = this.tasks.size
+      settled.push(...await Promise.allSettled(snapshot))
+    }
     const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
     if (failures.length === 0) return
 

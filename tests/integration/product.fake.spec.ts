@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TERMINAL_PLUGIN_API_VERSION } from '../../src/plugins/api.js'
 import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
 import { HistoryWorkbench } from '../../src/plugins/history.js'
@@ -728,6 +728,94 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(readOutput()).toContain('no prompt-level cancel')
       expect(readOutput()).not.toContain('cancelled')
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('waits for an aborted local install and closes a replacement returned after shutdown', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-product-install-abort-'))
+    tempRoots.push(root)
+    const runtime = runtimeFor(root, join(root, 'prompts.jsonl'))
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const replacementClose = vi.fn(async () => undefined)
+    const replacement = { close: replacementClose } as unknown as HarnessRuntime
+    let releaseInstall!: () => void
+    const installGate = new Promise<void>(resolve => { releaseInstall = resolve })
+    let installSignal: AbortSignal | undefined
+    let productSettled = false
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+      installPlugin: async (_spec, signal) => {
+        installSignal = signal
+        await installGate
+        return {
+          runtime: replacement,
+          metadata: {
+            workspace: root,
+            provider: 'deepseek-official',
+            model: 'deepseek-v4-flash',
+            serverName: 'late-install-runtime',
+            protocolVersion: '0.0.1',
+          },
+          message: 'late install',
+        }
+      },
+    })
+    void product.finally(() => { productSettled = true })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, '/plugin install @deepseek-ai/example@1.2.3 --yes')
+      await waitFor(() => installSignal !== undefined)
+      input.write('\u0003')
+      await waitFor(() => installSignal?.aborted === true)
+      await delay(80)
+      expect(productSettled).toBe(false)
+
+      releaseInstall()
+      await expect(product).resolves.toMatchObject({ exitCode: 130, interrupted: true })
+      expect(replacementClose).toHaveBeenCalledTimes(1)
+    } finally {
+      releaseInstall()
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('processes coalesced multi-line input in order without losing either submit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-product-coalesced-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath)
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: false,
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      input.write('first\rsecond\r')
+      await waitFor(async () => (await promptRecords(logPath)).length === 2, 8_000, 'coalesced prompts')
+      const records = await promptRecords(logPath)
+      expect(records.map(record => promptText(record))).toEqual(['first', 'second'])
+      await submitLine(input, '/exit')
+      await expect(product).resolves.toMatchObject({ exitCode: 0, totalTurns: 2 })
     } finally {
       input.end()
       await runtime.close()

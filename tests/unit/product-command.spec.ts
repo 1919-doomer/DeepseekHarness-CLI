@@ -15,6 +15,10 @@ describe('M3 terminal commands', () => {
   it('parses slash commands with arguments while preserving // prompts', () => {
     expect(parseTerminalCommand('/plugins')).toEqual({ name: 'plugins', args: [] })
     expect(parseTerminalCommand('/trace last 20')).toEqual({ name: 'trace', args: ['last', '20'] })
+    expect(parseTerminalCommand('/reload "C:\\Program Files\\dsh\\cordis.yml" --yes')).toEqual({
+      name: 'reload',
+      args: ['C:\\Program Files\\dsh\\cordis.yml', '--yes'],
+    })
     expect(parseTerminalCommand('//literal')).toBeUndefined()
     expect(parseTerminalCommand('normal prompt')).toBeUndefined()
   })

@@ -6,6 +6,12 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 ## Unreleased
 
+## 0.1.0-alpha.10 — 2026-08-26
+
+Completes the publishable M7 compatibility and hardening slice while keeping
+runtime-authoritative context, prompt and interactive approval features behind
+the upstream contract gate.
+
 ### Added
 
 - a visible `/history` prompt hint, `/sessions` alias and `c` action that
@@ -19,10 +25,26 @@ semantic prerelease versions; public alpha builds are published under the npm
 - M7.6 approval-audit anomaly projection for replayed asks, orphan/late or
   duplicate decisions and cross-session routing isolation;
 - active-turn hard interrupt through whole-runtime replacement and a fresh
-  session, without claiming unsupported prompt cancellation or resume.
+  session, without claiming unsupported prompt cancellation or resume;
+- a blocking live official-runtime plugin installation gate in both CI and the
+  release workflow.
 
 ### Fixed
 
+- abort and drain local terminal commands during Ctrl+C, EOF and shutdown,
+  including late replacement runtimes and in-flight plugin trials;
+- serialize workspace plugin transactions across processes, reject concurrent
+  patch changes before commit and preserve the last cold-startable profile;
+- redact registry URL credentials and sensitive query parameters from network,
+  runtime and terminal-plugin errors;
+- retain coalesced multiline terminal input and support quoted slash-command
+  arguments containing Windows path spaces;
+- surface invalid workspace composition parents instead of silently falling
+  back to the shipped configuration;
+- distinguish the requested local `never` default from a runtime-observed
+  effective permission policy;
+- warn when bounded history projection means an `all` selection omits older
+  messages;
 - preserve the exact history catalog selection and search when returning from
   a conversation detail, with a second Esc/q returning to the live chat;
 - require Ask History review before confirmation and bind it to the exact

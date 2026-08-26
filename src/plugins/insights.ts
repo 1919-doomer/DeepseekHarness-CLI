@@ -163,11 +163,13 @@ export function renderPermissions(context: TerminalViewContext): string {
     historyReaderAvailable: context.commands.some(command => command.name === 'history'),
     contextCapacityObserved: latest(events, 'request-context')?.contextWindow !== undefined,
   })
-  const policyFact: ProjectionFact<'ask' | 'never'> = policyEvent === undefined
-    ? { value: 'never', source: 'local', authority: 'requested' }
+  const policyFact: ProjectionFact<'ask' | 'never'> | undefined = policyEvent === undefined
+    ? undefined
     : runtimeObserved(policyEvent.policy)
   return [
-    `effective policy: ${policyFact.value} (${policyFact.source}/${policyFact.authority}${policyEvent === undefined ? ' shipped default' : ' session override'})`,
+    policyFact === undefined
+      ? 'effective policy: unavailable (runtime/unavailable); shipped requested default: never (local/requested)'
+      : `effective policy: ${policyFact.value} (${policyFact.source}/${policyFact.authority} session event)`,
     'answerer: unavailable · fail-closed',
     'supported grants: allowed-once only; dshc does not offer session-wide or persistent allow rules',
     '',

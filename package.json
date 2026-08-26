@@ -1,6 +1,6 @@
 {
   "name": "@liaosiyuan123/dshc",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "description": "Unofficial terminal-native console for DeepSeek Harness",
   "license": "MIT",
   "author": "1919-doomer",
@@ -61,7 +61,7 @@
     "lint": "oxlint src tests scripts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude tests/integration/official-runtime.spec.ts --exclude tests/integration/official-interactive.spec.ts --exclude tests/integration/official-repository-workflow.spec.ts --exclude tests/integration/official-sandbox-policy.spec.ts --exclude tests/integration/official-doctor.spec.ts --exclude tests/integration/official-event-contract.spec.ts --exclude tests/integration/official-cordis-workbench.spec.ts --exclude tests/integration/official-m7-upstream-gate.spec.ts",
-    "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts tests/integration/official-repository-workflow.spec.ts tests/integration/official-sandbox-policy.spec.ts tests/integration/official-doctor.spec.ts tests/integration/official-event-contract.spec.ts tests/integration/official-cordis-workbench.spec.ts tests/integration/official-m7-upstream-gate.spec.ts",
+    "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts tests/integration/official-repository-workflow.spec.ts tests/integration/official-sandbox-policy.spec.ts tests/integration/official-doctor.spec.ts tests/integration/official-event-contract.spec.ts tests/integration/official-cordis-workbench.spec.ts tests/integration/official-m7-upstream-gate.spec.ts tests/integration/official-plugin-install.spec.ts",
     "test:all": "pnpm build && vitest run",
     "test:package": "node scripts/package-smoke.mjs",
     "pack:check": "node scripts/check-package.mjs",

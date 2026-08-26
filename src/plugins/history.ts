@@ -108,26 +108,26 @@ export class HistoryWorkbench {
     return true
   }
 
-  async commitSearch(): Promise<boolean> {
+  async commitSearch(signal?: AbortSignal): Promise<boolean> {
     if (this.state.kind !== 'catalog' || this.state.focus !== 'search') return false
     const { catalog, query } = this.state
     const next = await this.reader.list({
       workspace: catalog.workspace,
       allWorkspaces: catalog.allWorkspaces,
       ...(query.trim().length === 0 ? {} : { text: query.trim() }),
-    })
+    }, signal)
     this.state = { kind: 'catalog', catalog: next, selected: 0, query: query.trim(), focus: 'list' }
     return true
   }
 
-  async openSelected(): Promise<boolean> {
+  async openSelected(signal?: AbortSignal): Promise<boolean> {
     if (this.state.kind !== 'catalog') return false
     const selected = this.state.catalog.sessions[this.state.selected]
     if (selected === undefined) return false
     const returnTo = this.state
     this.state = {
       kind: 'detail',
-      detail: await this.reader.inspect(selected.id),
+      detail: await this.reader.inspect(selected.id, signal),
       crossWorkspace: returnTo.catalog.allWorkspaces,
       returnTo,
     }
@@ -167,7 +167,7 @@ export class HistoryWorkbench {
       aliases: ['sessions'],
       summary: 'Browse past conversations or continue selected evidence in a new session',
       usage: HISTORY_USAGE,
-      execute: async (context, args) => this.execute(context.runtime.workspace, args),
+      execute: async (context, args, signal) => this.execute(context.runtime.workspace, args, signal),
     }
   }
 
@@ -175,7 +175,11 @@ export class HistoryWorkbench {
     return { id: 'history', title: 'History', render: () => this.render() }
   }
 
-  private async execute(workspace: string, args: readonly string[]): Promise<TerminalCommandOutcome> {
+  private async execute(
+    workspace: string,
+    args: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<TerminalCommandOutcome> {
     const mode = args[0]?.toLowerCase()
     if (mode === 'help') return { kind: 'message', title: 'history', text: HISTORY_USAGE }
     if (mode === 'open') {
@@ -183,18 +187,18 @@ export class HistoryWorkbench {
       if (args.length < 2 || args.length > 3 || (args.length === 3 && !crossWorkspace)) {
         throw new Error('/history open requires a session id and optional --cross-workspace')
       }
-      const detail = await this.reader.inspect(args[1]!)
+      const detail = await this.reader.inspect(args[1]!, signal)
       assertHistoryScope(detail, workspace, crossWorkspace)
       this.state = { kind: 'detail', detail, crossWorkspace }
       return { kind: 'view', viewId: 'history' }
     }
-    if (mode === 'ask' || mode === 'continue') return this.handoff(workspace, args.slice(1), mode)
+    if (mode === 'ask' || mode === 'continue') return this.handoff(workspace, args.slice(1), mode, signal)
 
     const allWorkspaces = mode === 'all'
     const text = mode === 'find' ? args.slice(1).join(' ').trim() : undefined
     if (mode !== undefined && mode !== 'all' && mode !== 'find') throw new Error(`usage:\n${HISTORY_USAGE}`)
     if (mode === 'find' && text?.length === 0) throw new Error('/history find requires search text')
-    const catalog = await this.reader.list({ workspace, allWorkspaces, ...(text === undefined ? {} : { text }) })
+    const catalog = await this.reader.list({ workspace, allWorkspaces, ...(text === undefined ? {} : { text }) }, signal)
     this.state = { kind: 'catalog', catalog, selected: 0, query: text ?? '', focus: 'list' }
     return { kind: 'view', viewId: 'history' }
   }
@@ -203,6 +207,7 @@ export class HistoryWorkbench {
     workspace: string,
     args: readonly string[],
     purpose: 'ask' | 'continue',
+    signal?: AbortSignal,
   ): Promise<TerminalCommandOutcome> {
     const command = `/history ${purpose}`
     const title = purpose === 'ask' ? 'Ask History' : 'Continue History'
@@ -216,7 +221,7 @@ export class HistoryWorkbench {
     const crossWorkspace = selector.includes('--cross-workspace')
     const selectionArgs = selector.slice(1).filter(value => value !== '--yes' && value !== '--cross-workspace')
     if (selectionArgs.length > 1) throw new Error(`${command} accepts at most one sequence list`)
-    const detail = await this.reader.inspect(sessionId)
+    const detail = await this.reader.inspect(sessionId, signal)
     assertHistoryScope(detail, workspace, crossWorkspace)
     const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question, purpose)
     const review = renderHistoryAskReview(selection, purpose)

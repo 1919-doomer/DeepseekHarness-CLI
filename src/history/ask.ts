@@ -10,6 +10,7 @@ export interface HistoryAskSelection {
   question: string
   estimatedTokens: number
   truncated: boolean
+  omittedMessageCount: number
   secretWarning: boolean
 }
 
@@ -33,7 +34,8 @@ export function selectHistoryEvidence(
   }
 
   let budget = MAX_HISTORY_EVIDENCE_CHARS
-  let truncated = false
+  const omittedMessageCount = seqs === undefined ? detail.droppedMessageCount : 0
+  let truncated = omittedMessageCount > 0
   const bounded: HistoryMessage[] = []
   for (const message of selected) {
     if (budget <= 0) {
@@ -52,6 +54,7 @@ export function selectHistoryEvidence(
     question,
     estimatedTokens: Math.ceil(characterCount / 4),
     truncated,
+    omittedMessageCount,
     secretWarning: bounded.some(message => mayContainSecret(message.text)),
   }
 }
@@ -105,6 +108,7 @@ export function fingerprintHistoryAskSelection(
       role: message.role,
       text: message.text,
     })),
+    omittedMessageCount: selection.omittedMessageCount,
   }
   return createHash('sha256').update(JSON.stringify(promptBearingValue)).digest('hex')
 }
@@ -127,7 +131,10 @@ export function renderHistoryAskReview(
     `source session: ${sanitizeTerminalText(selection.detail.summary.id)}`,
     `selected messages: ${selection.messages.length}`,
     `estimated prompt tokens: ~${selection.estimatedTokens.toLocaleString('en-US')} (character estimate, not provider metering)`,
-    ...(selection.truncated ? ['warning: local evidence limits truncated this selection'] : []),
+    ...(selection.omittedMessageCount === 0
+      ? []
+      : [`warning: ${selection.omittedMessageCount} older messages were omitted by the bounded history projection; "all" is not the complete source session`]),
+    ...(selection.truncated && selection.omittedMessageCount === 0 ? ['warning: local evidence limits truncated this selection'] : []),
     ...(selection.secretWarning ? ['warning: selected evidence resembles credentials or private keys; review before sending'] : []),
     '',
     ...lines,

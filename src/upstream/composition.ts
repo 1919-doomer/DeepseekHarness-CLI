@@ -1,6 +1,7 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { loadOptionalPatches, renderConfigDump } from '@deepseek-ai/dsh-app-boot'
+import { DshcRuntimeError } from './errors.js'
 
 export interface CompositionEntry {
   /** Plugin id as written in the composition file. */
@@ -99,7 +100,19 @@ export async function resolveComposition(
       ...(devPatchPath === undefined ? {} : { devPatchPath }),
       patchPaths,
     }
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    try {
+      const parent = await stat(dirname(candidate))
+      if (!parent.isDirectory()) {
+        throw new DshcRuntimeError(
+          `Workspace composition parent is not a directory: ${dirname(candidate)}`,
+          'configuration',
+        )
+      }
+    } catch (parentError) {
+      if ((parentError as NodeJS.ErrnoException).code !== 'ENOENT') throw parentError
+    }
     return {
       path: shippedPath,
       source: 'shipped-default',
