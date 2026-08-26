@@ -47,6 +47,8 @@ describe('M3 terminal commands', () => {
     expect(help).toContain('/trace')
     expect(capabilities).toContain('partial/unavailable')
     expect(capabilities).toContain('prompt cancel: unavailable')
+    expect(capabilities).toContain('hard interrupt')
+    expect(capabilities).toContain('fresh session')
     expect(capabilities).toContain('dshc.core@1.0.0')
   })
 

@@ -25,11 +25,15 @@ describe('deployment persona', () => {
     expect(buildPersona({ ...facts, platform: 'darwin' })).toContain('macOS')
   })
 
-  it('states the two facts upstream cannot know: no approver, no per-request cancel', () => {
+  it('states client-only approval, interrupt and plain-text rendering facts', () => {
     const persona = buildPersona(facts)
     expect(persona).toContain('fails')
     expect(persona).toContain('escalation')
     expect(persona).toContain('no per-request cancel')
+    expect(persona).toContain('Interrupt')
+    expect(persona).toContain('fresh one')
+    expect(persona).toContain('unable to render Markdown')
+    expect(persona).toContain('Write plain text')
   })
 
   it('does not restate a setting the composition owns', () => {

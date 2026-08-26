@@ -417,20 +417,82 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const interrupt = useCallback((): void => {
     if (interruptingRef.current) return
     interruptingRef.current = true
-    if (runningRef.current) {
-      setTranscript(state => appendSystemMessage(
-        state,
-        `Ctrl+C closes the entire Harness runtime; protocol ${metadata.protocolVersion} has no prompt-level cancel.`,
-        'interrupt',
-        nextId('interrupt'),
-      ))
+    const running = runningRef.current
+    const restart = props.restart
+    if (!running || restart === undefined) {
+      if (running) {
+        setTranscript(state => appendSystemMessage(
+          state,
+          `Ctrl+C closes the entire Harness runtime; protocol ${metadata.protocolVersion} has no prompt-level cancel and this client has no restart provider.`,
+          'interrupt',
+          nextId('interrupt'),
+        ))
+      }
+      setPhase('closing')
+      void props.trackRuntimeClose(props.runtimeRef.current).then(
+        () => finish(130, true),
+        () => finish(130, true),
+      )
+      return
     }
+
+    const previousRuntime = props.runtimeRef.current
+    const previousSession = sessionRef.current
     setPhase('closing')
-    void props.trackRuntimeClose(props.runtimeRef.current).then(
-      () => finish(130, true),
-      () => finish(130, true),
-    )
-  }, [finish, nextId, metadata.protocolVersion, props.runtimeRef, props.trackRuntimeClose])
+    setTranscript(state => appendSystemMessage(
+      state,
+      `Interrupt requested. Protocol ${metadata.protocolVersion} has no prompt-level cancel, so dshc is stopping the whole Harness runtime. Session ${previousSession} ends here and cannot be resumed.`,
+      'interrupt',
+      nextId('interrupt'),
+    ))
+    void props.trackRuntimeClose(previousRuntime)
+      .then(async () => {
+        if (!mountedRef.current) return
+        setPhase('starting')
+        const next = await restart({})
+        if (!mountedRef.current) {
+          await props.trackRuntimeClose(next.runtime).catch(() => undefined)
+          return
+        }
+        props.runtimeRef.current = next.runtime
+        setMetadata(next.metadata)
+        setComposition(next.composition)
+        const fresh = createSessionId()
+        setSessionId(fresh)
+        setGeneration(value => value + 1)
+        setSessionTurns(0)
+        setUsage(initialSessionUsage)
+        setEventHistory(initialTerminalEventHistory())
+        setAgentTopology(initialAgentTopologyHistory())
+        jumpToNewest()
+        runningRef.current = false
+        interruptingRef.current = false
+        setPhase('idle')
+        setTranscript(state => appendSystemMessage(
+          state,
+          `Interrupt completed by replacing the whole Harness runtime. New session ${fresh}; the interrupted session was not resumed.`,
+          'interrupt',
+          nextId('interrupt-restarted'),
+        ))
+      })
+      .catch((error) => {
+        if (!mountedRef.current) return
+        const failure = classifyRuntimeError(error)
+        setTranscript(state => appendSystemMessage(
+          state,
+          `Interrupt could not establish a clean replacement runtime, so the terminal is closing: ${failure.message}`,
+          `interrupt error · ${failure.code}`,
+          nextId('interrupt-error'),
+        ))
+        setPhase('failed')
+        // Let Ink commit the diagnostic frame before unmounting. An immediate
+        // replacement rejection otherwise exits on the same microtask and the
+        // person sees only the preceding "stopping" message.
+        setTimeout(() => {
+          if (mountedRef.current) finish(130, true)
+        }, 25)
+      })
+  }, [finish, jumpToNewest, nextId, metadata.protocolVersion, props.restart, props.runtimeRef, props.trackRuntimeClose])
 
   const runHarnessPrompt = useCallback(async (
     prompt: string,
@@ -1133,7 +1195,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               <Text dimColor>{toolFocus
                 ? 'tools focused · ↑/↓ select · Enter details · Tab or Esc back to prompt'
                 : phase === 'running'
-                  ? 'Harness is running… Ctrl+C closes the whole runtime'
+                  ? props.restart === undefined
+                    ? 'Harness is running… Ctrl+C closes the whole runtime'
+                    : 'Harness is running… Ctrl+C interrupts via a fresh runtime and session'
                   : commandBusy ? 'Local terminal command is running…'
                     // The arrows and Tab mean something different while the
                     // menu is open, so the line says which meaning is live

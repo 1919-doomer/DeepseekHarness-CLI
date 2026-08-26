@@ -673,7 +673,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     }
   }, 15_000)
 
-  it('Ctrl+C during an active turn closes the whole runtime and restores terminal state', async () => {
+  it('Ctrl+C without a restart provider closes the whole runtime and restores terminal state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m3-product-signal-'))
     tempRoots.push(root)
     const logPath = join(root, 'prompts.jsonl')
@@ -704,6 +704,100 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(input.referenced).toBe(false)
       expect(readOutput()).toContain('no prompt-level cancel')
       expect(readOutput()).not.toContain('cancelled')
+      expect(readOutput()).toContain(ALT_SCREEN_OFF)
+    } finally {
+      input.end()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('interrupts an active turn by replacing the runtime and starting a fresh session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-product-interrupt-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath, 'hang-activity')
+    let replacement: HarnessRuntime | undefined
+    let restartCalls = 0
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'interrupt-source-session',
+      restart: async selection => {
+        expect(selection).toEqual({})
+        restartCalls += 1
+        replacement = runtimeFor(root, logPath)
+        return { runtime: replacement, metadata: await replacement.start() }
+      },
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'wait until interrupted')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      await waitFor(() => readOutput().includes('Ctrl+C interrupts via a fresh runtime and session'))
+      input.write('\u0003')
+
+      await waitFor(() => readOutput().includes('Interrupt completed by replacing the whole Harness runtime'))
+      expect(restartCalls).toBe(1)
+      expect(readOutput()).toContain('cannot be resumed')
+      expect(readOutput()).toContain('was not resumed')
+
+      await submitLine(input, 'continue after interrupt')
+      await waitFor(async () => (await promptRecords(logPath)).length === 2)
+      await waitFor(() => readOutput().includes('hello'))
+      await submitLine(input, '/exit')
+      const result = await product
+      expect(result).toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
+      expect(result.sessionId).not.toBe('interrupt-source-session')
+    } finally {
+      input.end()
+      await replacement?.close()
+      await runtime.close()
+    }
+  }, 15_000)
+
+  it('fails closed when interrupt cannot start a clean replacement runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-product-interrupt-failure-'))
+    tempRoots.push(root)
+    const logPath = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, logPath, 'hang-activity')
+    const input = new TestInput()
+    const output = new TestOutput()
+    const error = new TestOutput()
+    const readOutput = capture(output)
+
+    const product = runTerminalProduct(runtime, {
+      stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream,
+      stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true,
+      useAlternateScreen: true,
+      initialSessionId: 'interrupt-failure-session',
+      restart: async () => { throw new Error('replacement refused') },
+    })
+
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'wait for failed interrupt recovery')
+      await waitFor(async () => (await promptRecords(logPath)).length === 1)
+      input.write('\u0003')
+
+      await expect(product).resolves.toEqual({
+        exitCode: 130,
+        interrupted: true,
+        totalTurns: 0,
+        sessionId: 'interrupt-failure-session',
+      })
+      expect(readOutput()).toContain('could not establish a clean replacement runtime')
+      expect(readOutput()).toContain('replacement refused')
       expect(readOutput()).toContain(ALT_SCREEN_OFF)
     } finally {
       input.end()

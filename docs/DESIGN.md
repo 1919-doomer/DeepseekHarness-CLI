@@ -175,7 +175,8 @@ M4 may add filtering, duration analysis and stronger diagnostics without changin
 - `/new` changes the selected session only;
 - `/exit` closes the owned runtime cleanly;
 - malformed or failing local slash commands remain local terminal errors and do not reach the model;
-- Ctrl+C closes the whole runtime while upstream lacks prompt cancellation;
+- active-turn Ctrl+C replaces the whole runtime and starts a fresh session while
+  upstream lacks prompt cancellation or resume;
 - non-TTY/one-shot behavior remains supported;
 - prompt editing indexes Unicode grapheme clusters, never UTF-16 code units; cursor movement/deletion must not split surrogate pairs, combining sequences, modifiers, flags or ZWJ emoji;
 - segmentation is editing/navigation metadata only: the exact user-provided Unicode prompt string is preserved for Harness submission rather than normalized or rewritten;

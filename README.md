@@ -55,7 +55,8 @@ Current capabilities:
 - resize-aware transcript, grapheme-safe prompt editor, history navigation and adaptive status line;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
 - a slash menu built from the live registry: arrows choose, Tab completes, Enter runs a finished command and completes an unfinished one, and the window scrolls instead of stopping at the fold;
-- terminal markdown rendering for assistant prose — headings, emphasis, lists, quotes, fenced code and cell-measured tables — applied through Ink props only, never by emitting escape sequences, and never applied to tool output, which is program output and must survive verbatim (the plain one-shot/piped renderer stays unstyled);
+- assistant prose is presented as safe terminal text; a best-effort local legacy formatter remains isolated from tool output, but the deployment persona tells the model that this surface cannot reliably render Markdown and requires plain-text responses;
+- active-turn Ctrl+C performs an honest hard interrupt: it stops the whole Harness runtime, starts the same configuration again and selects a fresh session because protocol `0.0.1` cannot cancel or resume the interrupted one;
 - a token usage readout in the status line and `/status`, in absolute numbers: upstream reports no context window on this transport, so dshc reports no percentage;
 - first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
 - specialized coding-tool/subagent presentation plus a safe generic event fallback;
@@ -68,7 +69,7 @@ Current capabilities:
 - `/context`, `/prompt` and `/permissions` distinguish observed runtime facts, requested local projections and capability gaps without inventing a context window, final Prompt or approval answerer;
 - Windows workspace-local `TEMP`/`TMP` is diagnosed both by `doctor` and before interactive startup; dshc explains why every pwsh/shell call fails without relocating TEMP or weakening the sandbox;
 - M1/M2 one-shot, piped stdin, JSON and scripted non-TTY `--interactive` modes retained.
-- a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, and the two facts upstream cannot know: no client-side approval answerer and no per-request cancel (`DSH_SYSTEM_PROMPT` replaces it wholesale);
+- a deployment persona built from the launch itself — host, workspace, proxy and registry configuration, plus client-only facts about fail-closed approval, hard-interrupt semantics and the plain-text-only output target (`DSH_SYSTEM_PROMPT` replaces it wholesale);
 - the shipped composition remains authoritative; `<workspace>/.dshc/cordis.patch.yml` is the only automatic workspace layer, and `/config` separates base, patch and effective requested configuration;
 - `scout` / `planner` / `reviewer` / `oracle` read-only role subagents alongside the general `subagent`, mounted on the upstream delegation seam rather than on a scheduler of our own — see [subagent roles](docs/SUBAGENT-ROLES.md);
 - `/config`, `/config fork`, `/model`, `/provider` and `/reload` for inspecting and patching composition, each stating the session loss before it acts;
@@ -174,7 +175,7 @@ The validated baseline is DeepSeek Harness `0.1.1-rc.2`, SDK server `deepseek-ha
 - `session/prompt` remains an enqueue receipt, not an exact assistant-result RPC;
 - activity is observed from the matching durable receipt through root `idle`;
 - `/new` changes only the locally selected session;
-- Ctrl+C closes the whole owned runtime rather than pretending one prompt was cancelled;
+- active-turn Ctrl+C stops and replaces the whole owned runtime, then selects a fresh session; this is a dshc hard interrupt, not prompt cancellation or session resume;
 - `doctor` stops after the public `initialize` handshake and never uses `session/prompt`;
 - unavailable permission escalation fails closed rather than being fabricated by the terminal frontend;
 - `/plugins` labels the Harness runtime plugin inventory partial/unavailable instead of guessing it;

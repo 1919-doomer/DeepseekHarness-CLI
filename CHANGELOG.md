@@ -14,7 +14,9 @@ semantic prerelease versions; public alpha builds are published under the npm
 - a public DeepSeek Harness proposal for versioned SDK capabilities and typed
   server-to-client requests, tracked in upstream discussion #4583;
 - M7.6 approval-audit anomaly projection for replayed asks, orphan/late or
-  duplicate decisions and cross-session routing isolation.
+  duplicate decisions and cross-session routing isolation;
+- active-turn hard interrupt through whole-runtime replacement and a fresh
+  session, without claiming unsupported prompt cancellation or resume.
 
 ### Fixed
 
@@ -25,7 +27,9 @@ semantic prerelease versions; public alpha builds are published under the npm
   as damaged sessions, and cover bounded index rebuilds during official JSONL
   appends;
 - register Ink exit observation before unmount, preventing one leaked process
-  `beforeExit` listener after every completed terminal run.
+  `beforeExit` listener after every completed terminal run;
+- tell the model that the current terminal output target cannot reliably render
+  Markdown and require plain-text responses.
 
 ## 0.1.0-alpha.9 — 2026-08-25
 

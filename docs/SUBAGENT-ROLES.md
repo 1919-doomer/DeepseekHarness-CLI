@@ -20,17 +20,19 @@ system that decides it:
 - that the attached client is a terminal front end which **cannot answer an
   approval prompt**, so anything needing escalation fails closed rather than
   reaching the person;
-- that there is **no per-request cancel** — interrupting ends the runtime and
-  the session with it, so a hung command costs the whole conversation;
-- that the output is read in a terminal;
+- that there is **no per-request cancel** — dshc implements Interrupt by ending
+  the runtime, starting the same configuration again and selecting a fresh
+  session; the interrupted session cannot be resumed;
+- that the current terminal surface cannot reliably render Markdown and model
+  output must target plain text;
 - the proxy and npm registry configuration observed at launch — stated as
   configuration, never as reachability, because dshc does not probe the network
   and a proxy variable being set is not evidence that the proxy works. A proxy
   URL's credentials are stripped where it is read, not where it is displayed.
 
 Left unsaid, a model infers a friendlier deployment than this one. It asks for
-sandbox escalation nobody can answer, or starts a command that can only be
-stopped by killing the session.
+sandbox escalation nobody can answer, emits formatting the terminal cannot
+reliably present, or mistakes runtime replacement for resumable cancellation.
 
 The text is built in [`src/upstream/persona.ts`](../src/upstream/persona.ts) and
 reaches the child through `DSH_SYSTEM_PROMPT`, which the composition reads.

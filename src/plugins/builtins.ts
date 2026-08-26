@@ -217,6 +217,7 @@ function renderCapabilities(context: TerminalViewContext): string {
     `- workspace: ${context.runtime.workspace}`,
     '- runtime plugin inventory: partial/unavailable on SDK protocol 0.0.1',
     '- prompt cancel: unavailable',
+    '- dshc hard interrupt: active-turn Ctrl+C replaces the whole runtime and starts a fresh session',
     '- per-session close: unavailable',
     '',
     'M7 capability matrix',

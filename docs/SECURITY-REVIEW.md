@@ -120,7 +120,7 @@ rather than a snapshot of the currently published client: `performClose()`
 closes an already-published client, awaits an in-flight start so a late
 publication cannot escape cleanup, then closes again. Startup failures unwind
 the client while preserving the original error. Alternate-screen teardown is
-exception-safe, and Ctrl+C closes the whole runtime rather than fabricating a
+exception-safe, and Ctrl+C replaces the whole runtime rather than fabricating a
 prompt-level cancel the protocol does not offer.
 
 Covered by `tests/integration/interactive-signal.spec.ts`,

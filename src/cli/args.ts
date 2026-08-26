@@ -189,4 +189,6 @@ Interactive commands:
   rather than a copy that can fall behind.
 
 DeepSeek Harness protocol 0.0.1 exposes no prompt-level cancel or session-close request.
+In the standard TTY product, active-turn Ctrl+C performs a hard interrupt by replacing the
+whole runtime and selecting a fresh session; it is not cancellation or resume.
 `

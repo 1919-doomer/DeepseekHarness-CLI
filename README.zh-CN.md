@@ -54,6 +54,7 @@ cd repository
 - shipped composition 始终是基线，工作区只自动应用 `.dshc/cordis.patch.yml`；
 - `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认；在不可变 candidate profile 中用私有 patch 试启动，成功后才原子发布 workspace patch；
 - resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
+- persona 明确告知模型当前终端不能可靠渲染 Markdown，要求使用纯文本；active turn 中 Ctrl+C 会停止整个 Harness runtime、按同一配置重建并切换到新 session；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
 - first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
 - activity/trace/transcript/topology 使用有界本地 retention，并明确披露 eviction；
@@ -157,7 +158,7 @@ printf "first prompt\nsecond prompt\n/exit\n" | pnpm dev -- --interactive
 - `session/prompt` 仍只视为 enqueue receipt；
 - 每次 activity 从匹配 durable receipt 一直观察到 root `idle`；
 - `/new` 只改变本地选中的 session；
-- active turn 中 Ctrl+C 会关闭整个 Harness runtime；
+- active turn 中 Ctrl+C 会停止并重建整个 Harness runtime，然后切换到新 session；这是 dshc 的 hard interrupt，不是上游 prompt cancel 或 session resume；
 - `doctor` 在公开 `initialize` 后停止，不会触发模型调用；
 - 无法获得的权限升级会 fail closed，而不是由终端层伪造批准；
 - `/plugins` 对 runtime plugin inventory 明确显示 partial/unavailable；
