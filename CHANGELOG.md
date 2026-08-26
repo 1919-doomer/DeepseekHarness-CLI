@@ -8,6 +8,9 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 ### Added
 
+- a visible `/history` prompt hint, `/sessions` alias and `c` action that
+  prepares a review-first continuation in a new session while keeping the
+  unsupported true-resume boundary explicit;
 - an executable M7.4 compatibility gate that compile-time checks the published
   SDK request/notification maps and probes the real official server's closed
   namespaced extension router before any M7.5 capability can be claimed;
@@ -20,6 +23,8 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 ### Fixed
 
+- preserve the exact history catalog selection and search when returning from
+  a conversation detail, with a second Esc/q returning to the live chat;
 - require Ask History review before confirmation and bind it to the exact
   prompt-bearing evidence so concurrent JSONL changes invalidate consent and
   send nothing;

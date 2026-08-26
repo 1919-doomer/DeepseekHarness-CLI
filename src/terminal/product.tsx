@@ -511,7 +511,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       setAgentTopology(initialAgentTopologyHistory())
       setTranscript(state => appendSystemMessage(
         state,
-        `Ask History starts a new analysis session ${rootSessionId}; source session remains unchanged.${sourceSummary === undefined ? '' : `\nSelected evidence: ${sourceSummary}.`}\nPrevious live session ${previous} remains runtime-owned until exit.`,
+        `History handoff starts a new analysis session ${rootSessionId}; the source session remains read-only and unchanged.${sourceSummary === undefined ? '' : `\nSelected evidence: ${sourceSummary}.`}\nPrevious live session ${previous} remains runtime-owned until exit.`,
         'history',
         nextId('history-session'),
       ))
@@ -869,6 +869,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         if (key.escape) {
           if (props.history.isSearchFocused()) {
             if (props.history.toggleFocus()) setFirstPartyViewRevision(value => value + 1)
+          } else if (props.history.back()) {
+            setFirstPartyViewRevision(value => value + 1)
           } else {
             selectView(undefined)
           }
@@ -912,7 +914,18 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           return
         }
         if (keyInput === 'q') {
-          selectView(undefined)
+          if (props.history.back()) setFirstPartyViewRevision(value => value + 1)
+          else selectView(undefined)
+          return
+        }
+        if (keyInput.toLowerCase() === 'c') {
+          const command = props.history.continuationCommand()
+          if (command !== undefined) {
+            selectView(undefined)
+            setInput(command)
+            setCursor(graphemeCount(command))
+            setHistoryIndex(undefined)
+          }
           return
         }
         if (key.upArrow || key.downArrow) {
@@ -1046,6 +1059,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         setInput(value)
         setCursor(graphemeCount(value))
       }
+      return
+    }
+    if (key.ctrl && keyInput.toLowerCase() === 'u') {
+      setInput('')
+      setCursor(0)
+      setHistoryIndex(undefined)
       return
     }
     if ((key.ctrl && keyInput.toLowerCase() === 'j') || (key.meta && key.return)) {
@@ -1190,7 +1209,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
       <Box flexDirection="column" flexShrink={0} paddingX={1}>
         {currentView !== undefined
-          ? <Text dimColor>Esc / Enter / q · return to transcript</Text>
+          ? <Text dimColor>{activeView === 'history'
+              ? 'History · Enter inspect · c continue in NEW session · Esc/q back'
+              : 'Esc / Enter / q · return to transcript'}</Text>
           : <>
               <Text dimColor>{toolFocus
                 ? 'tools focused · ↑/↓ select · Enter details · Tab or Esc back to prompt'
@@ -1204,7 +1225,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
                     // rather than leaving the reader to discover it.
                     : menuView.shown > 0
                       ? '↑/↓ choose · Tab complete · Enter run · Esc close'
-                      : 'Enter submit · ↑/↓ history · PgUp/PgDn scroll · Tab tools · /help'}</Text>
+                      : 'Enter submit · /history past conversations · PgUp/PgDn scroll · Tab tools · /help'}</Text>
               <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
             </>}
       </Box>

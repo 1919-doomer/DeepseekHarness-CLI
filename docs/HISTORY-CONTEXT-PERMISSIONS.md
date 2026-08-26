@@ -19,6 +19,7 @@ indexes or recovery data back to the artifact.
 /history all
 /history find <text>
 /history open <session-id> [--cross-workspace]
+/sessions
 ```
 
 `/history all` is the explicit cross-workspace switch. The first projection is
@@ -30,11 +31,15 @@ usable.
 Inside the history view, Tab switches focus between the bounded list and its
 search box. Search covers recorded workspace, ISO date, title, provider/model,
 message text and tool activity; Enter applies the query, while list focus uses
-arrows and Enter for detail inspection.
+arrows and Enter for detail inspection. Esc/q moves from detail back to the
+same list selection and search, then from the list back to the live chat. The
+main prompt permanently advertises `/history past conversations`; `/sessions`
+is an equivalent discoverability alias.
 
 The SDK protocol does not expose `AgentRegistry.resume`, so this view offers no
 Resume action. That limitation is shown in the view rather than approximated
-with a private request.
+with a private request. Pressing `c` on a list row or detail prepares, but does
+not submit, a review-first `/history continue` command.
 
 ## Ask History
 
@@ -44,6 +49,8 @@ continues the source session.
 ```text
 /history ask <session-id> [all|seqs] [--cross-workspace] -- <question>
 /history ask <session-id> [all|seqs] [--cross-workspace] --yes -- <question>
+/history continue <session-id> [all|seqs] [--cross-workspace] -- <next instruction>
+/history continue <session-id> [all|seqs] [--cross-workspace] --yes -- <next instruction>
 ```
 
 The first form is mandatory review: it lists exact source session/message
@@ -57,6 +64,12 @@ the model to retain those labels in its answer.
 Evidence is limited to 64 KiB and passes through the existing terminal
 sanitizer for display. Model-generated summaries are never stored or presented
 as original history.
+
+`/history continue` uses the same mandatory evidence review and fingerprint
+binding as Ask History, then creates a new ordinary session. Its prompt says
+that runtime state was not resumed and requires current workspace, process,
+dependency and repository facts to be re-inspected before use. It is a safe
+continuation handoff, not a substitute for an upstream resume contract.
 
 ## Context and prompt views
 

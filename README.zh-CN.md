@@ -62,7 +62,7 @@ cd repository
 - `dshc doctor` 只做兼容性/启动 preflight，只执行 `initialize`，绝不发送模型 prompt；
 - `dshc --dev` 只允许交互式 TTY，挂载官方 Cordis runner/tool，并以持续警告、`/workbench` 和 trace filter 呈现高权限动态生命周期；普通模式完全不挂载这些工具；
 - `dshc doctor --dev` 无需 provider key，只验证精确依赖、developer patch 顺序与 initialize，不执行动态代码；
-- `/history` 通过 Harness 自己的 JSONL 会话文件只读浏览，默认限制在当前 workspace；Ask History 先审阅来源，再把确认片段注入一个全新普通会话；
+- `/history` 通过 Harness 自己的 JSONL 会话文件只读浏览，默认限制在当前 workspace；主输入区常驻入口提示，详情可返回原列表，Ask/Continue History 先审阅来源，再把确认片段注入一个全新普通会话；
 - `/context`、`/prompt`、`/permissions` 明确区分 runtime/observed、local/requested 与 unavailable，不伪造 context window、最终 Prompt 或 approval answerer；
 - Windows 的 `TEMP`/`TMP` 位于 workspace 内时，`doctor` 和交互启动都会准确说明所有 pwsh/shell 调用为何失败，但不会搬迁 TEMP 或削弱 sandbox；
 - one-shot、stdin pipe、JSON 与非 TTY `--interactive` 脚本模式全部保留。
@@ -102,7 +102,7 @@ TTY 中的主要命令：
 /config        查看 base、patch 与 effective requested configuration
 /plugin        搜索/安装受限 Harness 插件
 /workbench     Cordis 生命周期观察时间线（仅 dev 模式）
-/history       Harness 会话只读浏览；ask 必须先审阅证据
+/history       明显的历史对话入口；continue 审阅后在新会话继续
 /context       已观察到的 request usage、容量元数据与 compaction
 /prompt        dshc 自己拥有的本地 Prompt 层投影
 /permissions   fail-closed policy、能力矩阵与 approval audit
