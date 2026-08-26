@@ -101,7 +101,8 @@ export async function resolveComposition(
       patchPaths,
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
     try {
       const parent = await stat(dirname(candidate))
       if (!parent.isDirectory()) {
