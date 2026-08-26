@@ -195,9 +195,9 @@ describe('read-only history projection', () => {
       totalTurns: 0,
     }
 
-    await expect(command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?']))
+    await expect(command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--yes', '--', 'What?']))
       .rejects.toThrow(/requires a review/i)
-    const review = await command.execute(context, ['ask', 'history-session', '4', '--', 'What?'])
+    const review = await command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--', 'What?'])
     expect(review).toMatchObject({ kind: 'message', title: 'Ask History review' })
     expect(review.kind === 'message' ? review.text : '').toContain('review fingerprint:')
 
@@ -209,11 +209,11 @@ describe('read-only history projection', () => {
         },
       }),
     ])
-    await expect(command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?']))
+    await expect(command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--yes', '--', 'What?']))
       .rejects.toThrow(/evidence changed/i)
 
-    await command.execute(context, ['ask', 'history-session', '4', '--', 'What?'])
-    const confirmed = await command.execute(context, ['ask', 'history-session', '4', '--yes', '--', 'What?'])
+    await command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--', 'What?'])
+    const confirmed = await command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--yes', '--', 'What?'])
     expect(confirmed).toMatchObject({ kind: 'submit-prompt', newSession: true })
     expect(confirmed.kind === 'submit-prompt' ? confirmed.prompt : '').toContain('changed after review')
   })
