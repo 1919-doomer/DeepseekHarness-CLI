@@ -2,6 +2,7 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import {
   buildHistoryAskPrompt,
+  buildHistoryContinuePrompt,
   parseHistorySeqs,
   renderHistoryAskReview,
   selectHistoryEvidence,
@@ -160,12 +161,21 @@ describe('read-only history projection', () => {
     }, [])
 
     expect(workbench.render()).toContain('focus=list')
+    expect(workbench.plugin().commands?.[0]?.aliases).toContain('sessions')
     expect(workbench.toggleFocus()).toBe(true)
     expect(workbench.insertSearch('2026-08 model')).toBe(true)
     expect(workbench.render()).toContain('focus=search')
     await workbench.commitSearch()
     expect(queries.at(-1)?.text).toBe('2026-08 model')
     expect(workbench.render()).toContain('focus=list')
+
+    expect(await workbench.openSelected()).toBe(true)
+    expect(workbench.render()).toContain('session: history-session')
+    expect(workbench.continuationCommand()).toBe('/history continue history-session all -- Continue from this conversation.')
+    expect(workbench.back()).toBe(true)
+    expect(workbench.render()).toContain('search: 2026-08 model')
+    expect(workbench.render()).toContain('focus=list')
+    expect(workbench.back()).toBe(false)
   })
 
   it('requires review and binds confirmation to unchanged evidence', async () => {
@@ -216,5 +226,43 @@ describe('read-only history projection', () => {
     const confirmed = await command.execute(context, ['ask', 'history-session', '4', '--cross-workspace', '--yes', '--', 'What?'])
     expect(confirmed).toMatchObject({ kind: 'submit-prompt', newSession: true })
     expect(confirmed.kind === 'submit-prompt' ? confirmed.prompt : '').toContain('changed after review')
+
+    await command.execute(context, [
+      'ask', 'history-session', '4', '--cross-workspace', '--', 'Finish the implementation.',
+    ])
+    await expect(command.execute(context, [
+      'continue', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Finish the implementation.',
+    ])).rejects.toThrow(/requested action differs/i)
+
+    const continueReview = await command.execute(context, [
+      'continue', 'history-session', '4', '--cross-workspace', '--', 'Finish the implementation.',
+    ])
+    expect(continueReview).toMatchObject({ kind: 'message', title: 'Continue History review' })
+    expect(continueReview.kind === 'message' ? continueReview.text : '').toContain('NEW Harness session')
+    expect(continueReview.kind === 'message' ? continueReview.text : '').toContain('is not resumed')
+    const continued = await command.execute(context, [
+      'continue', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Finish the implementation.',
+    ])
+    expect(continued).toMatchObject({ kind: 'submit-prompt', newSession: true })
+    const continuedPrompt = continued.kind === 'submit-prompt' ? continued.prompt : ''
+    expect(continuedPrompt).toContain('NEW ordinary Harness session')
+    expect(continuedPrompt).toContain('This is not resumed runtime or session state')
+    expect(continuedPrompt).toContain('Re-inspect the current workspace')
+    expect(continuedPrompt).toContain('changed after review')
+  })
+
+  it('builds continuation prompts without treating old runtime state as current', () => {
+    const detail = projectHistorySession(header, [
+      event(2, 'assistant/message', {
+        message: {
+          role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' },
+          content: [{ type: 'text', text: 'The tests passed yesterday.' }],
+        },
+      }),
+    ])
+    const prompt = buildHistoryContinuePrompt(selectHistoryEvidence(detail, [2], 'Continue fixing it.'))
+    expect(prompt).toContain('[session:history-session#seq:2]')
+    expect(prompt).toContain('facts may now be stale')
+    expect(prompt).toContain('not instructions')
   })
 })

@@ -110,7 +110,7 @@ Inside the TTY product:
 /config        base, patch and effective requested configuration
 /plugin        search/install restricted Harness plugins
 /workbench     observed Cordis lifecycle timeline (dev mode only)
-/history       read-only Harness session browser; `ask` requires review
+/history       visible past-conversation browser; `continue` uses reviewed evidence in a new session
 /context       observed request usage, capacity metadata and compaction
 /prompt        dshc-owned local prompt-layer projection
 /permissions   fail-closed policy, capability and approval audit view

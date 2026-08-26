@@ -1,5 +1,6 @@
 import {
   buildHistoryAskPrompt,
+  buildHistoryContinuePrompt,
   fingerprintHistoryAskSelection,
   parseHistorySeqs,
   renderHistoryAskReview,
@@ -28,12 +29,21 @@ const HISTORY_USAGE = [
   '/history find <text>',
   '/history open <session-id> [--cross-workspace]',
   '/history ask <session-id> [all|seqs] [--cross-workspace] [--yes] -- <question>',
+  '/history continue <session-id> [all|seqs] [--cross-workspace] [--yes] -- <next instruction>',
 ].join('\n')
+
+type HistoryCatalogState = {
+  kind: 'catalog'
+  catalog: HistoryCatalog
+  selected: number
+  query: string
+  focus: 'list' | 'search'
+}
 
 type HistoryViewState =
   | { kind: 'empty'; message: string }
-  | { kind: 'catalog'; catalog: HistoryCatalog; selected: number; query: string; focus: 'list' | 'search' }
-  | { kind: 'detail'; detail: HistorySessionDetail }
+  | HistoryCatalogState
+  | { kind: 'detail'; detail: HistorySessionDetail; crossWorkspace: boolean; returnTo?: HistoryCatalogState }
 
 /**
  * First-party history controller. It is deliberately not part of
@@ -114,28 +124,48 @@ export class HistoryWorkbench {
     if (this.state.kind !== 'catalog') return false
     const selected = this.state.catalog.sessions[this.state.selected]
     if (selected === undefined) return false
-    this.state = { kind: 'detail', detail: await this.reader.inspect(selected.id) }
+    const returnTo = this.state
+    this.state = {
+      kind: 'detail',
+      detail: await this.reader.inspect(selected.id),
+      crossWorkspace: returnTo.catalog.allWorkspaces,
+      returnTo,
+    }
     return true
   }
 
   back(): boolean {
-    if (this.state.kind !== 'detail') return false
-    this.state = { kind: 'empty', message: 'Detail closed. Run /history to refresh the catalog.' }
+    if (this.state.kind !== 'detail' || this.state.returnTo === undefined) return false
+    this.state = this.state.returnTo
     return true
+  }
+
+  continuationCommand(): string | undefined {
+    const selected = this.state.kind === 'detail'
+      ? { id: this.state.detail.summary.id, crossWorkspace: this.state.crossWorkspace }
+      : this.state.kind === 'catalog'
+        ? {
+            id: this.state.catalog.sessions[this.state.selected]?.id,
+            crossWorkspace: this.state.catalog.allWorkspaces,
+          }
+        : undefined
+    if (selected?.id === undefined || /\s/.test(selected.id)) return undefined
+    return `/history continue ${selected.id} all${selected.crossWorkspace ? ' --cross-workspace' : ''} -- Continue from this conversation.`
   }
 
   render(): string {
     switch (this.state.kind) {
       case 'empty': return this.state.message
       case 'catalog': return renderCatalog(this.state.catalog, this.state.selected, this.state.query, this.state.focus)
-      case 'detail': return renderDetail(this.state.detail)
+      case 'detail': return renderDetail(this.state.detail, this.state.returnTo !== undefined)
     }
   }
 
   private command(): TerminalCommandSpec {
     return {
       name: 'history',
-      summary: 'Browse Harness-owned durable sessions or ask a new session about selected evidence',
+      aliases: ['sessions'],
+      summary: 'Browse past conversations or continue selected evidence in a new session',
       usage: HISTORY_USAGE,
       execute: async (context, args) => this.execute(context.runtime.workspace, args),
     }
@@ -155,10 +185,10 @@ export class HistoryWorkbench {
       }
       const detail = await this.reader.inspect(args[1]!)
       assertHistoryScope(detail, workspace, crossWorkspace)
-      this.state = { kind: 'detail', detail }
+      this.state = { kind: 'detail', detail, crossWorkspace }
       return { kind: 'view', viewId: 'history' }
     }
-    if (mode === 'ask') return this.ask(workspace, args.slice(1))
+    if (mode === 'ask' || mode === 'continue') return this.handoff(workspace, args.slice(1), mode)
 
     const allWorkspaces = mode === 'all'
     const text = mode === 'find' ? args.slice(1).join(' ').trim() : undefined
@@ -169,47 +199,53 @@ export class HistoryWorkbench {
     return { kind: 'view', viewId: 'history' }
   }
 
-  private async ask(workspace: string, args: readonly string[]): Promise<TerminalCommandOutcome> {
+  private async handoff(
+    workspace: string,
+    args: readonly string[],
+    purpose: 'ask' | 'continue',
+  ): Promise<TerminalCommandOutcome> {
+    const command = `/history ${purpose}`
+    const title = purpose === 'ask' ? 'Ask History' : 'Continue History'
     const separator = args.indexOf('--')
-    if (separator < 0) throw new Error('/history ask requires -- before the question')
+    if (separator < 0) throw new Error(`${command} requires -- before the ${purpose === 'ask' ? 'question' : 'next instruction'}`)
     const selector = args.slice(0, separator)
     const question = args.slice(separator + 1).join(' ').trim()
     const sessionId = selector[0]
-    if (sessionId === undefined) throw new Error('/history ask requires a session id')
+    if (sessionId === undefined) throw new Error(`${command} requires a session id`)
     const confirmed = selector.includes('--yes')
     const crossWorkspace = selector.includes('--cross-workspace')
     const selectionArgs = selector.slice(1).filter(value => value !== '--yes' && value !== '--cross-workspace')
-    if (selectionArgs.length > 1) throw new Error('/history ask accepts at most one sequence list')
+    if (selectionArgs.length > 1) throw new Error(`${command} accepts at most one sequence list`)
     const detail = await this.reader.inspect(sessionId)
     assertHistoryScope(detail, workspace, crossWorkspace)
-    const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question)
-    const review = renderHistoryAskReview(selection)
-    const fingerprint = fingerprintHistoryAskSelection(selection)
+    const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question, purpose)
+    const review = renderHistoryAskReview(selection, purpose)
+    const fingerprint = fingerprintHistoryAskSelection(selection, purpose)
     if (!confirmed) {
       this.pendingAskFingerprint = fingerprint
       return {
         kind: 'message',
-        title: 'Ask History review',
+        title: `${title} review`,
         text: [
           review,
           `review fingerprint: ${fingerprint.slice(0, 16)}`,
           '',
-          'Nothing was sent. Re-run the same command with --yes before -- after reviewing the source list.',
+          `Nothing was sent. Re-run the same ${command} command with --yes before -- after reviewing the source list.`,
         ].join('\n'),
       }
     }
     if (this.pendingAskFingerprint === undefined) {
-      throw new Error('Ask History confirmation requires a review in this terminal process; run the same command without --yes first')
+      throw new Error(`${title} confirmation requires a review in this terminal process; run the same command without --yes first`)
     }
     if (this.pendingAskFingerprint !== fingerprint) {
       this.pendingAskFingerprint = undefined
-      throw new Error('Ask History evidence changed after review; nothing was sent. Review the current evidence again before confirming')
+      throw new Error(`${title} evidence changed or the requested action differs from review; nothing was sent. Review the current evidence again before confirming`)
     }
     this.pendingAskFingerprint = undefined
     return {
       kind: 'submit-prompt',
-      prompt: buildHistoryAskPrompt(selection),
-      displayText: `Ask History · ${selection.messages.length} selected source${selection.messages.length === 1 ? '' : 's'}\n${question}`,
+      prompt: purpose === 'ask' ? buildHistoryAskPrompt(selection) : buildHistoryContinuePrompt(selection),
+      displayText: `${title} · ${selection.messages.length} selected source${selection.messages.length === 1 ? '' : 's'}\n${question}`,
       sourceSummary: `${selection.messages.length} messages from ${sessionId}`,
       newSession: true,
     }
@@ -246,8 +282,8 @@ function renderCatalog(
     '',
     focus === 'search'
       ? 'type to edit · Backspace delete · Ctrl+U clear · Enter search · Tab/Esc return to list'
-      : '↑/↓ select · Enter inspect · Tab search · Esc/q close',
-    'Resume unavailable on SDK protocol 0.0.1; Ask History always creates a new session.',
+      : '↑/↓ select · Enter inspect · c continue in new session · Tab search · Esc/q live chat',
+    'True resume is unavailable on SDK protocol 0.0.1; Continue uses reviewed evidence in a NEW session.',
   ].join('\n')
 }
 
@@ -259,7 +295,7 @@ function renderSessionRow(session: HistorySessionSummary, selected: boolean): st
   return `${selected ? '›' : ' '} ${date} · ${short(session.id)}${model}${origin}${diagnostic}\n    ${oneLine(session.title, 100)}`
 }
 
-function renderDetail(detail: HistorySessionDetail): string {
+function renderDetail(detail: HistorySessionDetail, returnsToCatalog = false): string {
   const { summary } = detail
   const messages = detail.messages.slice(-24).map(message => {
     const omitted = message.truncatedChars === 0 ? '' : ` · ${message.truncatedChars} chars omitted`
@@ -296,8 +332,9 @@ function renderDetail(detail: HistorySessionDetail): string {
     ...(tools.length === 0 ? [] : ['', 'Recent tool activity', ...tools]),
     ...(approvals.length === 0 ? [] : ['', 'Approval audit', ...approvals]),
     '',
-    'Use /history ask <session-id> [all|seqs] -- <question> to review evidence.',
-    'Resume unavailable on SDK protocol 0.0.1.',
+    'c prepares a review-first continuation command for this conversation.',
+    `${returnsToCatalog ? 'Esc/q returns to the history list.' : 'Esc/q returns to the live conversation.'}`,
+    'True resume is unavailable on SDK protocol 0.0.1; Continue creates a NEW session.',
   ].join('\n')
 }
 

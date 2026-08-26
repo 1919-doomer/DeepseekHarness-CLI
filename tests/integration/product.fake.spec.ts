@@ -148,6 +148,29 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
     try {
       await waitFor(() => readOutput().includes('DeepSeek Harness Console'), 5_000, 'product shell render')
+      expect(await renderedAfterTick(input, readOutput)).toContain('/history past conversations')
+
+      await submitLine(input, '/history')
+      await waitFor(() => readOutput().includes('Source task'), 5_000, 'History catalog')
+      let mark = readOutput().length
+      input.write('\r')
+      await waitFor(() => readOutput().slice(mark).includes('c prepares a review-first continuation command'), 5_000, 'History detail')
+
+      mark = readOutput().length
+      input.write('\u001b')
+      await waitFor(() => readOutput().slice(mark).includes('sessions: 1 shown'), 5_000, 'return to History catalog')
+      expect(readOutput().slice(mark)).toContain('c continue in new session')
+
+      mark = readOutput().length
+      input.write('c')
+      await waitFor(
+        () => readOutput().slice(mark).includes('/history continue source-session all -- Continue from this conversation.'),
+        5_000,
+        'prefilled History continuation',
+      )
+      input.write('\u0015')
+      await delay(80)
+
       await submitLine(input, '/history ask source-session 4 -- What happened?')
       await waitFor(() => readOutput().includes('Nothing was sent'), 5_000, 'Ask History review')
       expect(await promptRecords(logPath)).toHaveLength(0)

@@ -79,8 +79,10 @@ Harness remains authoritative for durable sessions. M2/M3 reuse a stable session
 M7 history browsing uses the pinned persistence plugin's public
 `listSnapshots()` and non-mutating `inspect()` queries. Its bounded memory index
 is disposable and reconstructable; the session artifact remains the sole fact
-source. Ask History creates a new ordinary session with only user-confirmed
-source message sequences and never invokes stateful resume/load behavior.
+source. Ask History and Continue History create a new ordinary session with
+only user-confirmed source message sequences and never invoke stateful
+resume/load behavior. History detail navigation retains the disposable catalog
+state so returning never requires a second artifact scan.
 
 ## Event and transcript model
 
