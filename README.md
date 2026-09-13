@@ -62,7 +62,7 @@ Current capabilities:
 - resize-aware transcript, grapheme-safe prompt editor, history navigation and adaptive status line;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
 - a slash menu built from the live registry: arrows choose, Tab completes, Enter runs a finished command and completes an unfinished one, and the window scrolls instead of stopping at the fold;
-- unreleased source renders basic Markdown in assistant prose (headings, emphasis, code, lists, quotes and tables); unsupported syntax falls back to plain text, and tool output remains inert plain text;
+- alpha.12 renders basic Markdown in assistant prose (headings, emphasis, code, lists, quotes and tables); unsupported syntax falls back to plain text, and tool output remains inert plain text;
 - active-turn Ctrl+C performs an honest hard interrupt: it stops the whole Harness runtime, starts the same configuration again and selects a fresh session because protocol `0.0.1` cannot cancel or resume the interrupted one;
 - a token usage readout in the status line and `/status`, in absolute numbers: upstream reports no context window on this transport, so dshc reports no percentage;
 - first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
