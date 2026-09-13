@@ -139,7 +139,7 @@ export async function runTerminalProduct(
   options: TerminalProductOptions = {},
 ): Promise<TerminalProductResult> {
   runtime.enableInteraction()
-  const { metadata, draft: startupDraft, instance: startupInstance } = await startWithSplash(runtime, options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, options.preferences?.animation)
+  const { metadata, draft: startupDraft, instance: startupInstance } = await startWithSplash(runtime, options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, options.preferences?.animation, options.interactive)
   // Held mutably so a configuration restart can swap it without tearing the UI
   // down. The new runtime is started before the old one closes, so a rejected
   // composition leaves the session working rather than stranded.

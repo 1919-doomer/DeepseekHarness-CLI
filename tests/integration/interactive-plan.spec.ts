@@ -39,7 +39,7 @@ it.each(['implement', 'restart-fails', 'superseded'] as const)('%s: preserves dr
   output.on('data', chunk => { frames += String(chunk) }); error.resume()
   const restart = vi.fn(async () => { if (scenario === 'restart-fails') throw new Error('fixture startup failed'); const next = new HarnessRuntime({ workspace: root, preferences: { mode: 'code' }, env }); next.enableInteraction(); runtimes.push(next); return { runtime: next, metadata: await next.start() } })
   const product = runTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream, stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
-    preferences: { animation: false, locale: 'zh-CN', mode: 'plan' }, initialSessionId: 'plan-ui-source', restart })
+    interactive: true, preferences: { animation: false, locale: 'zh-CN', mode: 'plan' }, initialSessionId: 'plan-ui-source', restart })
   const key = async (text: string) => { input.write(text); await delay(65) }
   try {
     await until(() => input.isRaw); await key('Plan this change'); await key('\r')

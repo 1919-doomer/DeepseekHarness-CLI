@@ -21,9 +21,9 @@ function Splash({ capture, cancel }: { capture: (text: string) => void; cancel: 
     <Text dimColor>DeepSeek Harness Console</Text>
   </Box>
 }
-export async function startWithSplash(runtime: HarnessRuntime, stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, stderr: NodeJS.WriteStream, animation = true): Promise<{ metadata: HarnessRuntimeMetadata; draft: string; instance?: ReturnType<typeof render> }> {
+export async function startWithSplash(runtime: HarnessRuntime, stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, stderr: NodeJS.WriteStream, animation = true, interactive?: boolean): Promise<{ metadata: HarnessRuntimeMetadata; draft: string; instance?: ReturnType<typeof render> }> {
   let draft = ''
-  const instance = animation && stdin.isTTY && stdout.isTTY ? render(<Splash capture={text => { draft = (draft + text).slice(0, 64_000) }} cancel={() => { void runtime.close().catch(() => undefined) }} />, { stdin, stdout, stderr, exitOnCtrlC: false, patchConsole: false }) : undefined
+  const instance = animation && stdin.isTTY && stdout.isTTY ? render(<Splash capture={text => { draft = (draft + text).slice(0, 64_000) }} cancel={() => { void runtime.close().catch(() => undefined) }} />, { stdin, stdout, stderr, interactive, exitOnCtrlC: false, patchConsole: false }) : undefined
   const exited = instance?.waitUntilExit().catch(() => undefined)
   // Keep one Ink owner from splash to prompt. Recreating the TTY reader on
   // Windows can strand the old console read even after raw mode is restored.

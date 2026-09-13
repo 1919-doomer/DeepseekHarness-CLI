@@ -8,6 +8,8 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 GitHub prerelease; alpha.11 remained local and was not published. This release does not update the npm dist-tags.
 
+- Update js-yaml to 4.3.2, fast-uri to 3.1.7 and sharp to 0.35.4 in the dependency lockfile to resolve high-severity release audit findings.
+- Fix Node 24 Profile candidate copying and preserve explicit interactive rendering from splash to chat in CI.
 - Simplify the footer and move model, token, timing and compaction details into an overview/tools sidebar.
 - Add a text-only warm star, dshc startup wordmark, `--no-animation`, and clearer conversation role markers.
 - Add first-party structured clarification and reviewed-plan tools with session/call correlation, human-wait timeout suspension, and explicit handoff into a new coding session.

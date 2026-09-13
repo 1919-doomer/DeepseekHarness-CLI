@@ -101,7 +101,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     const readOutput = capture(output); capture(error)
     const listeners = process.listenerCount('beforeExit')
     const product = renderTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream, stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
-      preferences: { locale: 'en', animation: true }, useAlternateScreen: false })
+      preferences: { locale: 'en', animation: true }, interactive: true, useAlternateScreen: false })
     try {
       await waitFor(() => input.isRaw)
       input.write('启动草稿😀'); await delay(50); unlock()

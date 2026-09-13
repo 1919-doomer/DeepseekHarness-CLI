@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { dshCommand, findDsh, inspectProfile, profilePath, type DshInstallation } from './dsh-profile.js'
 import { resolveBundleSource, type BundleSource } from './bundle-source.js'
@@ -95,8 +95,14 @@ export class ProfileManager {
       if (!this.isManaged(preview.targetProfile)) throw new Error('Refusing to mutate an unmanaged Profile')
       if (preview.action !== 'rollback') {
         await mkdir(destination) // exclusive claim, never overwrite another candidate
-        await cp(profilePath(preview.sourceProfile, this.env), destination, { recursive: true, dereference: true,
-          filter: path => !['node_modules', '.git'].includes(basename(path)), force: false, errorOnExist: true })
+        // Copy children into our exclusively claimed directory. Node 24 rejects
+        // errorOnExist when cp targets the already-created root itself.
+        const source = profilePath(preview.sourceProfile, this.env)
+        for (const name of await readdir(source)) {
+          if (['node_modules', '.git'].includes(name)) continue
+          await cp(join(source, name), join(destination, name), { recursive: true, dereference: true,
+            filter: path => !['node_modules', '.git'].includes(basename(path)), force: false, errorOnExist: true })
+        }
         const manifestPath = join(destination, 'package.json')
         const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest
         manifest.name = `dsh-profile-${preview.targetProfile}`
