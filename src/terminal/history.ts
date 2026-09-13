@@ -31,6 +31,15 @@ export interface AgentTopologyHistory {
   dropped: number
 }
 
+export function appendTerminalEventBatch(state: TerminalEventHistory,
+  events: readonly NormalizedEvent[]): TerminalEventHistory {
+  if (events.length === 0) return state
+  const combined = [...state.items, ...events.map(retainNormalizedEvent)]
+  const items = combined.slice(-MAX_RETAINED_TERMINAL_EVENTS)
+  return { items, total: state.total + events.length,
+    dropped: state.dropped + combined.length - items.length }
+}
+
 export function initialAgentTopologyHistory(): AgentTopologyHistory {
   return { entries: new Map(), dropped: 0 }
 }

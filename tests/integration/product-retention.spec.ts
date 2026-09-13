@@ -36,6 +36,9 @@ describe('M4 bounded terminal process history', () => {
     const childSessionId = 'early-child-retained-outside-trace'
     const events = noisyActivity(rootSessionId, childSessionId)
     const runtime = inMemoryRuntime(events)
+    let completed = false
+    const run = runtime.run.bind(runtime)
+    runtime.run = async (...args) => { const result = await run(...args); completed = true; return result }
     const input = new TestInput()
     const output = new TestOutput()
     const error = new TestOutput()
@@ -43,6 +46,7 @@ describe('M4 bounded terminal process history', () => {
     const readError = capture(error)
 
     const product = runTerminalProduct(runtime, {
+      preferences: { animation: false },
       stdin: input as unknown as NodeJS.ReadStream,
       stdout: output as unknown as NodeJS.WriteStream,
       stderr: error as unknown as NodeJS.WriteStream,
@@ -54,7 +58,8 @@ describe('M4 bounded terminal process history', () => {
     try {
       await waitFor(() => input.isRaw, 5_000, 'raw-mode ownership')
       await submitLine(input, 'generate a noisy observable turn')
-      await waitFor(() => readOutput().includes('turns:1'), 10_000, 'noisy turn completion')
+      await waitFor(() => completed, 10_000, 'noisy turn completion')
+      await delay(100)
 
       const dropped = events.length - MAX_RETAINED_TERMINAL_EVENTS
       expect(dropped).toBe(54)
@@ -158,6 +163,7 @@ function noisyActivity(rootSessionId: string, childSessionId: string): Normalize
 function inMemoryRuntime(events: readonly NormalizedEvent[]): HarnessRuntime {
   let closed = false
   return {
+    enableInteraction() {},
     async start() {
       if (closed) throw new Error('runtime already closed')
       return {

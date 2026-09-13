@@ -11,6 +11,8 @@ describe('public alpha recovery workflow', () => {
     expect(workflow).toContain('RELEASE_TAG: ${{ inputs.tag || github.ref_name }}')
     expect(workflow).toContain('ref: ${{ env.RELEASE_TAG }}')
     expect(workflow).toContain('npm stage publish ./package-artifact/*.tgz')
+    expect(workflow).toContain('stage_npm:')
+    expect(workflow).toContain("if: inputs.stage_npm == true && needs.package.outputs.package-exists == 'true'")
     expect(workflow).not.toContain('npm stage publish package-artifact/*.tgz')
     expect(workflow).toContain('test "${DRAFT}" = "true"')
     expect(workflow).toContain('gh release upload "${RELEASE_TAG}"')

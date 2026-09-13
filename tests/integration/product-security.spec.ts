@@ -50,6 +50,9 @@ describe('M4 terminal injection boundary', () => {
     roots.push(root)
     const logPath = join(root, 'prompts.jsonl')
     const runtime = runtimeFor(root, logPath)
+    let completed = false
+    const run = runtime.run.bind(runtime)
+    runtime.run = async (...args) => { const result = await run(...args); completed = true; return result }
     const input = new TestInput()
     const output = new TestOutput()
     const error = new TestOutput()
@@ -87,6 +90,7 @@ describe('M4 terminal injection boundary', () => {
     })
 
     const product = runTerminalProduct(runtime, {
+      preferences: { animation: false },
       stdin: input as unknown as NodeJS.ReadStream,
       stdout: output as unknown as NodeJS.WriteStream,
       stderr: error as unknown as NodeJS.WriteStream,
@@ -103,7 +107,8 @@ describe('M4 terminal injection boundary', () => {
       await submitLine(input, 'trigger hostile renderer')
       await waitFor(async () => (await promptCount(logPath)) === 1, 'prompt receipt')
       await waitFor(() => readOutput().includes('renderer-title\\x1b]0;renderer-owned\\x07'), 'sanitized hostile renderer')
-      await waitFor(() => readOutput().includes('turns:1'), 'completed turn')
+      await waitFor(() => completed, 'completed turn')
+      await delay(100)
 
       await submitLine(input, '/evilview')
       await waitFor(() => readOutput().includes('view-body\\x1b]52;c;dmlldy1vd25lZA==\\x07'), 'sanitized hostile view')
@@ -112,6 +117,9 @@ describe('M4 terminal injection boundary', () => {
 
       await submitLine(input, '/evilerror')
       await waitFor(() => readOutput().includes('boom\\x1b]52;c;ZXJyb3Itb3duZWQ=\\x07'), 'sanitized hostile command error')
+
+      input.write('\u0015') // A failed command stays in the editor for repair.
+      await delay(40)
 
       await submitLine(input, '/exit')
       await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })

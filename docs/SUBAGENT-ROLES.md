@@ -23,8 +23,8 @@ system that decides it:
 - that there is **no per-request cancel** — dshc implements Interrupt by ending
   the runtime, starting the same configuration again and selecting a fresh
   session; the interrupted session cannot be resumed;
-- that the current terminal surface cannot reliably render Markdown and model
-  output must target plain text;
+- that the terminal supports basic Markdown headings, emphasis, code, lists,
+  quotes and tables, with inert plain-text fallback for unsupported syntax;
 - the proxy and npm registry configuration observed at launch — stated as
   configuration, never as reachability, because dshc does not probe the network
   and a proxy variable being set is not evidence that the proxy works. A proxy

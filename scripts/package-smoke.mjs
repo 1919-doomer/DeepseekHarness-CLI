@@ -44,6 +44,8 @@ try {
 
   const help = await run(installedCommand, [...installedPrefix, '--help'], { cwd: tempRoot })
   assert(help.stdout.includes('DeepSeek Harness Console'), 'installed --help did not render the CLI contract')
+  const chineseHelp = await run(installedCommand, [...installedPrefix, '--locale', 'zh-CN', '--help'], { cwd: tempRoot })
+  assert(chineseHelp.stdout.includes('--mode') && chineseHelp.stdout.includes('语言'), 'installed Chinese help is incomplete')
 
   const doctorEnv = { ...process.env }
   delete doctorEnv.DEEPSEEK_API_KEY
@@ -55,6 +57,7 @@ try {
     '--workspace', workspace,
     '--request-timeout-ms', '10000',
     '--json',
+    '--mode', 'plan',
   ], { cwd: tempRoot, env: doctorEnv })
   const report = JSON.parse(doctor.stdout)
   assert(report.ok === true, 'installed doctor did not report ok=true')

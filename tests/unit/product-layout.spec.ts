@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { TranscriptBlock } from '../../src/plugins/api.js'
-import { foldTerminalText, takeVisibleBlocks } from '../../src/terminal/product.js'
+import { blockHeaderText, foldTerminalText, takeVisibleBlocks } from '../../src/terminal/product.js'
 import { terminalCellWidth } from '../../src/terminal/text-metrics.js'
 
 describe('M3 terminal layout', () => {
+  it('discloses evicted content in the visible header even when its body is folded', () => {
+    const block: TranscriptBlock = { id: 'retained', kind: 'tool', text: 'head-tail', textDroppedChars: 1000, detailDroppedChars: 40 }
+    expect(blockHeaderText(block)).toContain('1040 characters evicted locally')
+    expect(blockHeaderText(block, 'zh-CN')).toContain('本地已省略 1040 字符')
+  })
   it('folds large output visibly instead of silently dropping it', () => {
     const source = `head-${'x'.repeat(1_600)}-tail\u001b[31m`
     const folded = foldTerminalText(source, true, 40, 600)

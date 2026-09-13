@@ -28,8 +28,10 @@
 
 import { describeNetwork, type NetworkFacts } from './network.js'
 import { DEV_PERSONA_APPENDIX } from '../workbench/contract.js'
+import type { Preferences } from '../preferences.js'
 
 export interface PersonaFacts {
+  preferences?: Partial<Preferences>
   /** Host platform, as `process.platform` reports it. */
   platform: NodeJS.Platform
   /** Absolute workspace path dshc launched the runtime with. */
@@ -62,10 +64,9 @@ export function buildPersona(facts: PersonaFacts): string {
     '  dshc implements Interrupt by terminating the whole Harness runtime and',
     '  starting a fresh one. The interrupted session cannot be resumed, so prefer',
     '  bounded commands and set a timeout when one might wait for input.',
-    '- The current terminal surface cannot reliably render Markdown; treat it as',
-    '  unable to render Markdown. Write plain text. Do not rely on Markdown headings,',
-    '  emphasis markers, fenced code blocks, tables or nested list formatting.',
-    '  Keep prose, short flat lists and code excerpts narrow and easy to scan.',
+    '- The terminal supports basic Markdown headings, emphasis, lists, code fences',
+    '  and simple tables. Use narrow layouts; unsupported constructs remain text.',
+    ...preferencePersona(facts.preferences),
     ...networkLines(facts.network),
     '',
     'How to work',
@@ -76,6 +77,18 @@ export function buildPersona(facts: PersonaFacts): string {
     '- Report faithfully. Say what you did not do, what you could not verify, and',
     '  what failed, in the same breath as what worked.',
   ].join('\n')
+}
+
+function preferencePersona(preferences: Partial<Preferences> = {}): string[] {
+  const lines = [preferences.replyLanguage && preferences.replyLanguage !== 'auto'
+    ? `- Reply in ${preferences.replyLanguage}.` : '- Reply in the language of the user\'s task.']
+  lines.push('- When request_user_input is available, use it for material clarification with choices and free text. A skipped question is not approval. Subagents report questions to the main agent.')
+  if (preferences.mode === 'plan') lines.push('- Planning task: inspect read-only, clarify material decisions with request_user_input when available, then present a decision-complete implementation and verification plan with present_plan when available. Do not modify files. After an implement answer, end the turn; the terminal owns switching to code mode. Without present_plan, report the plan as text and wait for explicit instructions.')
+  if (preferences.mode === 'review') lines.push('- Review task: report actionable findings with evidence and file locations. Do not modify files.')
+  if (preferences.mode === 'research') lines.push('- Research task: gather primary evidence, cite sources, and distinguish facts from inference. Do not modify files.')
+  if (preferences.style === 'explanatory') lines.push('- Explain important implementation choices and their tradeoffs while completing the task.')
+  if (preferences.style === 'learning') lines.push('- Teach collaboratively: explain the reasoning and invite the user to solve small exercises. Do not silently leave required implementation incomplete.')
+  return lines
 }
 
 export function buildDeveloperPersona(facts: PersonaFacts): string {

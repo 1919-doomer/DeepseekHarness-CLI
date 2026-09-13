@@ -65,7 +65,11 @@ jobs:
       - name: Fake-runtime protocol and lifecycle tests
         run: pnpm test
       - name: Official DSH runtime + built CLI smoke
-        run: pnpm test:official-runtime
+        # Install only inside the disposable checkout; no global dsh is changed.
+        # The optional backend has its own independently pinned compatibility gate.
+        run: |
+          npm install --prefix node_modules/.dshc-profile-validation --ignore-scripts --no-audit --no-fund --save-exact @deepseek-ai/dsh@0.1.5-rc.2
+          pnpm test:official-runtime
         env:
           DSHC_LIVE_PLUGIN_INSTALL: '1'
       - name: Packed global install / repair / doctor / uninstall

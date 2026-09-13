@@ -3,11 +3,9 @@ import { terminalCellWidth } from './text-metrics.js'
 /**
  * Markdown for a terminal.
  *
- * Models write markdown whether or not anything renders it, so until now an
- * answer arrived as literal asterisks and pound signs. The rejected alternative
- * was a persona line asking the model not to — a product defect used to
- * constrain a model, which does not hold and would have to be removed once this
- * existed.
+ * Supports headings, inline emphasis/code, lists, quotes, fences, rules and
+ * simple tables. Unsupported constructs stay readable as plain text. Keep this
+ * list aligned with the deployment persona and docs/NEXT-STAGE.md.
  *
  * **Safe by construction.** This parser never emits an escape sequence. It
  * returns styled spans, and the Ink layer turns those into `<Text bold>` props,

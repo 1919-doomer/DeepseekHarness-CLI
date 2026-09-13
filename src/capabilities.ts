@@ -1,4 +1,5 @@
 import { TESTED_DSH_BASELINE } from './upstream/compatibility.js'
+import type { Locale } from './i18n.js'
 
 export type CapabilityAvailability = 'available' | 'unavailable' | 'requires-upstream'
 
@@ -36,10 +37,11 @@ export interface CapabilityEntry {
 export interface CapabilityMatrixOptions {
   historyReaderAvailable: boolean
   contextCapacityObserved?: boolean
+  locale?: Locale
 }
 
 export function capabilityMatrix(options: CapabilityMatrixOptions): readonly CapabilityEntry[] {
-  return [
+  const entries: CapabilityEntry[] = [
     {
       id: 'history.reader',
       availability: options.historyReaderAvailable ? 'available' : 'unavailable',
@@ -70,4 +72,13 @@ export function capabilityMatrix(options: CapabilityMatrixOptions): readonly Cap
       detail: 'The current transport does not publish the final assembled prompt sections/tools metadata.',
     },
   ]
+  if (options.locale !== 'zh-CN') return entries
+  const descriptions: Record<CapabilityEntry['id'], string> = {
+    'history.reader': options.historyReaderAvailable ? '通过公共 JSONL 接口只读查看历史，默认仅当前工作区。' : '当前终端未连接历史读取接口。',
+    'bridge.protocol': '已验证的 SDK 使用固定请求路由，未增加私有方法或分叉服务器。',
+    'approval.answerer': '上游未提供审批回答握手；终端无法授权，保持拒绝策略。',
+    'context.capacity': options.contextCapacityObserved ? '已从当前会话的公共 request/context 事件观察到容量。' : '尚未观察到公共 contextWindow 容量字段。',
+    'prompt.runtime-inspection': '上游未提供最终组装的提示词与工具结构检查接口。',
+  }
+  return entries.map(entry => ({ ...entry, detail: descriptions[entry.id] }))
 }

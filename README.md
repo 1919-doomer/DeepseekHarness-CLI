@@ -1,12 +1,19 @@
 # DeepSeek Harness CLI
 
+GitHub prerelease `0.1.0-alpha.12` adds V4.1 `deepseek-flash`, Chinese/English preferences, work
+modes, queued input, read-only `/diff`, and an optional official Profile/Bundle
+backend. See [next-stage usage and validation](docs/NEXT-STAGE.md); the published
+alpha.10 package does not contain these changes.
+
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: M7 public alpha (`0.1.0-alpha.10`), delivering the protocol-independent M7.0–M7.3 slices plus the M7.4 compatibility gate and M7.6 hardening.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
+**Status: `0.1.0-alpha.12` GitHub prerelease, extending the M7 public-alpha baseline.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full bundled Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
 
 [简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 history/context/permissions](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Install the public alpha
+
+For alpha.12, download the `.tgz` from the [GitHub release](https://github.com/1919-doomer/DeepseekHarness-CLI/releases/tag/v0.1.0-alpha.12) and run `npm install --global ./liaosiyuan123-dshc-0.1.0-alpha.12.tgz`. This GitHub release does not update the npm `alpha` tag; the registry command below installs the separately published npm version.
 
 ```bash
 npm install --global @liaosiyuan123/dshc@alpha
@@ -55,7 +62,7 @@ Current capabilities:
 - resize-aware transcript, grapheme-safe prompt editor, history navigation and adaptive status line;
 - `/help`, `/status`, `/session`, `/new`, `/clear`, `/plugins`, `/capabilities`, `/trace`, `/agents`, `/exit`;
 - a slash menu built from the live registry: arrows choose, Tab completes, Enter runs a finished command and completes an unfinished one, and the window scrolls instead of stopping at the fold;
-- assistant prose is presented as safe terminal text; a best-effort local legacy formatter remains isolated from tool output, but the deployment persona tells the model that this surface cannot reliably render Markdown and requires plain-text responses;
+- unreleased source renders basic Markdown in assistant prose (headings, emphasis, code, lists, quotes and tables); unsupported syntax falls back to plain text, and tool output remains inert plain text;
 - active-turn Ctrl+C performs an honest hard interrupt: it stops the whole Harness runtime, starts the same configuration again and selects a fresh session because protocol `0.0.1` cannot cancel or resume the interrupted one;
 - a token usage readout in the status line and `/status`, in absolute numbers: upstream reports no context window on this transport, so dshc reports no percentage;
 - first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
@@ -242,3 +249,13 @@ All upstream/version-specific behavior stays under `src/upstream/`.
 ## License and affiliation
 
 MIT licensed. This is an independent community project and is **not affiliated with, endorsed by, or maintained by DeepSeek AI**. “DeepSeek” and “DeepSeek Harness” are used only to describe interoperability with the upstream project.
+
+## alpha.12: interactive plans and terminal overview
+
+The one-line footer shows model, mode, session elapsed time and context use. `/sidebar overview` shows model/token/timing details; `/sidebar tools` shows calls. Tab focuses the sidebar, arrows navigate, and Esc returns to the editor. On narrow terminals use `/status` and `/context`.
+
+Use `/plan` to review the mode-switch confirmation or start with `--mode plan`. First-party clarification cards support choices and free text in every mode. Tab switches fields, arrows select, Enter confirms, Ctrl+B returns to the previous question, and Esc hides a draft until Enter reopens it. Skipping a question is never approval.
+
+Plan cards offer Implement, Revise and Defer. Explicit implementation starts a new coding session only after the matching planning task succeeds and reaches root idle. The confirmed plan and clarification evidence are handed off; queued prompts stay paused. This is not runtime/session resume.
+
+Use `--no-animation` or `"animation": false` in settings to disable the dshc startup wordmark and star animation. Cards and animation are interactive-terminal features; machine output and scripted input retain their interfaces. Bundled automatic compaction defaults to 80% capacity, subject to configuration overrides; Profile thresholds are not inferred. TPS is a completed root-request average including waiting/transport, not server decode speed.

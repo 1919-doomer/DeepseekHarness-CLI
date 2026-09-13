@@ -1,0 +1,5 @@
+- insert:
+    - id: dshc-profile-policy
+      name: ./profile-policy.mjs
+    - id: dshc-interaction
+      name: ./interaction.mjs

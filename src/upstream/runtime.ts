@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { InteractionBridge } from './interaction.js'
+import { setImmediate as yieldEventLoop } from 'node:timers/promises'
+import { EventTail } from './event-tail.js'
+import { ActivityMeter, type ActivityMetrics } from './activity-metrics.js'
+import type { Preferences, ResolvedPreferences } from '../preferences.js'
+import type { ProfileFacts } from './dsh-profile.js'
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
@@ -7,8 +13,6 @@ import {
   type HarnessNotification,
 } from '@deepseek-ai/dsh-sdk-client'
 import {
-  appendRetainedTail,
-  initialRetainedTail,
   MAX_RETAINED_ACTIVITY_EVENTS,
   MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
   retainHarnessNotification,
@@ -34,6 +38,8 @@ import {
 import { effectiveRuntimeEnvironment, resolveRuntimeLaunch } from './runtime-launcher.js'
 
 export interface HarnessRuntimeOptions {
+  preferenceSources?: ResolvedPreferences['sources']
+  preferences?: Partial<Preferences>
   workspace?: string
   provider?: string
   model?: string
@@ -54,6 +60,12 @@ export interface HarnessRuntimeOptions {
 }
 
 export interface HarnessRuntimeMetadata {
+  interaction?: { available: boolean }
+  preferenceSources?: ResolvedPreferences['sources']
+  lastActivityMetrics?: ActivityMetrics
+  backend?: 'bundled' | 'dsh-profile'
+  profile?: ProfileFacts
+  requestedPreferences?: Partial<Preferences>
   workspace: string
   provider: string
   model: string
@@ -71,6 +83,7 @@ export interface RunActivityOptions {
 }
 
 export interface RunActivityResult {
+  metrics?: ActivityMetrics
   sessionId: string
   messageId: string
   finalResponse: string
@@ -88,6 +101,10 @@ export interface RunActivityResult {
 type RuntimeLifecycleState = 'idle' | 'starting' | 'running' | 'closing' | 'closed'
 
 export class HarnessRuntime {
+  interaction?: InteractionBridge
+  enableInteraction(): void {
+    if (!this.startTask) this.interaction ??= new InteractionBridge()
+  }
   private readonly workspace: string
   private readonly provider: string
   private readonly model: string
@@ -105,13 +122,14 @@ export class HarnessRuntime {
   constructor(private readonly options: HarnessRuntimeOptions = {}) {
     this.workspace = resolve(options.workspace ?? process.cwd())
     this.provider = options.provider ?? 'deepseek-official'
-    this.model = options.model ?? 'deepseek-v4-flash'
+    this.model = options.model ?? 'deepseek-flash'
     this.maxTokens = validateMaxTokens(options.maxTokens)
     this.defaultActivityTimeoutMs = positiveTimeout(options.activityTimeoutMs, 10 * 60_000, 'activityTimeoutMs')
     // Capture the environment semantics that startup intends to give the child.
     // Once launch resolution completes this is replaced by a snapshot of the
     // exact resolved launch env, so child diagnostics and redaction cannot drift.
     this.diagnosticEnv = { ...effectiveRuntimeEnvironment({
+      preferences: options.preferences,
       workspace: this.workspace,
       patchPaths: options.patchPaths,
       moduleBasePath: options.moduleBasePath,
@@ -138,6 +156,7 @@ export class HarnessRuntime {
   }
 
   async run(input: string, options: RunActivityOptions = {}): Promise<RunActivityResult> {
+    const meter = new ActivityMeter()
     if (input.length === 0) {
       throw new DshcRuntimeError('Prompt must not be empty.', 'configuration')
     }
@@ -168,22 +187,25 @@ export class HarnessRuntime {
     let idleObserved = false
     try {
       await this.start()
+      this.interaction?.begin(sessionId)
       const client = this.client
       if (client === undefined) throw new DshcRuntimeError('Harness runtime did not initialize a client.', 'runtime')
 
       const subscription = client.subscribeSessionTree(sessionId)
       const projector = new SessionProjector(sessionId)
-      let eventHistory = initialRetainedTail<NormalizedEvent>()
-      let notificationHistory = initialRetainedTail<HarnessNotification>()
+      const eventHistory = new EventTail<NormalizedEvent>(MAX_RETAINED_ACTIVITY_EVENTS)
+      const notificationHistory = new EventTail<HarnessNotification>(MAX_RETAINED_ACTIVITY_NOTIFICATIONS)
+      let nextYield = performance.now() + 8
 
       try {
         promptAttempted = true
         const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
         let receiptObserved = false
         let deadline = Date.now() + activityTimeoutMs
+        let waitBaseline = this.interaction?.waitingMs ?? 0
 
         while (true) {
-          const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs)
+          const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs, this.interaction, waitBaseline)
           if (!receiptObserved) {
             if (!isInboxReceipt(notification, sessionId, messageId)) continue
             receiptObserved = true
@@ -191,6 +213,7 @@ export class HarnessRuntime {
             // the durable receipt is bounded by the same value, then the activity
             // receives a fresh full window once ownership is proven.
             deadline = Date.now() + activityTimeoutMs
+            waitBaseline = this.interaction?.waitingMs ?? 0
           }
 
           const rootIdle = notification.method === 'session.status'
@@ -203,35 +226,34 @@ export class HarnessRuntime {
           // local memory budgets can never backpressure or truncate Harness truth.
           options.onNotification?.(notification)
           const event = projector.ingest(notification)
+          if (event.kind === 'tool-call') this.interaction?.expectCall(event.sessionId, event.callId, event.name)
+          meter.observe(event)
           options.onEvent?.(event, notification)
 
-          notificationHistory = appendRetainedTail(
-            notificationHistory,
-            retainHarnessNotification(notification),
-            MAX_RETAINED_ACTIVITY_NOTIFICATIONS,
-          )
-          eventHistory = appendRetainedTail(
-            eventHistory,
-            retainNormalizedEvent(event),
-            MAX_RETAINED_ACTIVITY_EVENTS,
-          )
+          notificationHistory.push(retainHarnessNotification(notification))
+          eventHistory.push(retainNormalizedEvent(event))
 
           if (rootIdle) break
+          if (performance.now() >= nextYield) { await yieldEventLoop(); nextYield = performance.now() + 8 }
         }
 
+        const metrics = meter.snapshot()
+        if (this.metadataValue) this.metadataValue = { ...this.metadataValue, lastActivityMetrics: metrics }
         return {
+          metrics,
           sessionId,
           messageId,
           finalResponse: projector.state.lastAssistantMessage,
-          events: [...eventHistory.items],
+          events: eventHistory.snapshot(),
           eventCount: eventHistory.total,
           droppedEventCount: eventHistory.dropped,
-          notifications: [...notificationHistory.items],
+          notifications: notificationHistory.snapshot(),
           notificationCount: notificationHistory.total,
           droppedNotificationCount: notificationHistory.dropped,
           projection: projector.state,
         }
       } finally {
+        this.interaction?.end(sessionId)
         subscription.close()
       }
     } catch (error) {
@@ -272,13 +294,16 @@ export class HarnessRuntime {
         assertInstalledCompatibility(versions)
       }
 
+      const interactionEnv = await this.interaction?.start()
+      this.assertStartupStillOwned()
       const launch = await resolveRuntimeLaunch({
+        preferences: this.options.preferences,
         workspace: this.workspace,
         configPath: this.options.configPath,
         patchPaths: this.options.patchPaths,
         moduleBasePath: this.options.moduleBasePath,
         devMode: this.options.devMode,
-        env: this.options.env,
+        env: { ...this.options.env, ...interactionEnv },
         requestTimeoutMs: this.options.requestTimeoutMs,
         shutdownTimeoutMs: this.options.shutdownTimeoutMs,
         disposeEofGraceMs: this.options.disposeEofGraceMs,
@@ -299,11 +324,16 @@ export class HarnessRuntime {
         provider: this.provider,
         model: this.model,
         ...(this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens }),
+        ...(launch.profileFacts === undefined || this.options.preferences?.reasoningEffort === undefined ? {} : { reasoningEffort: this.options.preferences.reasoningEffort }),
       })
       this.assertStartupStillOwned()
       assertRuntimeIdentity(initialized.serverInfo)
 
       const metadata: HarnessRuntimeMetadata = {
+        interaction: { available: this.interaction?.ready ?? false },
+        ...(this.options.preferenceSources === undefined ? {} : { preferenceSources: this.options.preferenceSources }),
+        backend: launch.profileFacts === undefined ? 'bundled' : 'dsh-profile',
+        ...(launch.profileFacts === undefined ? {} : { profile: launch.profileFacts }),
         workspace: this.workspace,
         provider: this.provider,
         model: this.model,
@@ -311,13 +341,15 @@ export class HarnessRuntime {
         protocolVersion: initialized.serverInfo.version,
         ...(versions === undefined ? {} : {
           sdkVersion: versions.sdkVersion,
-          runtimePackageVersion: versions.runtimePackageVersion,
+          runtimePackageVersion: launch.profileFacts?.sdkServerVersion ?? versions.runtimePackageVersion,
         }),
       }
       this.metadataValue = metadata
+      if (this.options.preferences !== undefined) metadata.requestedPreferences = this.options.preferences
       this.lifecycle = 'running'
       return metadata
     } catch (error) {
+      await this.interaction?.close()
       this.metadataValue = undefined
       if (client !== undefined && this.client === client) {
         this.client = undefined
@@ -339,6 +371,7 @@ export class HarnessRuntime {
   }
 
   private async performClose(): Promise<void> {
+    await this.interaction?.close()
     const inFlightStart = this.startTask
     let firstFailure: unknown
 
@@ -419,19 +452,25 @@ function positiveTimeout(value: number | undefined, fallback: number, name: stri
   return result
 }
 
-async function nextBeforeDeadline<T>(promise: Promise<T>, deadline: number, totalTimeoutMs: number): Promise<T> {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) throw new ActivityTimeoutError(totalTimeoutMs)
-
+async function nextBeforeDeadline<T>(promise: Promise<T>, deadline: number, totalTimeoutMs: number, bridge?: InteractionBridge, waitBaseline = 0): Promise<T> {
   let timer: NodeJS.Timeout | undefined
+  let unsubscribe: (() => void) | undefined
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new ActivityTimeoutError(totalTimeoutMs)), remaining)
+        const schedule = (): void => {
+          clearTimeout(timer)
+          if (bridge?.current) return
+          const remaining = deadline + (bridge?.waitingMs ?? 0) - waitBaseline - Date.now()
+          timer = setTimeout(() => reject(new ActivityTimeoutError(totalTimeoutMs)), Math.max(0, remaining))
+        }
+        unsubscribe = bridge?.subscribe(schedule)
+        schedule()
       }),
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    unsubscribe?.()
   }
 }

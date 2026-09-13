@@ -2,11 +2,15 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：M7 public alpha（`0.1.0-alpha.10`），已交付不依赖上游扩展的 M7.0–M7.3、M7.4 兼容门禁与 M7.6 加固。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
+**当前状态：`0.1.0-alpha.12` GitHub 预发布版本，在 M7 public alpha 基础上继续扩展。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。自带运行时的完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
 
 [English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 历史/上下文/权限](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
 ## 安装 public alpha
+
+`0.1.0-alpha.12` 增加 V4.1 `deepseek-flash`、中英界面、工作模式、输入队列、
+只读 `/diff` 与可选官方 Profile/Bundle 管理。使用方式、精确兼容版本和验证边界见
+[下一阶段开发说明](docs/NEXT-STAGE.md)。本次仅发布 GitHub，不更新 npm 的 alpha 标签。下载 [GitHub Release](https://github.com/1919-doomer/DeepseekHarness-CLI/releases/tag/v0.1.0-alpha.12) 中的 `.tgz` 后，执行 `npm install --global ./liaosiyuan123-dshc-0.1.0-alpha.12.tgz` 安装此版本；下方命令安装 npm 上另行发布的版本。
 
 ```bash
 npm install --global @liaosiyuan123/dshc@alpha
@@ -54,7 +58,7 @@ cd repository
 - shipped composition 始终是基线，工作区只自动应用 `.dshc/cordis.patch.yml`；
 - `/plugin search` 与 `/plugin install` 仅接受 `@deepseek-ai/` 包，要求精确版本确认；在不可变 candidate profile 中用私有 patch 试启动，成功后才原子发布 workspace patch；
 - resize-aware transcript、grapheme-safe prompt editor、历史导航与自适应状态栏；
-- persona 明确告知模型当前终端不能可靠渲染 Markdown，要求使用纯文本；active turn 中 Ctrl+C 会停止整个 Harness runtime、按同一配置重建并切换到新 session；
+- 未发布源码支持助手回复中的基础 Markdown（标题、强调、代码、列表、引用、表格），不支持的格式回退纯文本，工具输出保持纯文本；active turn 中 Ctrl+C 会停止整个 Harness runtime、重建并切换到新 session；
 - `/help`、`/status`、`/session`、`/new`、`/clear`、`/plugins`、`/capabilities`、`/trace`、`/agents`、`/exit`；
 - first-party terminal plugin API v1 与 coding tool/subagent 专用展示；
 - activity/trace/transcript/topology 使用有界本地 retention，并明确披露 eviction；
@@ -223,3 +227,15 @@ Terminal user
 ## License 与关系说明
 
 MIT License。本项目是独立社区项目，**不隶属于、不代表、也未获得 DeepSeek AI 官方背书**。“DeepSeek”与“DeepSeek Harness”仅用于说明与上游项目的互操作关系。
+
+## alpha.12：交互式规划与终端概览
+
+底栏显示模型、模式、会话总时长和上下文占用。右侧默认是概览；输入 `/sidebar tools` 查看工具列表，`/sidebar overview` 返回概览。Tab 聚焦侧栏后，左右键切页、上下键滚动，Esc 返回输入。窄屏使用 `/status` 和 `/context` 查看详情。
+
+使用 `/plan` 查看进入只读规划的确认提示，或启动时传入 `--mode plan`。Agent 可以在所有模式提出选择题；Tab 切换选项、补充输入与确认按钮，方向键选择，Enter 确认，Ctrl+B 返回上一题。Esc 收起问题并保留草稿，Enter 重新打开；“跳过本组问题”会明确告诉 Agent 尚未获得答案。
+
+计划卡片支持“开始实施 / 继续修改 / 暂不实施”。选择开始实施后，只有当前规划任务成功并进入空闲状态，才会创建新的编码会话并交接确认的计划。旧队列保持暂停；这不是恢复原 runtime。
+
+`--no-animation` 或设置文件中的 `"animation": false` 可关闭大型 dshc 字标开屏和星芒动画。仅交互终端启用动画与提问卡片，JSON 和脚本输入的接口保持不变。
+
+自带 runtime 已配置自动压缩，默认阈值为上下文容量的 80%；自定义配置和 Profile 可能不同。`/context` 与概览区分配置默认值和实际压缩事件。TPS 是最近完成的根会话请求均速，包含等待及传输；系统、历史、工具各自的 Token 数未公开时显示未知。

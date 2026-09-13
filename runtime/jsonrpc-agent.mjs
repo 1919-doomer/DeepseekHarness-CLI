@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   boot,
   installFailLoud,
@@ -35,6 +36,8 @@ try {
 }
 
 const patches = patchPaths.flatMap(path => loadOptionalPatches(NAME, path) ?? [])
+patches.push({ insert: [{ id: 'dshc-mode-policy', name: fileURLToPath(new URL('./mode-policy.mjs', import.meta.url)) }] })
+patches.push({ insert: [{ id: 'dshc-interaction', name: fileURLToPath(new URL('./interaction.mjs', import.meta.url)) }] })
 const ctx = await boot(
   NAME,
   configPath,

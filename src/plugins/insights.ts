@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { telemetryDetails } from '../session/model-telemetry.js'
 import { capabilityMatrix } from '../capabilities.js'
 import { describeSessionUsage, type SessionUsage } from '../session/usage.js'
 import type { NormalizedEvent } from '../session/projection.js'
@@ -55,9 +56,9 @@ export function insightsPlugin(options: InsightsPluginOptions = {}): TerminalPlu
       },
     ],
     views: [
-      { id: 'context', title: 'Context', render: renderContext },
-      { id: 'prompt', title: 'Prompt Projection', render: context => renderPrompt(context, options) },
-      { id: 'permissions', title: 'Permissions', render: renderPermissions },
+      { id: 'context', title: 'Context', eventKinds: ['request-context', 'assistant-message', 'context-compacted'], render: renderContext },
+      { id: 'prompt', title: 'Prompt Projection', eventKinds: [], render: context => renderPrompt(context, options) },
+      { id: 'permissions', title: 'Permissions', eventKinds: ['approval-policy', 'approval-asked', 'approval-decided', 'request-context'], render: renderPermissions },
     ],
   }
 }
@@ -67,10 +68,26 @@ export function renderContext(context: TerminalViewContext): string {
   const compactions = events.filter(event => event.kind === 'context-compacted')
   const projection = projectContextInsights(context)
   const route = projection.route.value
+  if (context.locale === 'zh-CN') return [
+    '会话事件来自运行时观测；累计用量由本地事件汇总。',
+    ...describeSessionUsage(context.usage ?? emptyUsage(), 'zh-CN'),
+    ...telemetryDetails(context.modelTelemetry, true),
+    `最新请求输出：${projection.latestOutputTokens.value ?? '不可用'} tokens`,
+    `最新请求缓存读取占比：${projection.latestCacheReadShare.value ?? '不可用'} %`,
+    `模型路由：${route ? `${route.provider}/${route.model}` : '尚未观察到'}`,
+    `上下文容量：${projection.contextWindow.value ?? '不可用'} tokens`,
+    `最新输入 / 容量：${projection.inputCapacityShare.value ?? '不可用'} %`,
+    `本地保留的压缩事件：${compactions.length}`,
+    ...compactions.slice(-5).map(event => event.kind === 'context-compacted' ? `- ${event.shadowedEvents} 个事件被覆盖；${event.shadowedTokens ?? '未知'} tokens` : ''),
+    '当前接口未提供压缩警告阈值；不推测未知容量。',
+    context.runtime.backend === 'dsh-profile' ? '自动压缩配置由 Profile 管理，实际阈值尚未确认。' : '自带自动压缩默认阈值为 80%；工作区或自定义配置可能覆盖此值。',
+    `压缩状态：${context.compaction?.state ?? '未观察'}；累计 ${context.compaction?.count ?? compactions.length} 次；最近耗时 ${context.compaction?.elapsedMs === undefined ? '未知' : `${Math.round(context.compaction.elapsedMs)}ms`}`,
+  ].join('\n')
   return [
     'Authority: runtime/observed for session events; local/observed for folded token totals.',
     '',
     ...describeSessionUsage(context.usage ?? emptyUsage()),
+    ...telemetryDetails(context.modelTelemetry, false),
     factLine('latest request output', projection.latestOutputTokens, value => `${value.toLocaleString('en-US')} tokens`),
     factLine('latest request cache-read share', projection.latestCacheReadShare, value => `${value}%`),
     '',
@@ -89,12 +106,17 @@ export function renderContext(context: TerminalViewContext): string {
       : ''),
     '',
     'No configured compaction warning threshold is exposed on this transport, so dshc does not invent one.',
+    context.runtime.backend === 'dsh-profile' ? 'Automatic compaction is Profile-owned; its threshold is unverified.' : 'Bundled automatic compaction defaults to 80%; workspace/custom configuration can override it.',
+    `Compaction: ${context.compaction?.state ?? 'unobserved'}; ${context.compaction?.count ?? compactions.length} total; last duration ${context.compaction?.elapsedMs === undefined ? 'unknown' : `${Math.round(context.compaction.elapsedMs)}ms`}`,
   ].join('\n')
 }
 
 export function projectContextInsights(context: TerminalViewContext): ContextInsightProjection {
   const events = sessionEvents(context.events, context.session.sessionId)
-  const route = latest(events, 'request-context')
+  const observed = context.modelTelemetry
+  const route = observed?.provider && observed.model
+    ? { provider: observed.provider, model: observed.model, contextWindow: observed.contextWindow }
+    : latest(events, 'request-context')
   const usage = context.usage
   const hasUsage = usage !== undefined && usage.requests > 0
   const latestInput = hasUsage ? usage.latestInputTokens : undefined
@@ -121,9 +143,14 @@ export function projectContextInsights(context: TerminalViewContext): ContextIns
 }
 
 export function renderPrompt(context: TerminalViewContext, options: InsightsPluginOptions = {}): string {
+  if (context.runtime.backend === 'dsh-profile') return [
+    context.locale === 'zh-CN' ? '官方 Profile 管理提示词配置；不读取自带 persona。最终模型提示词尚无公共检查接口。' : 'Official Profile owns the prompt configuration. Bundled persona is not applied; the final assembled prompt is unavailable.',
+    JSON.stringify(context.runtime.requestedPreferences ?? {}, null, 2), ...(context.runtime.profile?.configurationSources ?? []),
+  ].join('\n')
   const env = options.env ?? process.env
   const configured = env.DSH_SYSTEM_PROMPT?.trim()
   const facts: PersonaFacts = {
+    preferences: context.runtime.requestedPreferences,
     platform: process.platform,
     workspace: context.runtime.workspace,
     network: readNetworkFacts(env, context.runtime.workspace),
@@ -137,6 +164,15 @@ export function renderPrompt(context: TerminalViewContext, options: InsightsPlug
       ]
     : [promptLayer('DSH_SYSTEM_PROMPT override', configured)]
   const patches = context.composition?.patches ?? []
+  if (context.locale === 'zh-CN') return [
+    '这是 dshc 本地提示词配置视图，不能代表 Harness 最终组装的系统提示词。',
+    'SDK 尚未公开运行时组装的片段、上下文贡献及工具结构。',
+    '本地请求层（按组装顺序）：',
+    ...layers.map((layer, index) => `${index + 1}. ${formatPromptLayer(layer)}`),
+    `基础配置：${context.composition?.base.path ?? '不可用'}`,
+    ...patches.map((patch, index) => `补丁 ${index + 1}：${patch.path} · ${patch.patchCount} 项`),
+    '在上游提供权威结构前，不展示或优化最终提示词全文。',
+  ].join('\n')
   return [
     'This is a dshc local projection, not the final Harness system prompt.',
     'Runtime-assembled sections, context contributions and tool schemas are unavailable on SDK protocol 0.0.1.',
@@ -160,15 +196,28 @@ export function renderPermissions(context: TerminalViewContext): string {
   const decided = events.filter(event => event.kind === 'approval-decided')
   const audit = projectApprovalAudit(events)
   const matrix = capabilityMatrix({
+    locale: context.locale,
     historyReaderAvailable: context.commands.some(command => command.name === 'history'),
     contextCapacityObserved: latest(events, 'request-context')?.contextWindow !== undefined,
   })
   const policyFact: ProjectionFact<'ask' | 'never'> | undefined = policyEvent === undefined
     ? undefined
     : runtimeObserved(policyEvent.policy)
+  if (context.locale === 'zh-CN') return [
+    `已观察到的审批策略：${policyFact?.value ?? '不可用'}`,
+    `工作模式：${context.runtime.requestedPreferences?.mode ?? 'code'}`,
+    '只读模式由 Harness 工具守卫执行，覆盖根 Agent 和子 Agent；不依赖提示词约束。',
+    '审批回答接口不可用；终端不提供会话级或持久授权。',
+    ...matrix.map(item => `- ${item.id}: ${item.availability} — ${item.detail}`),
+    `保留的审批记录：${asked.length} 次请求 · ${decided.length} 次决定 · ${audit.pendingCount} 次待处理`,
+    `审计异常：${audit.anomalies.length}（仅作观测，不视为授权）`,
+    ...asked.slice(-10).map(event => event.kind === 'approval-asked' ? `- ${short(event.requestId)} · ${sanitizeTerminalText(event.toolName)} · ${audit.decisions.get(event.requestId)?.outcome ?? '尚未观察到决定'}` : ''),
+    '切换策略或回答审批需要上游支持的公共握手；当前未安装私有桥接。',
+  ].join('\n')
   return [
     policyFact === undefined
-      ? 'effective policy: unavailable (runtime/unavailable); shipped requested default: never (local/requested)'
+      ? context.runtime.backend === 'dsh-profile' ? 'effective policy: unavailable; selected Profile owns the requested policy'
+        : 'effective policy: unavailable (runtime/unavailable); shipped requested default: never (local/requested)'
       : `effective policy: ${policyFact.value} (${policyFact.source}/${policyFact.authority} session event)`,
     'answerer: unavailable · fail-closed',
     'supported grants: allowed-once only; dshc does not offer session-wide or persistent allow rules',

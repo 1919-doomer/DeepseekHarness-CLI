@@ -1,4 +1,6 @@
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { describePreferences } from './preferences.js'
+import { translate, type MessageKey } from '../i18n.js'
 import {
   TERMINAL_PLUGIN_API_VERSION,
   type TerminalCommandOutcome,
@@ -69,7 +71,7 @@ export function configurationPlugin(): TerminalPluginSpec {
         execute: (_context, args) => reloadCommand(args),
       },
     ],
-    views: [{ id: 'config', title: 'Runtime Configuration', render: renderConfiguration }],
+    views: [{ id: 'config', title: 'Runtime Configuration', eventKinds: [], render: renderConfiguration }],
   }
 }
 
@@ -156,8 +158,10 @@ function reloadCommand(args: readonly string[]): TerminalCommandOutcome {
  * inventory, so this is what dshc asked for — not confirmation of what loaded.
  */
 function renderConfiguration(context: TerminalViewContext): string {
+  const t = (key: MessageKey) => translate(context.locale ?? 'en', key)
   const lines = [
-    'Launched with',
+    describePreferences(context.preferences ?? {}, context.locale, context.runtime),
+    t('launchedWith'),
     `  provider: ${sanitizeTerminalText(context.runtime.provider)}`,
     `  model: ${sanitizeTerminalText(context.runtime.model)}`,
     `  workspace: ${sanitizeTerminalText(context.runtime.workspace)}`,
@@ -166,19 +170,19 @@ function renderConfiguration(context: TerminalViewContext): string {
   ]
 
   const composition = context.composition
+  if (context.runtime.backend === 'dsh-profile') return lines.join('\n')
   if (composition === undefined) {
-    lines.push('Composition file unavailable; dshc could not read the config it launched with.')
+    lines.push(t('configMissing'))
     return lines.join('\n')
   }
 
   lines.push(
-    `Base composition (${composition.base.source})`,
+    `${t('baseComposition')} (${composition.base.source})`,
     `  ${sanitizeTerminalText(composition.base.path)}`,
-    ...renderPatchLayers(composition),
+    ...(context.locale === 'zh-CN' ? (composition.patches ?? []).map(layer => `${t('patchLayer')}: ${layer.path} (${layer.patchCount})`) : renderPatchLayers(composition)),
     '',
-    'Effective requested configuration',
-    'Protocol 0.0.1 exposes no runtime plugin inventory, so this is the composed',
-    'request, not confirmation of what actually loaded. Harness owns the values.',
+    t('effectiveConfig'),
+    t('configAuthority'),
     '',
   )
 
@@ -189,7 +193,7 @@ function renderConfiguration(context: TerminalViewContext): string {
     lines.push(`  ${sanitizeTerminalText(entry.id)}${settings}`)
   }
 
-  lines.push('', CONFIG_USAGE)
+  lines.push('', context.locale === 'zh-CN' ? t('configUsage') : CONFIG_USAGE)
   return lines.join('\n')
 }
 

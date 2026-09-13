@@ -24,13 +24,17 @@ pnpm install --frozen-lockfile
 pnpm check
 pnpm test:official-runtime
 pnpm test:package
-pnpm release:verify -- v0.1.0-alpha.10
+pnpm release:verify -- v0.1.0-alpha.12
 ```
 
 Inspect `npm pack --dry-run --json`. The allowlisted package must contain the
 built CLI/runtime, README files, changelog, license, disclosure and installation
 and compatibility statements, with no source tree, tests, credentials, cache or
 existing tarball.
+
+## GitHub-only prerelease
+
+Tag pushes build and validate a tarball, then create a draft GitHub prerelease. npm staging is opt-in: the manual workflow input `stage_npm` defaults to false. For a GitHub-only release, leave it disabled, wait for the installed-package matrix, inspect the exact assets, and publish the draft as a prerelease. State in its notes and installation instructions that npm dist-tags were not updated. The npm registry finalization gate below applies only to releases published to npm as well.
 
 ## First package publication
 
@@ -56,7 +60,7 @@ After the bootstrap version exists:
    `.github/workflows/release.yml`, allowing **stage publish only**;
 2. set package publishing access to require 2FA and disallow traditional tokens;
 3. push the matching protected alpha tag;
-4. the workflow builds once, validates the same tarball on the blocking matrix,
+4. run the workflow manually for that tag with `stage_npm=true`; it builds once, validates the same tarball on the blocking matrix,
    stages it with OIDC provenance and creates a draft GitHub prerelease;
 5. inspect and approve the npm staged package with 2FA;
 6. run `Finalize public alpha` for the tag.
@@ -79,6 +83,6 @@ still a draft.
   and move the `alpha` dist-tag;
 - deprecate a bad version with a precise migration message instead of relying on
   unpublish;
-- never make a GitHub release public before the exact npm version and `alpha`
+- for a joint npm/GitHub release, never make it public before the exact npm version and `alpha`
   dist-tag are visible on the official registry;
 - mirror delay is not evidence that the official publication failed.
