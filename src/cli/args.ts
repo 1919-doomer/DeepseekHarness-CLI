@@ -1,6 +1,8 @@
 import { DshcRuntimeError } from '../upstream/errors.js'
+import { validatePreferences, type Preferences, type ResolvedPreferences } from '../preferences.js'
 
-export interface CliOptions {
+export interface CliOptions extends Partial<Preferences> {
+  preferenceSources?: ResolvedPreferences['sources']
   command: 'auto' | 'run' | 'doctor'
   prompt?: string
   workspace?: string
@@ -48,6 +50,16 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
   while (index < argv.length) {
     const arg = argv[index]
+    const preferenceFlags: Record<string, keyof Preferences> = {
+      '--locale': 'locale', '--reply-language': 'replyLanguage', '--mode': 'mode', '--style': 'style',
+      '--runtime': 'runtime', '--dsh-profile': 'dshProfile', '--reasoning-effort': 'reasoningEffort',
+    }
+    const preference = arg === undefined ? undefined : preferenceFlags[arg]
+    if (preference !== undefined) {
+      Object.assign(options, validatePreferences({ [preference]: requireValue(argv, ++index, arg!) }))
+      index++
+      continue
+    }
     if (arg === '--') {
       positional.push(...argv.slice(index + 1))
       break
@@ -62,6 +74,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       index++
       continue
     }
+    if (arg === '--no-animation') { options.animation = false; index++; continue }
     if (arg === '--interactive') {
       options.interactive = true
       index++
@@ -152,6 +165,9 @@ function positiveInteger(raw: string, flag: string): number {
 export const HELP_TEXT = `DeepSeek Harness Console
 
 Usage:
+  Options: --locale auto|zh-CN|en --reply-language auto|<tag>
+           --mode code|plan|review|research --style default|explanatory|learning
+           --runtime bundled|dsh-profile --dsh-profile <name> --reasoning-effort <adapter-id>
   dshc [options]                         Start the persistent interactive loop in a TTY
   dshc [options] <prompt>                Run one prompt and exit
   dshc run [options] <prompt>            Explicit one-shot mode
@@ -162,7 +178,7 @@ Usage:
 Options:
   -C, --workspace <path>          Workspace (default: current directory)
       --provider <id>             Harness provider (default: deepseek-official)
-      --model <id>                Harness model (default: deepseek-v4-flash)
+      --model <id>                Harness model (default: deepseek-flash)
       --session <id>              Initial/one-shot session id
       --max-tokens <n>            Positive output-token cap
       --activity-timeout-ms <n>   Bound receipt-to-idle collection
@@ -172,6 +188,7 @@ Options:
       --interactive               Force the persistent loop even when stdin is piped
       --json                      Emit machine-readable one-shot/doctor output
       --debug                     Show compatibility and unknown-event diagnostics
+      --no-animation              Disable startup and status animations
   -h, --help                      Show help
   -v, --version                   Show version
 

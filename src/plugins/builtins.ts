@@ -1,4 +1,6 @@
 import { formatSessionUsage, describeSessionUsage } from '../session/usage.js'
+import { telemetryDetails } from '../session/model-telemetry.js'
+import { duration } from '../session/session-clock.js'
 import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
 import { findToolActivityDetail, formatActivityElapsed } from '../terminal/tool-activity.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
@@ -20,6 +22,11 @@ import { cordisEventTags, cordisEventToolName, workbenchPlugin } from './workben
 import { insightsPlugin } from './insights.js'
 import type { HistoryWorkbench } from './history.js'
 import { capabilityMatrix } from '../capabilities.js'
+import { preferencesPlugin, describePreferences } from './preferences.js'
+import { diffPlugin } from './diff.js'
+import { inputPlugin } from './input.js'
+import { withFirstPartyLocales } from './locales.js'
+import { translate, type MessageKey } from '../i18n.js'
 
 const TRACE_PAGE_SIZE = 15
 const TRACE_USAGE = [
@@ -45,18 +52,22 @@ export function createDefaultTerminalHost(options: {
   env?: NodeJS.ProcessEnv
 } = {}): TerminalPluginHost {
   const host = new TerminalPluginHost()
-  host.register(corePlugin())
-  host.register(insightsPlugin({
+  const register = (plugin: TerminalPluginSpec) => host.register(withFirstPartyLocales(plugin))
+  register(corePlugin())
+  register(insightsPlugin({
     devMode: options.devMode,
     env: options.env,
     historyReaderAvailable: options.history !== undefined,
   }))
-  if (options.history !== undefined) host.register(options.history.plugin())
-  host.register(codingActivityPlugin())
-  if (options.devMode === true) host.register(workbenchPlugin())
-  host.register(activityPlugin())
-  host.register(configurationPlugin())
-  host.register(pluginManagementPlugin())
+  if (options.history !== undefined) register(options.history.plugin())
+  register(codingActivityPlugin())
+  if (options.devMode === true) register(workbenchPlugin())
+  register(activityPlugin())
+  register(configurationPlugin())
+  register(pluginManagementPlugin())
+  register(preferencesPlugin())
+  register(diffPlugin())
+  register(inputPlugin())
   return host
 }
 
@@ -89,17 +100,17 @@ function corePlugin(): TerminalPluginSpec {
       { name: 'exit', aliases: ['quit'], summary: 'Close the owned Harness runtime and exit', execute: () => ({ kind: 'exit' }) },
     ],
     views: [
-      { id: 'help', title: 'Help', render: renderHelp },
-      { id: 'capabilities', title: 'Capability Explorer', render: renderCapabilities },
+      { id: 'help', title: 'Help', eventKinds: [], render: renderHelp },
+      { id: 'capabilities', title: 'Capability Explorer', eventKinds: ['request-context'], render: renderCapabilities },
       { id: 'trace', title: 'Session Trace', render: context => renderTraceQuery(context, traceQuery) },
-      { id: 'agents', title: 'Agent Topology', render: renderAgents },
-      { id: 'tool-detail', title: 'Tool Call', render: renderToolDetail },
+      { id: 'agents', title: 'Agent Topology', eventKinds: ['subagent-started', 'subagent-finished'], render: renderAgents },
+      { id: 'tool-detail', title: 'Tool Call', eventKinds: ['tool-call', 'tool-result', 'subagent-started', 'subagent-finished'], render: renderToolDetail },
     ],
     statusSegments: [
       { id: 'phase', priority: 100, render: context => context.phase },
       { id: 'model', priority: 90, render: context => context.runtime.model },
       { id: 'session', priority: 80, render: context => compactSession(context.session.sessionId) },
-      { id: 'turns', priority: 70, render: context => `turns:${context.totalTurns}` },
+      { id: 'turns', priority: 70, render: context => `${translate(context.locale ?? 'en', 'turns')}:${context.totalTurns}` },
       {
         id: 'usage',
         priority: 60,
@@ -195,40 +206,41 @@ function renderHelp(context: TerminalViewContext): string {
     const aliases = command.aliases.length === 0 ? '' : ` (${command.aliases.map(alias => `/${alias}`).join(', ')})`
     return `/${command.name}${aliases}\n  ${command.summary}`
   })
+  if (context.locale === 'zh-CN') return `当前可用的终端命令：\n\n${rows.join('\n\n')}\n\n事件查询：\n${TRACE_USAGE}\n\n使用 //text 发送以 / 开头的普通提问。\n${translate('zh-CN', 'helpPreferences')}`
   return `Commands exposed by the active terminal plugin host:\n\n${rows.join('\n\n')}\n\nTrace debugger:\n  ${TRACE_USAGE.replaceAll('\n', '\n  ')}\n\nUse //text to send a literal prompt beginning with /.`
 }
 
 function renderCapabilities(context: TerminalViewContext): string {
-  const plugins = context.plugins.map(plugin => `${plugin.id}@${plugin.version}`).join(', ') || 'none'
+  const t = (key: MessageKey) => translate(context.locale ?? 'en', key)
+  const plugins = context.plugins.map(plugin => `${plugin.id}@${plugin.version}`).join('\n  ') || 'none'
   const renderers = context.renderers.map(renderer => `${renderer.id}@${renderer.pluginId}`).join(', ') || 'generic safe fallback only'
   const defaultShell = process.platform === 'win32' ? 'pwsh' : 'bash'
   const contextCapacityObserved = context.events.some(event => event.kind === 'request-context'
     && event.sessionId === context.session.sessionId
     && event.contextWindow !== undefined)
   const matrix = capabilityMatrix({
+    locale: context.locale,
     historyReaderAvailable: context.commands.some(command => command.name === 'history'),
     contextCapacityObserved,
   })
   return [
-    'Harness boundary',
+    t('capabilityBoundary'),
     `- runtime: ${context.runtime.serverName}/${context.runtime.protocolVersion}`,
     `- provider: ${context.runtime.provider}`,
     `- model: ${context.runtime.model}`,
     `- workspace: ${context.runtime.workspace}`,
     '- runtime plugin inventory: partial/unavailable on SDK protocol 0.0.1',
-    '- prompt cancel: unavailable',
-    '- dshc hard interrupt: active-turn Ctrl+C replaces the whole runtime and starts a fresh session',
-    '- per-session close: unavailable',
+    t('capabilityLimits'),
     '',
     'M7 capability matrix',
     ...matrix.map(item => `- ${item.id}: ${item.availability} — ${item.detail}`),
     '',
-    'Shipped default coding baseline: locally validated; not runtime discovery; overrides may differ',
+    t('codingBaseline'),
     `- tools: ${VALIDATED_DEFAULT_CODING_TOOLS.filter(tool => tool !== 'bash' && tool !== 'pwsh').join(', ')}, ${defaultShell}`,
     '',
-    `Terminal plugins: ${plugins}`,
-    `Specialized renderers: ${renderers}`,
-    `Commands: ${context.commands.map(command => `/${command.name}`).join(', ')}`,
+    `${t('terminalPlugins')}:\n  ${plugins}`,
+    `${t('renderers')}: ${renderers}`,
+    `${t('commands')}: ${context.commands.map(command => `/${command.name}`).join(', ')}`,
   ].join('\n')
 }
 
@@ -438,12 +450,13 @@ function formatElapsed(ms: number | undefined): string {
  * because retention may already have truncated the result.
  */
 function renderToolDetail(context: TerminalViewContext): string {
+  const t = (key: MessageKey) => translate(context.locale ?? 'en', key)
   const key = context.selectedToolKey
-  if (key === undefined) return 'No tool call is selected.'
+  if (key === undefined) return t('noToolSelected')
 
   const detail = findToolActivityDetail(context.events, context.session.sessionId, key)
   if (detail === undefined) {
-    return 'That tool call is no longer in local retention. Older activity is evicted to keep this terminal process bounded.'
+    return t('toolEvicted')
   }
 
   const { row } = detail
@@ -456,12 +469,12 @@ function renderToolDetail(context: TerminalViewContext): string {
       ? 'elapsed: unknown (upstream did not timestamp both ends)'
       : `elapsed: ${formatActivityElapsed(row.elapsedMs)} between upstream events`,
     '',
-    'arguments',
+    t('arguments'),
     detail.argumentsText === undefined
       ? '  (the call was evicted from local retention)'
       : indentBlock(sanitizeTerminalText(detail.argumentsText)),
     '',
-    'result',
+    t('result'),
     detail.resultText === undefined
       ? '  (no result observed yet)'
       : `  ${detail.resultText.length} retained chars\n${indentBlock(sanitizeTerminalText(detail.resultText))}`,
@@ -532,9 +545,18 @@ function deriveTopologyFromEvents(events: readonly NormalizedEvent[]): readonly 
 
 function statusMessage(context: TerminalCommandContext): string {
   const head = `runtime=${context.runtime.serverName}/${context.runtime.protocolVersion} provider=${context.runtime.provider} model=${context.runtime.model} phase=${context.phase} session=${context.session.sessionId} turns=${context.totalTurns} workspace=${context.runtime.workspace}`
-  if (context.usage === undefined) return head
-  const tokens = describeSessionUsage(context.usage).map(line => `  ${line}`)
-  return [head, '', 'Tokens', ...tokens].join('\n')
+  const tokens = context.usage === undefined ? [] : ['Tokens', ...describeSessionUsage(context.usage, context.locale).map(line => `  ${line}`)]
+  const metrics = context.runtime.lastActivityMetrics
+  const timing = metrics ? [`Activity: ${Math.round(metrics.elapsedMs)}ms · ${metrics.events} events · ${metrics.bytes} bytes · peak ${metrics.peakEventsPerSecond}/s`,
+    `Observed request spans: ${Math.round(metrics.observedRequestMs)}ms · tool spans: ${Math.round(metrics.observedToolMs)}ms (overlapping agents may overlap)`] : []
+    const sessionTime = context.sessionTiming
+    const times = sessionTime ? [context.locale === 'zh-CN'
+      ? `会话总时长 ${duration(sessionTime.elapsedMs)} · 本轮 ${duration(sessionTime.turnMs)} · 运行 ${duration(sessionTime.runningMs)} · 等待回答 ${duration(sessionTime.waitingMs)}`
+      : `Session ${duration(sessionTime.elapsedMs)} · turn ${duration(sessionTime.turnMs)} · running ${duration(sessionTime.runningMs)} · awaiting input ${duration(sessionTime.waitingMs)}`] : []
+    return [head, ...tokens, ...telemetryDetails(context.modelTelemetry, context.locale === 'zh-CN'),
+      `Observed model: ${context.modelTelemetry?.provider ?? '—'}/${context.modelTelemetry?.model ?? '—'}`,
+      ...times, `Compaction: ${context.compaction?.state ?? 'unobserved'} · count ${context.compaction?.count ?? '—'}`,
+      describePreferences(context.preferences ?? {}, context.locale, context.runtime), ...timing].join('\n')
 }
 
 function scopedTitle(base: string, sessionId: string, rootSessionId: string): string {

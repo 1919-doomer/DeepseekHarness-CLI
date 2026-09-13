@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
+import { TerminalEventBatch, coalesceTranscriptDeltas } from './event-batch.js'
+import { StatusBar, statusBarContentRows } from './status-bar.js'
+import { OverviewSidebar } from './overview.js'
+import { startWithSplash } from './splash.js'
+import { SessionClock } from '../session/session-clock.js'
+import { InteractionCard, createInteractionDraft, type InteractionCardHandle } from './interaction-card.js'
+import type { InteractionRequest, InteractionAnswer } from '../upstream/interaction.js'
+import { buildPlanHandoff } from '../history/plan-handoff.js'
+import { ModelTelemetryMeter, type ModelTelemetry } from '../session/model-telemetry.js'
+import { commandArgumentChoices } from './command-choices.js'
+import { TranscriptLayoutCache, TranscriptRows, selectTranscriptPage, transcriptAnchor, type TranscriptAnchor, type TranscriptLayout, type TranscriptPage } from './transcript-viewport.js'
+import { DEFAULT_PREFERENCES, pickPreferences, preferencePaths, savePreferences, type Preferences } from '../preferences.js'
+import { resolveLocale, translate, uiLabel, type Locale } from '../i18n.js'
+import { PromptQueue } from './prompt-queue.js'
+import { useSnapshotState } from './snapshot-store.js'
+import { completeFileReference, editExternally, keyMatches, MAX_INPUT_CHARS } from './input-actions.js'
+import { Box, Text, render, useApp, useInput, usePaste, useStdout } from 'ink'
 import { createSessionId } from '../session/interactive-state.js'
 import { accumulateUsage, initialSessionUsage } from '../session/usage.js'
 import { classifyRuntimeError } from '../upstream/errors.js'
@@ -14,13 +30,12 @@ import type {
   TerminalStatusSegmentSpec,
   TerminalViewContext,
   TerminalViewSpec,
-  TranscriptBlock,
 } from '../plugins/api.js'
 import { createDefaultTerminalHost } from '../plugins/builtins.js'
 import type { TerminalPluginHost } from '../plugins/host.js'
 import type { HistoryWorkbench } from '../plugins/history.js'
 import {
-  appendTerminalEventHistory,
+  appendTerminalEventBatch,
   initialAgentTopologyHistory,
   initialTerminalEventHistory,
   reduceAgentTopologyHistory,
@@ -49,27 +64,19 @@ import {
   graphemeAt,
   graphemeCount,
   insertAtGrapheme,
-  prefixByCells,
   sliceByGrapheme,
   suffixByCells,
   terminalCellWidth,
-  wrappedTerminalRows,
 } from './text-metrics.js'
-import {
-  looksLikeMarkdown,
-  parseMarkdown,
-  spanText,
-  tableColumnWidths,
-  type MarkdownLine,
-  type MarkdownSpan,
-} from './markdown.js'
 
 const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
-export const DEFAULT_FOLD_LIMIT = 1_200
+export { DEFAULT_FOLD_LIMIT, blockElapsedMs, formatElapsedMs, selectVisibleBlocks, takeVisibleBlocks, blockHeaderText, foldTerminalText } from './transcript-view.js'
+import { ViewPanel } from './transcript-view.js'
+import type { NormalizedEvent } from '../session/projection.js'
 
 /** The initialize parameters a restart may change, plus the composition file. */
-export interface RuntimeSelection {
+export interface RuntimeSelection extends Partial<Preferences> {
   provider?: string
   model?: string
   maxTokens?: number
@@ -88,6 +95,8 @@ export interface PluginInstallRestart extends RuntimeRestart {
 }
 
 export interface TerminalProductOptions {
+  profileOperation?: (args: readonly string[], signal?: AbortSignal, preferences?: Partial<Preferences>) => Promise<{ message: string; replacement?: RuntimeRestart }>
+  preferences?: Partial<Preferences>
   debug?: boolean
   devMode?: boolean
   /** Trusted-mode warning inserted into the initial transcript and after /clear. */
@@ -129,7 +138,8 @@ export async function runTerminalProduct(
   runtime: HarnessRuntime,
   options: TerminalProductOptions = {},
 ): Promise<TerminalProductResult> {
-  const metadata = await runtime.start()
+  runtime.enableInteraction()
+  const { metadata, draft: startupDraft, instance: startupInstance } = await startWithSplash(runtime, options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, options.preferences?.animation, options.interactive)
   // Held mutably so a configuration restart can swap it without tearing the UI
   // down. The new runtime is started before the old one closes, so a rejected
   // composition leaves the session working rather than stranded.
@@ -146,7 +156,7 @@ export async function runTerminalProduct(
   const stderr = options.stderr ?? process.stderr
   const alternate = options.useAlternateScreen ?? true
   let alternateEntered = false
-  let instance: ReturnType<typeof render> | undefined
+  let instance: ReturnType<typeof render> | undefined = startupInstance
   let latest = { totalTurns: 0, sessionId: initialSessionId }
   let signalClosing = false
   const shutdown = new AbortController()
@@ -194,6 +204,7 @@ export async function runTerminalProduct(
   })
 
   try {
+    startupInstance?.clear()
     if (alternate) {
       stdout.write(ALT_SCREEN_ON)
       alternateEntered = true
@@ -202,8 +213,11 @@ export async function runTerminalProduct(
     process.once('SIGTERM', onTerm)
     stdin.once('end', onEof)
 
-    const current = render(
+    const app = (
       <TerminalProductApp
+        startupDraft={startupDraft}
+        preferences={options.preferences}
+        profileOperation={options.profileOperation}
         runtimeRef={runtimeRef}
         trackRuntimeClose={runtime => runtimeClosures.track(runtime)}
         shutdownSignal={shutdown.signal}
@@ -223,16 +237,17 @@ export async function runTerminalProduct(
         initialSessionId={initialSessionId}
         onProgress={(totalTurns, sessionId) => { latest = { totalTurns, sessionId } }}
         onFinish={finish}
-      />,
-      {
+      />
+    )
+    const current = startupInstance ?? render(app, {
         stdin,
         stdout,
         stderr,
         interactive: options.interactive,
         exitOnCtrlC: false,
         patchConsole: false,
-      },
-    )
+      })
+    if (startupInstance) startupInstance.rerender(app)
     instance = current
     // Register Ink's exit promise while the instance is definitely mounted.
     // Waiting until after the UI invokes exit() causes Ink to attach a new
@@ -259,6 +274,9 @@ export async function runTerminalProduct(
 }
 
 interface AppProps {
+  startupDraft?: string
+  profileOperation?: TerminalProductOptions['profileOperation']
+  preferences?: Partial<Preferences>
   /** Mutable so a configuration restart can swap the runtime under the UI. */
   runtimeRef: { current: HarnessRuntime }
   /** Starts a close and retains its result until the product's final drain. */
@@ -293,10 +311,27 @@ function initialProductTranscript(startupNotice: string | undefined): TerminalTr
 }
 
 function TerminalProductApp(props: AppProps): React.ReactElement {
-  const { exit } = useApp()
+  const [preferences, setPreferences] = useState<Preferences>(() => ({ ...DEFAULT_PREFERENCES, ...props.preferences }))
+  const locale = resolveLocale(preferences.locale)
+  const [queue] = useState(() => new PromptQueue())
+  const [, setQueueRevision] = useState(0)
+  const nextQueuedRef = useRef<() => void>(() => undefined)
+  const { exit, suspendTerminal, waitUntilRenderFlush } = useApp()
   const { stdout } = useStdout()
   const [size, setSize] = useState(() => ({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 }))
   const [sessionId, setSessionId] = useState(props.initialSessionId)
+  const [clock] = useState(() => { const value = new SessionClock(); value.reset(props.initialSessionId); return value })
+  const [interaction, setInteraction] = useState<InteractionRequest | undefined>()
+  const interactionDraft = useMemo(() => interaction ? createInteractionDraft(interaction) : undefined, [interaction])
+  const clarificationRef = useRef<unknown[]>([])
+  const [interactionHidden, setInteractionHidden] = useState(false)
+  const interactionHiddenRef = useRef(false)
+  const cardRef = useRef<InteractionCardHandle>(null)
+  const confirmedPlan = useRef<{ request: InteractionRequest & { kind: 'plan' }; runtime: HarnessRuntime } | undefined>(undefined)
+  const handoffRef = useRef<() => Promise<void>>(async () => undefined)
+  const [sidebarPage, setSidebarPage] = useState<'overview' | 'tools'>('overview')
+  const sidebarPageRef = useRef<'overview' | 'tools'>('overview')
+  const [overviewOffset, setOverviewOffset] = useState(0)
   const [generation, setGeneration] = useState(1)
   const [sessionTurns, setSessionTurns] = useState(0)
   const [totalTurns, setTotalTurns] = useState(0)
@@ -307,36 +342,47 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [menuDismissed, setMenuDismissed] = useState(false)
   // Usage is per runtime: a restart genuinely starts new accounting, but /clear
   // only drops local blocks and must not pretend the tokens were not spent.
-  const [usage, setUsage] = useState(initialSessionUsage)
+  const [usage, setUsage] = useSnapshotState(initialSessionUsage, stdout)
+  const [telemetryMeter] = useState(() => new ModelTelemetryMeter())
+  const [telemetry, setTelemetry] = useSnapshotState<ModelTelemetry | undefined>(undefined, stdout)
   const [phase, setPhase] = useState<TerminalRuntimePhase>('idle')
-  const [transcript, setTranscript] = useState<TerminalTranscriptState>(() => initialProductTranscript(props.startupNotice))
-  const [eventHistory, setEventHistory] = useState<TerminalEventHistory>(initialTerminalEventHistory)
-  const [agentTopology, setAgentTopology] = useState<AgentTopologyHistory>(initialAgentTopologyHistory)
-  const [input, setInput] = useState('')
-  const inputRef = useRef('')
+  const [transcript, setTranscript] = useSnapshotState<TerminalTranscriptState>(() => initialProductTranscript(props.startupNotice), stdout)
+  const [eventHistory, setEventHistory] = useSnapshotState<TerminalEventHistory>(initialTerminalEventHistory, stdout)
+  const [agentTopology, setAgentTopology] = useSnapshotState<AgentTopologyHistory>(initialAgentTopologyHistory, stdout)
+  const [input, setInput] = useState(props.startupDraft ?? '')
+  const inputRef = useRef(props.startupDraft ?? '')
   // `cursor` is a logical grapheme index, never a UTF-16 code-unit offset.
-  const [cursor, setCursor] = useState(0)
-  const cursorRef = useRef(0)
+  const [cursor, setCursor] = useState(graphemeCount(props.startupDraft ?? ''))
+  const cursorRef = useRef(graphemeCount(props.startupDraft ?? ''))
   const [activeView, setActiveView] = useState<string | undefined>()
-  const [, setFirstPartyViewRevision] = useState(0)
+  const [fileChoices, setFileChoices] = useState<readonly string[]>([])
+  const fileChoicesRef = useRef<readonly string[]>([])
+  const [fileIndex, setFileIndex] = useState(0)
+  const fileIndexRef = useRef(0)
+  const [localReport, setLocalReport] = useState<TerminalViewSpec | undefined>()
+  const [firstPartyViewRevision, setFirstPartyViewRevision] = useState(0)
+  const eventKindRevisions = useRef(new Map<NormalizedEvent['kind'], number>())
   const [metadata, setMetadata] = useState(props.metadata)
   const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
-  // Scroll position in blocks from the newest, mirrored in a ref for the same
-  // within-chunk ordering reason focus needs one.
-  const [scrollBack, setScrollBack] = useState(0)
-  const scrollBackRef = useRef(0)
-  const transcriptDepthRef = useRef(0)
+  // An anchored row keeps the reading position when a reply grows below it.
+  // Undefined follows the live tail; navigation can stop within any message.
+  const [scrollAnchor, setScrollAnchor] = useState<TranscriptAnchor | undefined>()
+  const [transcriptLayoutCache] = useState(() => new TranscriptLayoutCache())
+  const scrollNavigationRef = useRef<{ layout: TranscriptLayout; page: TranscriptPage } | undefined>(undefined)
 
   const jumpToNewest = useCallback((): void => {
-    scrollBackRef.current = 0
-    setScrollBack(0)
+    setScrollAnchor(undefined)
   }, [])
 
   const scrollTranscript = useCallback((delta: number): void => {
-    const next = Math.max(0, Math.min(transcriptDepthRef.current, scrollBackRef.current + delta))
-    scrollBackRef.current = next
-    setScrollBack(next)
+    const navigation = scrollNavigationRef.current
+    if (!navigation) return
+    const { layout, page } = navigation
+    const next = Math.max(0, Math.min(page.maximum, page.start - delta * Math.max(1, page.capacity - 2)))
+    const anchor = next === page.maximum ? undefined : transcriptAnchor(layout, next)
+    setScrollAnchor(anchor)
+    scrollNavigationRef.current = { layout, page: { ...page, start: next } }
   }, [])
   // Focus and selection are mirrored in refs because one stdin chunk can carry
   // several keystrokes that must observe each other's effect, not a value that
@@ -357,7 +403,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     setSelectedToolKey(key)
   }, [])
   const [history, setHistory] = useState<readonly string[]>([])
-  const [historyIndex, setHistoryIndex] = useState<number | undefined>()
+  const historyIndexRef = useRef<number | undefined>(undefined)
+  const historyDraftRef = useRef({ value: '', cursor: 0 })
+  const setHistoryIndex = (index: number | undefined): void => { historyIndexRef.current = index }
   const [commandBusy, setCommandBusy] = useState(false)
   // `activeView` state only lands on the next render, but one stdin chunk can
   // carry several keystrokes that must observe each other's effect in order.
@@ -367,15 +415,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     setActiveView(next)
   }, [])
   const runningRef = useRef(false)
+  const eventBatchRef = useRef<TerminalEventBatch | undefined>(undefined)
   const commandRunningRef = useRef(false)
   const interruptingRef = useRef(false)
   const totalTurnsRef = useRef(0)
-  const suggestionsRef = useRef<readonly CommandSuggestion[]>([])
   const menuIndexRef = useRef(0)
   const menuDismissedRef = useRef(false)
   const sessionRef = useRef(sessionId)
   const idRef = useRef(0)
   const mountedRef = useRef(true)
+  const finishingRef = useRef(false)
   const chunkQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   sessionRef.current = sessionId
@@ -389,7 +438,19 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     props.onProgress(totalTurns, sessionId)
   }, [props.onProgress, sessionId, totalTurns])
 
-  useEffect(() => () => { mountedRef.current = false }, [])
+  useEffect(() => { clock.reset(sessionId); confirmedPlan.current = undefined; clarificationRef.current = [] }, [clock, sessionId])
+  useEffect(() => {
+    const bridge = props.runtimeRef.current.interaction
+    const changed = (): void => {
+      const request = bridge?.current
+      if (request) { confirmedPlan.current = undefined; interactionHiddenRef.current = false; setInteractionHidden(false) }
+      setInteraction(request); clock.wait(request !== undefined)
+    }
+    changed()
+    return bridge?.subscribe(changed)
+  }, [metadata, clock, props.runtimeRef])
+
+  useEffect(() => () => { mountedRef.current = false; eventBatchRef.current?.close() }, [])
 
   useEffect(() => {
     const onResize = (): void => setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
@@ -399,25 +460,21 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   const nextId = useCallback((prefix: string): string => `${prefix}-${++idRef.current}`, [])
 
-  // The suggestion list is derived from the input, so any edit invalidates both
-  // the highlight and an earlier dismissal. Resetting here rather than at each
-  // setInput site means a new edit path cannot forget to.
-  useEffect(() => {
-    setMenuIndex(0)
-    setMenuDismissed(false)
-  }, [input])
-
   const commandContext = useCallback((): TerminalCommandContext => ({
+    sessionTiming: clock.snapshot(), compaction: clock.compaction,
+    locale,
+    preferences,
     runtime: metadata,
     session: { sessionId, turnCount: sessionTurns, generation },
     phase,
     totalTurns,
     usage,
-  }), [generation, phase, props.metadata, sessionId, sessionTurns, totalTurns, usage])
+    modelTelemetry: telemetry?.sessionId === sessionId ? telemetry : undefined,
+  }), [generation, phase, metadata, locale, preferences, sessionId, sessionTurns, totalTurns, usage, telemetry])
 
   const viewContext = useCallback((): TerminalViewContext => ({
     ...commandContext(),
-    commands: props.host.listCommands(),
+    commands: props.host.listCommands(locale),
     renderers: props.host.listRenderers(),
     plugins: props.host.listPlugins(),
     events: eventHistory.items,
@@ -433,17 +490,30 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   }), [agentTopology, commandContext, composition, eventHistory, props.host, transcript.droppedBlockCount])
 
   const finish = useCallback((exitCode: number, interrupted: boolean): void => {
+    if (finishingRef.current) return
+    finishingRef.current = true
+    eventBatchRef.current?.close()
     props.requestShutdown()
-    props.onFinish({
-      exitCode,
-      interrupted,
-      totalTurns: totalTurnsRef.current,
-      sessionId: sessionRef.current,
-    })
-    exit()
-  }, [exit, props])
+    const task = (async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([waitUntilRenderFlush(), new Promise<void>(resolve => { timeout = setTimeout(resolve, 5_000) })])
+      } finally {
+        if (timeout) clearTimeout(timeout)
+        props.onFinish({ exitCode, interrupted, totalTurns: totalTurnsRef.current, sessionId: sessionRef.current })
+        exit()
+      }
+    })()
+    props.trackLocalTask(task)
+  }, [exit, props, waitUntilRenderFlush])
 
   const interrupt = useCallback((): void => {
+    confirmedPlan.current = undefined
+    props.runtimeRef.current.interaction?.cancel()
+    clock.stop()
+    queue.pause()
+    setQueueRevision(value => value + 1)
+    eventBatchRef.current?.close()
     if (interruptingRef.current) return
     interruptingRef.current = true
     const running = runningRef.current
@@ -479,7 +549,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       .then(async () => {
         if (!mountedRef.current) return
         setPhase('starting')
-        const next = await restart({})
+        const next = await restart(preferences)
         if (!mountedRef.current) {
           await props.trackRuntimeClose(next.runtime).catch(() => undefined)
           return
@@ -522,7 +592,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           if (mountedRef.current) finish(130, true)
         }, 25)
       })
-  }, [finish, jumpToNewest, nextId, metadata.protocolVersion, props.restart, props.runtimeRef, props.trackRuntimeClose])
+  }, [finish, jumpToNewest, nextId, metadata.protocolVersion, props.restart, props.runtimeRef, props.trackRuntimeClose, preferences, queue])
 
   const runHarnessPrompt = useCallback(async (
     prompt: string,
@@ -531,8 +601,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     sourceSummary?: string,
   ): Promise<void> => {
     if (runningRef.current) return
-    let rootSessionId = sessionId
+    let rootSessionId = sessionRef.current
     if (freshSession) {
+      queue.pause()
       const previous = sessionId
       rootSessionId = createSessionId()
       setSessionId(rootSessionId)
@@ -548,28 +619,46 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
 
     const activityId = nextId('activity')
+    clock.reset(rootSessionId)
+    clock.start()
     setHistory(items => [...items.slice(-99), displayText])
     setTranscript(state => appendUserPrompt(state, rootSessionId, displayText, nextId('user')))
     setPhase('running')
     runningRef.current = true
+    telemetryMeter.begin(rootSessionId)
+    setTelemetry(telemetryMeter.snapshot())
 
+    let succeeded = false
+    const batch = new TerminalEventBatch(events => {
+      if (!mountedRef.current || props.shutdownSignal.aborted) return
+      setTelemetry(telemetryMeter.snapshot())
+      for (const kind of new Set(events.map(event => event.kind))) eventKindRevisions.current.set(kind, (eventKindRevisions.current.get(kind) ?? 0) + 1)
+      const display = coalesceTranscriptDeltas(events, event => props.host.matchingRenderer(event) !== undefined)
+      setTranscript(state => display.reduce((next, event) => reduceTerminalEvent(
+        next, event, props.host, activityId, rootSessionId, props.debug), state))
+      setEventHistory(state => appendTerminalEventBatch(state, events))
+      const topology = events.filter(event => event.kind === 'subagent-started' || event.kind === 'subagent-finished')
+      if (topology.length > 0) setAgentTopology(state => topology.reduce(reduceAgentTopologyHistory, state))
+      const usageEvents = events.filter(event => event.kind === 'assistant-message' || event.kind === 'context-compacted')
+      if (usageEvents.length > 0) setUsage(state => usageEvents.reduce((next, event) => accumulateUsage(next, event, rootSessionId), state))
+    })
+    eventBatchRef.current = batch
     try {
       const result = await props.runtimeRef.current.run(prompt, {
         sessionId: rootSessionId,
         onEvent: event => {
-          setTranscript(state => reduceTerminalEvent(
-            state,
-            event,
-            props.host,
-            activityId,
-            rootSessionId,
-            props.debug,
-          ))
-          setEventHistory(state => appendTerminalEventHistory(state, event))
-          setAgentTopology(state => reduceAgentTopologyHistory(state, event))
-          setUsage(state => accumulateUsage(state, event, rootSessionId))
+          if (batch.closed) return
+          telemetryMeter.observe(event)
+          clock.observe(event)
+          if (event.kind === 'tool-result' && event.callId === confirmedPlan.current?.request.callId && event.isError) confirmedPlan.current = undefined
+          batch.push(event)
         },
       })
+      if (batch.closed) return
+      batch.flush()
+      if (props.runtimeRef.current.metadata) setMetadata(props.runtimeRef.current.metadata)
+      succeeded = result.projection.lastTurnError === undefined
+      if (!succeeded) queue.pause()
       setSessionTurns(value => value + 1)
       setTotalTurns(value => value + 1)
       setPhase(result.projection.lastTurnError === undefined ? 'idle' : 'failed')
@@ -582,16 +671,26 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         ))
       }
     } catch (error) {
-      if (interruptingRef.current) return
+      queue.pause()
+      if (interruptingRef.current || batch.closed) return
       const failure = classifyRuntimeError(error)
       setPhase('failed')
       setTranscript(state => appendSystemMessage(state, failure.message, `runtime error · ${failure.code}`, nextId('runtime-error')))
       await props.trackRuntimeClose(props.runtimeRef.current).catch(() => undefined)
       finish(1, false)
     } finally {
-      runningRef.current = false
+      batch.close()
+      if (eventBatchRef.current === batch) {
+        clock.stop()
+        runningRef.current = false
+        if (!succeeded) confirmedPlan.current = undefined
+        if (succeeded && !props.shutdownSignal.aborted) queueMicrotask(() => {
+          if (confirmedPlan.current) props.trackLocalTask(handoffRef.current())
+          else nextQueuedRef.current()
+        })
+      }
     }
-  }, [finish, nextId, props.debug, props.host, props.runtimeRef, props.trackRuntimeClose, sessionId])
+  }, [finish, nextId, props.debug, props.host, props.runtimeRef, props.shutdownSignal, props.trackRuntimeClose, sessionId, queue])
 
   const retireRuntime = useCallback((previous: HarnessRuntime): void => {
     void props.trackRuntimeClose(previous).catch((error) => {
@@ -606,12 +705,108 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     })
   }, [nextId, props.trackRuntimeClose])
 
+  function answerInteraction(answer: InteractionAnswer): void {
+    const runtime = props.runtimeRef.current, request = runtime.interaction?.current
+    if (!request || request.sessionId !== sessionRef.current) return
+    if (!runtime.interaction?.answer(request.id, answer)) return
+    if (request.kind === 'questions') {
+      clarificationRef.current = [...clarificationRef.current.slice(-5), { questions: request.questions, answer }]
+    }
+    if (request.kind === 'plan') {
+      setTranscript(state => appendSystemMessage(state, `${request.title}\n${request.text}`, 'plan', nextId('plan')))
+      if (answer.action === 'implement') { queue.pause(); confirmedPlan.current = { request, runtime } }
+    }
+  }
+  handoffRef.current = async () => {
+    const approved = confirmedPlan.current
+    confirmedPlan.current = undefined
+    if (!approved || approved.runtime !== props.runtimeRef.current || approved.request.sessionId !== sessionRef.current || props.shutdownSignal.aborted) return
+    queue.pause()
+    commandRunningRef.current = true; setCommandBusy(true)
+    try {
+      if (!props.restart) throw new Error('Runtime restart is unavailable')
+      const next = await props.restart({ ...preferences, mode: 'code' }, props.shutdownSignal)
+      if (props.shutdownSignal.aborted || approved.runtime !== props.runtimeRef.current || approved.request.sessionId !== sessionRef.current) { await props.trackRuntimeClose(next.runtime); return }
+      const fresh = createSessionId()
+      props.runtimeRef.current = next.runtime; sessionRef.current = fresh
+      setMetadata(next.metadata); setPreferences(value => ({ ...value, mode: 'code' })); setComposition(next.composition)
+      setSessionId(fresh); setSessionTurns(0); setGeneration(value => value + 1)
+      setUsage(initialSessionUsage); setAgentTopology(initialAgentTopologyHistory()); setEventHistory(initialTerminalEventHistory())
+      retireRuntime(approved.runtime)
+      const source = approved.request.sessionId
+      const prompt = buildPlanHandoff(source, approved.request.title, approved.request.text, clarificationRef.current)
+      commandRunningRef.current = false; setCommandBusy(false)
+      await runHarnessPrompt(prompt, `${locale === 'zh-CN' ? '实施已确认计划，来源会话' : 'Implement confirmed plan from'} ${source}\n${approved.request.title}`)
+    } catch (error) {
+      setTranscript(state => appendSystemMessage(state, `${locale === 'zh-CN' ? '编码启动失败，原计划和会话已保留' : 'Coding startup failed; original plan and session retained'}: ${pluginErrorMessage(error)}`, 'plan', nextId('plan-error')))
+    } finally { commandRunningRef.current = false; setCommandBusy(false) }
+  }
+
+  async function openExternalEditor(): Promise<void> {
+    const text = inputRef.current
+    commandRunningRef.current = true
+    setCommandBusy(true)
+    const task = editExternally(text, preferences, metadata.workspace, suspendTerminal, props.shutdownSignal)
+      .then(next => { if (!props.shutdownSignal.aborted) setEditor(next, graphemeCount(next)) })
+      .catch(error => { if (!props.shutdownSignal.aborted) setTranscript(state => appendSystemMessage(state, pluginErrorMessage(error), 'editor', nextId('editor'))) })
+      .finally(() => { commandRunningRef.current = false; if (mountedRef.current) setCommandBusy(false) })
+    props.trackLocalTask(task)
+    await task
+  }
+
   const applyOutcome = useCallback(async (
     outcome: TerminalCommandOutcome,
     signal?: AbortSignal,
   ): Promise<void> => {
     if (isAborted(signal)) return
     switch (outcome.kind) {
+      case 'sidebar': {
+        const next = outcome.page ?? (sidebarPageRef.current === 'overview' ? 'tools' : 'overview')
+        sidebarPageRef.current = next; setSidebarPage(next); setShowTools(true); setOverviewOffset(0)
+        return
+      }
+      case 'profile-operation': {
+        if (!props.profileOperation) throw new Error('No Profile manager is attached to this terminal')
+        queue.pause()
+        const result = await props.profileOperation(outcome.args, signal, preferences)
+        const next = result.replacement
+        if (isAborted(signal) || !mountedRef.current) { if (next) await props.trackRuntimeClose(next.runtime); return }
+        if (next) {
+          const previous = props.runtimeRef.current
+          props.runtimeRef.current = next.runtime
+          setMetadata(next.metadata)
+          setPreferences(value => ({ ...value, runtime: 'dsh-profile', dshProfile: 'managed' }))
+          setComposition(undefined)
+          setSessionId(createSessionId())
+          setGeneration(value => value + 1)
+          setSessionTurns(0)
+          setUsage(initialSessionUsage)
+          setEventHistory(initialTerminalEventHistory())
+          setAgentTopology(initialAgentTopologyHistory())
+          jumpToNewest()
+          retireRuntime(previous)
+        }
+        setLocalReport({ id: nextId('profile-report'), title: 'Profile', eventKinds: [], render: () => result.message })
+        selectView('local-profile-report')
+        return
+      }
+      case 'edit-input':
+        setEditor(outcome.text, graphemeCount(outcome.text))
+        return
+      case 'external-editor':
+        await openExternalEditor()
+        return
+      case 'preferences': {
+        await savePreferences(preferencePaths(metadata.workspace).workspacePath, outcome.patch)
+        if (isAborted(signal)) return
+        const next = { ...preferences, ...outcome.patch }
+        setPreferences(next)
+        setTranscript(state => appendSystemMessage(state,
+          outcome.patch.locale === undefined ? translate(locale, 'pending')
+            : translate(resolveLocale(next.locale), 'languageChanged', { locale: resolveLocale(next.locale) }),
+          translate(locale, 'settings'), nextId('preferences')))
+        return
+      }
       case 'message':
         setTranscript(state => appendSystemMessage(state, outcome.text, outcome.title ?? 'dshc', nextId('message')))
         return
@@ -750,6 +945,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         await runHarnessPrompt(outcome.prompt, outcome.displayText, outcome.newSession, outcome.sourceSummary)
         return
       case 'restart-runtime': {
+        queue.pause()
         const restart = props.restart
         if (restart === undefined) {
           setTranscript(state => appendSystemMessage(
@@ -769,7 +965,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         try {
           // Start the replacement before closing the old one, so a rejected
           // composition leaves the session working instead of stranded.
-          const next = await restart(outcome.selection, signal)
+          const next = await restart({ ...preferences, ...outcome.selection }, signal)
           if (isAborted(signal) || !mountedRef.current) {
             await props.trackRuntimeClose(next.runtime).catch(() => undefined)
             return
@@ -777,6 +973,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           const previous = props.runtimeRef.current
           props.runtimeRef.current = next.runtime
           setMetadata(next.metadata)
+          setPreferences(value => ({ ...value, ...pickPreferences(outcome.selection) }))
           setComposition(next.composition)
           retireRuntime(previous)
           const fresh = createSessionId()
@@ -825,6 +1022,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         selectView(outcome.viewId)
         return
       case 'new-session': {
+        queue.pause()
         const previous = sessionId
         const next = createSessionId()
         setSessionId(next)
@@ -848,7 +1046,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         finish(0, false)
         return
     }
-  }, [finish, jumpToNewest, nextId, props.host, metadata.protocolVersion, retireRuntime, runHarnessPrompt, selectView, sessionId])
+  }, [finish, jumpToNewest, nextId, props.host, metadata.protocolVersion, retireRuntime, runHarnessPrompt, selectView, sessionId, preferences, locale, queue])
 
   const runCommand = useCallback(async (raw: string): Promise<boolean> => {
     const parsed = parseTerminalCommand(raw)
@@ -857,10 +1055,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     if (command === undefined) {
       setTranscript(state => appendSystemMessage(
         state,
-        `unknown or invalid command /${parsed.name}; use /help`,
+        translate(locale, 'unknownCommand', { name: parsed.name }),
         'command',
         nextId('command'),
       ))
+      if (inputRef.current.length === 0) setEditor(raw, graphemeCount(raw))
       return true
     }
 
@@ -873,6 +1072,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         await applyOutcome(outcome, props.shutdownSignal)
       } catch (error) {
         if (props.shutdownSignal.aborted) return
+        if (inputRef.current.length === 0) setEditor(raw, graphemeCount(raw))
         setTranscript(state => appendSystemMessage(
           state,
           pluginErrorMessage(error),
@@ -887,14 +1087,42 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     props.trackLocalTask(operation)
     await operation
     return true
-  }, [applyOutcome, commandContext, nextId, props.host, props.shutdownSignal, props.trackLocalTask])
+  }, [applyOutcome, commandContext, nextId, props.host, props.shutdownSignal, props.trackLocalTask, locale])
 
-  const submit = useCallback(async (): Promise<void> => {
-    if (runningRef.current || commandRunningRef.current) return
+  const submit = useCallback(async (waitForModel = false): Promise<void> => {
+    if (commandRunningRef.current || interruptingRef.current) return
     const raw = inputRef.current
     if (raw.trim().length === 0) return
     setEditor('', 0)
     setHistoryIndex(undefined)
+
+    if (parseTerminalCommand(raw)?.name === 'queue') {
+      const parsed = parseTerminalCommand(raw)
+      const [action = 'list', id, ...text] = parsed?.args ?? []
+      try {
+        if (action === 'remove') queue.remove(Number(id))
+        else if (action === 'edit') queue.edit(Number(id), text.join(' '))
+        else if (action === 'withdraw') { const value = queue.withdraw(); if (value) setEditor(value, graphemeCount(value)) }
+        else if (action === 'resume') { queue.resume(sessionRef.current); queueMicrotask(() => nextQueuedRef.current()) }
+        else if (action !== 'list') throw new Error('usage: /queue [list|remove N|edit N text|withdraw|resume]')
+        setQueueRevision(value => value + 1)
+        const textValue = queue.list().map(item => `${item.id}. [${item.sessionId}] ${item.text}`).join('\n')
+        setTranscript(state => appendSystemMessage(state, textValue || translate(locale, 'emptyQueue'), 'queue', nextId('queue')))
+      } catch (error) { setTranscript(state => appendSystemMessage(state, pluginErrorMessage(error), 'queue', nextId('queue'))) }
+      return
+    }
+    if (runningRef.current) {
+      if (['language', 'sidebar'].includes(parseTerminalCommand(raw)?.name ?? '')) { await runCommand(raw); return }
+      try {
+        if (raw.startsWith('/') && !raw.startsWith('//')) throw new Error('Only /queue and /language commands are available while a prompt is running.')
+        queue.add(sessionRef.current, raw.startsWith('//') ? raw.slice(1) : raw)
+        setQueueRevision(value => value + 1)
+      } catch (error) {
+        setEditor(raw, graphemeCount(raw))
+        setTranscript(state => appendSystemMessage(state, pluginErrorMessage(error), 'queue', nextId('queue')))
+      }
+      return
+    }
 
     if (raw.startsWith('/') && !raw.startsWith('//')) {
       await runCommand(raw)
@@ -903,8 +1131,22 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
     const prompt = raw.startsWith('//') ? raw.slice(1) : raw
     jumpToNewest()
-    await runHarnessPrompt(prompt, prompt)
-  }, [jumpToNewest, runCommand, runHarnessPrompt])
+    const task = runHarnessPrompt(prompt, prompt)
+    if (waitForModel) await task
+  }, [jumpToNewest, runCommand, runHarnessPrompt, queue, locale, nextId])
+
+  nextQueuedRef.current = () => {
+    if (!mountedRef.current || props.shutdownSignal.aborted || runningRef.current || commandRunningRef.current || interruptingRef.current) return
+    const item = queue.take(sessionRef.current)
+    if (item === undefined) return
+    setQueueRevision(value => value + 1)
+    void runHarnessPrompt(item.text, item.text)
+  }
+
+  usePaste(text => {
+    if (props.runtimeRef.current.interaction?.current && !interactionHiddenRef.current) { cardRef.current?.paste(text); return }
+    if (!commandRunningRef.current && !interruptingRef.current && activeViewRef.current === undefined) insertInput(text.replace(/\r\n?/g, '\n'))
+  })
 
   useInput((keyInput, key) => {
     // Ink reports one parsed key per stdin chunk, but a chunk can carry several
@@ -928,13 +1170,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (props.shutdownSignal.aborted) return
       if (
         stroke.key.return
+        && !stroke.key.meta && !stroke.key.ctrl
+        && fileChoicesRef.current.length === 0
         && activeViewRef.current === undefined
         && !toolFocusRef.current
         && !runningRef.current
         && !commandRunningRef.current
       ) {
+        if (completeFromMenu()) continue
         jumpToNewest()
-        await submit()
+        await submit(true)
       } else {
         handleKeystroke(stroke.text, stroke.key)
       }
@@ -945,6 +1190,23 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     if (key.ctrl && keyInput.toLowerCase() === 'c') {
       interrupt()
       return
+    }
+    if (props.runtimeRef.current.interaction?.current) {
+      if (!interactionHiddenRef.current) { cardRef.current?.key(keyInput, key); return }
+      if (key.escape || key.return) { interactionHiddenRef.current = false; setInteractionHidden(false); return }
+    }
+    if (fileChoicesRef.current.length > 0) {
+      if (key.escape) { chooseFiles([]); return }
+      if (key.upArrow || key.downArrow || key.tab) {
+        const length = fileChoicesRef.current.length
+        const next = (fileIndexRef.current + (key.upArrow ? -1 : 1) + length) % length
+        fileIndexRef.current = next; setFileIndex(next); return
+      }
+      if (key.return) {
+        const path = fileChoicesRef.current[fileIndexRef.current]!
+        setEditor(path, graphemeCount(path)); return
+      }
+      chooseFiles([])
     }
     if (activeViewRef.current !== undefined) {
       if (activeViewRef.current === 'history' && props.history !== undefined) {
@@ -1050,10 +1312,21 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     // that changes focus, and the current focus is always stated on screen, so
     // the arrow keys never mean two things at once.
     if (key.tab) {
+      if (!toolFocusRef.current && /(?:^|\s)@(?:"[^"]*|[^\s]*)$/.test(inputRef.current)) {
+        const previous = inputRef.current
+        const task = completeFileReference(metadata.workspace, previous).then(matches => {
+          if (props.shutdownSignal.aborted || inputRef.current !== previous) return
+          if (matches.length === 1) setEditor(matches[0]!, graphemeCount(matches[0]!))
+          else if (matches.length > 1) chooseFiles(matches)
+          else setTranscript(state => appendSystemMessage(state, translate(locale, 'noMatches'), '@', nextId('files')))
+        }).catch(error => { if (!props.shutdownSignal.aborted) setTranscript(state => appendSystemMessage(state, pluginErrorMessage(error), '@', nextId('files'))) })
+        props.trackLocalTask(task)
+        return
+      }
       // The menu is transient and explicitly open, so it takes Tab from the
       // focus switch for as long as it is showing.
-      if (completeFromMenu()) return
-      if (!toolFocusRef.current && activityRowKeysRef.current.length === 0) return
+      if (completeFromMenu(true)) return
+      if (!toolFocusRef.current && (!showTools || size.columns < TOOL_SIDEBAR_MIN_COLUMNS)) return
       const next = !toolFocusRef.current
       focusTools(next)
       if (next && selectedToolKeyRef.current === undefined) {
@@ -1063,11 +1336,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     }
 
     if (toolFocusRef.current) {
+      if (key.leftArrow || key.rightArrow) {
+        const next = sidebarPageRef.current === 'overview' ? 'tools' : 'overview'
+        sidebarPageRef.current = next; setSidebarPage(next); return
+      }
       if (key.escape) {
         focusTools(false)
         return
       }
       if (key.upArrow || key.downArrow) {
+        if (sidebarPageRef.current === 'overview') { setOverviewOffset(value => Math.max(0, Math.min(120, value + (key.downArrow ? 1 : -1)))); return }
         moveToolSelection(key.downArrow ? 1 : -1)
         return
       }
@@ -1086,10 +1364,29 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       return
     }
 
-    if (runningRef.current || commandRunningRef.current) return
+    if (commandRunningRef.current || interruptingRef.current) return
+
+    // Modified Enter edits the draft before menus or submit can consume it.
+    if ((key.ctrl && keyInput.toLowerCase() === 'j') || (key.meta && key.return)) {
+      insertInput('\n')
+      return
+    }
+
+    if (keyMatches(keyInput, key.ctrl, 'withdrawQueue', preferences)) {
+      if (inputRef.current.length > 0) return
+      const text = queue.withdraw()
+      if (text !== undefined) setEditor(text, graphemeCount(text))
+      setQueueRevision(value => value + 1)
+      return
+    }
+    if (keyMatches(keyInput, key.ctrl, 'externalEditor', preferences)) {
+      void openExternalEditor()
+      return
+    }
 
     if (menuOpen()) {
       if (key.escape) {
+        menuDismissedRef.current = true
         setMenuDismissed(true)
         return
       }
@@ -1097,8 +1394,10 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         // While the menu is open the arrows belong to it. History is reachable
         // again the moment the menu closes, and the menu is always on screen
         // when this applies, so the keys never silently mean two things.
-        const count = suggestionsRef.current.length
-        setMenuIndex(value => (value + (key.downArrow ? 1 : count - 1)) % count)
+        const count = currentSuggestions().length
+        const next = (menuIndexRef.current + (key.downArrow ? 1 : count - 1)) % count
+        menuIndexRef.current = next
+        setMenuIndex(next)
         return
       }
       // Enter completes an unfinished command and submits a finished one, so
@@ -1113,7 +1412,12 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       void submit()
       return
     }
-    if (key.backspace || key.delete) {
+    if (key.delete) {
+      setEditor(sliceByGrapheme(inputRef.current, 0, cursorRef.current)
+        + sliceByGrapheme(inputRef.current, cursorRef.current + 1), cursorRef.current)
+      return
+    }
+    if (key.backspace) {
       if (cursorRef.current === 0) return
       const edited = deleteGraphemeBefore(inputRef.current, cursorRef.current)
       setEditor(edited.value, edited.cursor)
@@ -1127,18 +1431,28 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       setEditor(inputRef.current, Math.min(graphemeCount(inputRef.current), cursorRef.current + 1))
       return
     }
+    if (key.home || (key.ctrl && keyInput.toLowerCase() === 'a')) {
+      setEditor(inputRef.current, 0)
+      return
+    }
+    if (key.end || (key.ctrl && keyInput.toLowerCase() === 'e')) {
+      setEditor(inputRef.current, graphemeCount(inputRef.current))
+      return
+    }
     if (key.upArrow && history.length > 0) {
+      const historyIndex = historyIndexRef.current
+      if (historyIndex === undefined) historyDraftRef.current = { value: inputRef.current, cursor: cursorRef.current }
       const next = historyIndex === undefined ? history.length - 1 : Math.max(0, historyIndex - 1)
       const value = history[next] ?? ''
       setHistoryIndex(next)
       setEditor(value, graphemeCount(value))
       return
     }
-    if (key.downArrow && historyIndex !== undefined) {
-      const next = historyIndex + 1
+    if (key.downArrow && historyIndexRef.current !== undefined) {
+      const next = historyIndexRef.current + 1
       if (next >= history.length) {
         setHistoryIndex(undefined)
-        setEditor('', 0)
+        setEditor(historyDraftRef.current.value, historyDraftRef.current.cursor)
       } else {
         const value = history[next] ?? ''
         setHistoryIndex(next)
@@ -1149,10 +1463,6 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     if (key.ctrl && keyInput.toLowerCase() === 'u') {
       setEditor('', 0)
       setHistoryIndex(undefined)
-      return
-    }
-    if ((key.ctrl && keyInput.toLowerCase() === 'j') || (key.meta && key.return)) {
-      insertInput('\n')
       return
     }
     if (key.ctrl || key.meta || key.tab || key.escape || keyInput.length === 0) return
@@ -1170,8 +1480,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     selectTool(keys[next])
   }
 
+  function currentSuggestions(): readonly CommandSuggestion[] {
+    const commands = props.host.listCommands(locale)
+      .filter(command => !runningRef.current || ['queue', 'language'].includes(command.name))
+    return commandSuggestions(inputRef.current, commands, locale)
+  }
+
   function menuOpen(): boolean {
-    return !menuDismissedRef.current && suggestionsRef.current.length > 0
+    return !menuDismissedRef.current && currentSuggestions().length > 0
   }
 
   /**
@@ -1179,17 +1495,27 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
    * nothing to complete — either the menu is closed, or the input already is
    * exactly that command, in which case the keystroke belongs to submitting.
    */
-  function completeFromMenu(): boolean {
+  function completeFromMenu(addSpace = false): boolean {
     if (!menuOpen()) return false
-    const selected = suggestionsRef.current[menuIndexRef.current]
+    const selected = currentSuggestions()[menuIndexRef.current]
     if (selected === undefined) return false
     const completed = `/${selected.name} `
-    if (inputRef.current === completed || inputRef.current === `/${selected.name}`) return false
+    if (inputRef.current.trim().toLowerCase() === `/${selected.name}`.toLowerCase()
+      && (!addSpace || inputRef.current.endsWith(' '))) return false
     setEditor(completed, graphemeCount(completed))
     return true
   }
 
   function setEditor(value: string, nextCursor: number): void {
+    if (fileChoicesRef.current.length > 0) chooseFiles([])
+    if (value.length > MAX_INPUT_CHARS) {
+      setTranscript(state => appendSystemMessage(state, 'Input exceeds 262144 characters; use a file reference.', 'input', nextId('input-limit')))
+      return
+    }
+    if (inputRef.current !== value) {
+      menuIndexRef.current = 0; setMenuIndex(0)
+      menuDismissedRef.current = false; setMenuDismissed(false)
+    }
     inputRef.current = value
     cursorRef.current = nextCursor
     setInput(value)
@@ -1201,44 +1527,58 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     setEditor(edited.value, edited.cursor)
   }
 
+  function chooseFiles(choices: readonly string[]): void {
+    fileChoicesRef.current = choices; setFileChoices(choices)
+    fileIndexRef.current = 0; setFileIndex(0)
+  }
+
   const status = useMemo(() => {
     const context = commandContext()
     return props.host.orderedStatusSegments()
-      .map(segment => renderStatusSegmentSafely(segment, context))
-      .filter((value): value is string => value !== undefined && value.length > 0)
-      .map(sanitizeTerminalText)
-      .join(' · ')
-  }, [commandContext, props.host])
+      .flatMap(segment => {
+        const value = renderStatusSegmentSafely(segment, context)
+        return value ? [{ id: segment.id, text: uiLabel(locale, sanitizeTerminalText(value)) }] : []
+      })
+  }, [commandContext, props.host, locale])
 
-  const currentView = activeView === undefined ? undefined : props.host.resolveView(activeView)
-  const currentViewText = currentView === undefined ? undefined : renderViewSafely(currentView, viewContext())
-  const suggestions = currentView === undefined && !toolFocus && !menuDismissed
-    ? commandSuggestions(input, props.host.listCommands())
+  const currentView = activeView === 'local-profile-report' ? localReport : activeView === undefined ? undefined : props.host.resolveView(activeView)
+  const viewEventRevision = currentView?.eventKinds === undefined ? eventHistory.total
+    : currentView.eventKinds.map(kind => eventKindRevisions.current.get(kind) ?? 0).join(',')
+  const currentViewText = useMemo(() => currentView === undefined ? undefined : renderViewSafely(currentView, viewContext()),
+    [currentView, viewEventRevision, commandContext, composition, selectedToolKey, firstPartyViewRevision, agentTopology, transcript.droppedBlockCount])
+  const suggestions = !interaction && fileChoices.length === 0 && currentView === undefined && !toolFocus && !menuDismissed
+    ? currentSuggestions()
     : []
-  suggestionsRef.current = suggestions
   // The menu competes with the transcript for rows, so it takes only what is
   // left after the chrome and a usable body. On a short terminal it shows
   // fewer entries rather than being clipped by the frame.
   const menuCapacity = Math.max(0, Math.min(8, size.rows - 7 - MIN_BODY_ROWS))
   const menuView = menuWindow(suggestions.length, menuCapacity, menuIndex)
+  const visibleFileChoices = fileChoices.slice(Math.max(0, fileIndex - Math.max(0, menuCapacity - 1)), Math.max(0, fileIndex - Math.max(0, menuCapacity - 1)) + Math.max(1, menuCapacity))
   const menuRows = menuView.shown === 0
     ? 0
     : menuView.shown + (menuView.above > 0 ? 1 : 0) + (menuView.below > 0 ? 1 : 0)
-  const bodyRows = Math.max(MIN_BODY_ROWS, size.rows - 7 - menuRows)
+  const cardRows = interaction && !interactionHidden ? Math.max(13, Math.min(18, size.rows - 10)) : 0
+  const bodyRows = Math.max(1, size.rows - 7 - statusBarContentRows(size.columns) - menuRows - visibleFileChoices.length - cardRows - (interaction && interactionHidden ? 1 : 0))
   // A sidebar takes a fixed column count, never a share of the width, so the
   // transcript rewraps predictably. Below the threshold it collapses rather
   // than squeezing the transcript, per the narrow-terminal invariant.
   const sidebarVisible = showTools && size.columns >= TOOL_SIDEBAR_MIN_COLUMNS && currentView === undefined
   const transcriptWidth = Math.max(20, size.columns - (sidebarVisible ? TOOL_SIDEBAR_WIDTH : 0))
-  const visible = currentView === undefined
-    ? selectVisibleBlocks(transcript.blocks, bodyRows, transcriptWidth, scrollBack)
-    : { blocks: [], below: 0, above: 0 }
-  const visibleBlocks = visible.blocks
-  transcriptDepthRef.current = Math.max(0, transcript.blocks.length - 1)
+  const transcriptLayout = useMemo(() => transcriptLayoutCache.prepare(transcript.blocks, transcriptWidth, locale),
+    [transcriptLayoutCache, transcript.blocks, transcriptWidth, locale])
+  const visible = selectTranscriptPage(transcriptLayout, bodyRows, scrollAnchor)
+  scrollNavigationRef.current = { layout: transcriptLayout, page: visible }
   const activity = sidebarVisible
     ? projectToolActivity(eventHistory.items, sessionId)
     : undefined
   activityRowKeysRef.current = activity?.rows.map(row => row.key) ?? []
+  const queuedCount = queue.list().length
+
+  if (interaction && !interactionHidden && size.rows < 24) return <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
+    <InteractionCard key={interaction.id} ref={cardRef} request={interaction} draft={interactionDraft} zh={locale === 'zh-CN'} width={size.columns} rows={Math.max(10, size.rows)} hidden={false}
+      onHide={() => { interactionHiddenRef.current = true; setInteractionHidden(true) }} onAnswer={answerInteraction} />
+  </Box>
 
   return (
     <Box flexDirection="column" width={Math.max(20, size.columns)} height={Math.max(10, size.rows)}>
@@ -1255,67 +1595,68 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       </Box>
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden" marginTop={1}>
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        <Box flexDirection="column" flexGrow={1} width={transcriptWidth} overflow="hidden">
           {currentView === undefined && (visible.above > 0 || visible.below > 0) && (
             <Box flexShrink={0}>
-              <Text dimColor wrap="truncate">{scrollNotice(visible)}</Text>
+              <Text dimColor wrap="truncate">{scrollNotice(visible, locale)}</Text>
             </Box>
           )}
           {currentView === undefined
-            ? visibleBlocks.map(block => (
-                <TranscriptBlockView
-                  key={block.id}
-                  block={block}
-                  width={transcriptWidth}
-                  condensed={scrollBack > 0}
-                />
-              ))
-            : <ViewPanel title={currentView.title} text={currentViewText ?? ''} />}
+            ? <TranscriptRows rows={visible.rows} />
+            : <ViewPanel key={activeView === 'history' ? `${activeView}:${firstPartyViewRevision}` : currentView.id} title={uiLabel(locale, currentView.title)} text={currentViewText ?? ''} width={transcriptWidth} rows={bodyRows} arrowKeys={activeView !== 'history'} />}
         </Box>
         {activity !== undefined && (
-          <ToolActivitySidebar
+          sidebarPage === 'overview' ? <OverviewSidebar context={commandContext()} clock={clock} width={TOOL_SIDEBAR_WIDTH} rows={bodyRows} focused={toolFocus} offset={overviewOffset} /> : <ToolActivitySidebar
             activity={activity}
             rows={bodyRows}
             droppedEvents={eventHistory.dropped}
             focused={toolFocus}
             selectedKey={selectedToolKey}
+            locale={locale}
           />
         )}
       </Box>
 
-      <Box flexShrink={0} borderStyle="single" borderLeft={false} borderRight={false} paddingX={1}>
-        <Text>{cropTerminalText(status, Math.max(10, size.columns - 4))}</Text>
-      </Box>
+      <StatusBar width={Math.max(20, size.columns)} phase={phase} locale={locale} segments={status}
+        clock={clock} animation={preferences.animation} waiting={interaction !== undefined}
+        mode={metadata.requestedPreferences?.mode ?? 'code'} queued={queuedCount} paused={queue.paused}
+        usage={usage} telemetry={telemetry?.sessionId === sessionId ? telemetry : undefined}
+        provider={metadata.provider} effort={metadata.requestedPreferences?.reasoningEffort} backend={metadata.backend ?? 'bundled'} />
 
+      {interaction && <InteractionCard key={interaction.id} ref={cardRef} request={interaction} draft={interactionDraft} zh={locale === 'zh-CN'} width={size.columns} rows={cardRows || 13}
+        hidden={interactionHidden} onHide={() => { interactionHiddenRef.current = true; setInteractionHidden(true) }} onAnswer={answerInteraction} />}
+      {interactionHidden && interaction && <Text dimColor wrap="truncate">{locale === 'zh-CN' ? '问题已收起 · Enter / Esc 继续回答' : 'Question hidden · Enter / Esc to answer'}</Text>}
       {menuView.shown > 0 && (
         <CommandMenu
           suggestions={suggestions}
           view={menuView}
           selected={menuIndex}
           width={size.columns}
+          locale={locale}
         />
       )}
+      {visibleFileChoices.length > 0 && <Box flexDirection="column" flexShrink={0} paddingX={1}>
+        {visibleFileChoices.map(path => <Text key={path} color={path === fileChoices[fileIndex] ? 'cyan' : undefined} wrap="truncate">{path === fileChoices[fileIndex] ? '› ' : '  '}{sanitizeTerminalText(path)}</Text>)}
+      </Box>}
 
       <Box flexDirection="column" flexShrink={0} paddingX={1}>
         {currentView !== undefined
-          ? <Text dimColor>{activeView === 'history'
-              ? 'History · Enter inspect · c continue in NEW session · Esc/q back'
-              : 'Esc / Enter / q · return to transcript'}</Text>
+          ? <Text dimColor wrap="truncate">{activeView === 'history'
+              ? translate(locale, 'historyHint')
+              : translate(locale, 'returnToTranscript')}</Text>
           : <>
-              <Text dimColor>{toolFocus
-                ? 'tools focused · ↑/↓ select · Enter details · Tab or Esc back to prompt'
+              <Text dimColor wrap="truncate">{fileChoices.length > 0 ? translate(locale, 'fileHint') : toolFocus
+                ? sidebarPage === 'overview' ? locale === 'zh-CN' ? '↑↓ 滚动概览 · ←→ 切换工具 · Tab / Esc 返回' : '↑↓ scroll overview · ←→ tools · Tab / Esc return' : translate(locale, 'toolFocusHint')
                 : phase === 'running'
-                  ? props.restart === undefined
-                    ? 'Harness is running… Ctrl+C closes the whole runtime'
-                    : 'Harness is running… Ctrl+C interrupts via a fresh runtime and session'
-                  : commandBusy ? 'Local terminal command is running…'
+                  ? `${translate(locale, 'busyHint')} · ${translate(locale, 'queued', { count: queuedCount })}`
+                  : commandBusy ? translate(locale, 'localBusy')
                     // The arrows and Tab mean something different while the
                     // menu is open, so the line says which meaning is live
                     // rather than leaving the reader to discover it.
                     : menuView.shown > 0
-                      ? '↑/↓ choose · Tab complete · Enter run · Esc close'
-                      : 'Enter submit · /history past conversations · PgUp/PgDn scroll · Tab tools · /help'}</Text>
-              <Text>{renderEditor(input, cursor, phase === 'running' || commandBusy)}</Text>
+                      ? translate(locale, 'menuHint')
+                      : translate(locale, 'inputHint')}</Text>
+              <Text wrap="truncate">{renderEditor(input, cursor, commandBusy, Math.max(1, size.columns - 2))}</Text>
             </>}
       </Box>
     </Box>
@@ -1327,83 +1668,8 @@ export interface ParsedTerminalCommand {
   args: readonly string[]
 }
 
-/** The subset of Ink's parsed key flags this product reacts to. */
-export interface InputKey {
-  ctrl: boolean
-  meta: boolean
-  escape: boolean
-  tab: boolean
-  return: boolean
-  backspace: boolean
-  delete: boolean
-  leftArrow: boolean
-  rightArrow: boolean
-  upArrow: boolean
-  downArrow: boolean
-  pageUp?: boolean
-  pageDown?: boolean
-}
-
-export interface Keystroke {
-  text: string
-  key: InputKey
-}
-
-const PLAIN_KEY: InputKey = Object.freeze({
-  ctrl: false,
-  meta: false,
-  escape: false,
-  tab: false,
-  return: false,
-  backspace: false,
-  delete: false,
-  leftArrow: false,
-  rightArrow: false,
-  upArrow: false,
-  downArrow: false,
-})
-
-const RETURN_KEY: InputKey = Object.freeze({ ...PLAIN_KEY, return: true })
-
-/**
- * Split one stdin chunk into the keystrokes it actually represents.
- *
- * Ink parses a chunk into a single `key`, which is correct for an escape
- * sequence (arrows, Ctrl+J, Escape) but wrong when several plain keystrokes
- * coalesce or when the user pastes text. A coalesced chunk carrying a submit
- * character would otherwise fail every `key.*` test and be inserted verbatim,
- * losing the submit and leaving a raw control character in the prompt.
- *
- * Only plain chunks are split, so parsed control sequences keep their existing
- * single-stroke behavior and Ctrl+J still inserts a literal newline rather than
- * submitting. A chunk with no submit character is returned untouched.
- */
-export function splitKeystrokes(keyInput: string, key: InputKey): readonly Keystroke[] {
-  const parsedSequence = key.ctrl || key.meta || key.escape || key.tab
-    || key.backspace || key.delete
-    || key.leftArrow || key.rightArrow || key.upArrow || key.downArrow
-    || key.pageUp === true || key.pageDown === true
-  if (parsedSequence) return [{ text: keyInput, key }]
-  if (!keyInput.includes('\r') && !keyInput.includes('\n')) {
-    return [{ text: keyInput, key }]
-  }
-
-  const strokes: Keystroke[] = []
-  let pending = ''
-  for (const char of keyInput) {
-    if (char === '\r' || char === '\n') {
-      if (pending.length > 0) {
-        strokes.push({ text: pending, key: PLAIN_KEY })
-        pending = ''
-      }
-      strokes.push({ text: char, key: RETURN_KEY })
-      continue
-    }
-    pending += char
-  }
-  if (pending.length > 0) strokes.push({ text: pending, key: PLAIN_KEY })
-  return strokes
-}
+import { splitKeystrokes, type InputKey, type Keystroke } from './input-controller.js'
+export { splitKeystrokes, type InputKey, type Keystroke } from './input-controller.js'
 
 /** Fixed sidebar width; never a share of the terminal. */
 /** Rows the transcript keeps whatever else wants space. */
@@ -1421,12 +1687,11 @@ export const TOOL_SIDEBAR_MIN_COLUMNS = 100
  * States how much is out of sight in both directions. A scrolled-back view that
  * looked like the newest one would be worse than no scrolling at all.
  */
-function scrollNotice(visible: VisibleTranscript): string {
-  const parts: string[] = []
-  if (visible.above > 0) parts.push(`${visible.above} older above`)
-  if (visible.below > 0) parts.push(`${visible.below} newer below · PageDown to catch up`)
-  else if (visible.above > 0) parts.push('PageUp for older')
-  return parts.join(' · ')
+function scrollNotice(visible: TranscriptPage, locale: Locale): string {
+  if (locale === 'zh-CN') return `第 ${visible.start + 1}–${visible.start + visible.rows.length} / ${visible.start + visible.rows.length + visible.below} 行 · ${visible.below > 0
+    ? 'PageUp 上翻 · PageDown 下翻至最新' : 'PageUp 查看前文'}`
+  return `${visible.above} older above · ${visible.below > 0
+    ? `${visible.below} newer below · PageDown to catch up` : 'PageUp for older'} (rows)`
 }
 
 export interface CommandSuggestion {
@@ -1441,15 +1706,19 @@ export interface CommandSuggestion {
  * so a command cannot exist without appearing here — the drift that made
  * `dshc --help` under-report the product for two milestones.
  *
- * Only a lone `/…` token qualifies: `//literal` is an escaped prompt, and once
- * an argument is typed the user is past choosing a command.
+ * Command names come from the registry. Known preference/diff arguments offer
+ * inert text choices; other arguments and `//literal` prompts stay untouched.
  */
 export function commandSuggestions(
   input: string,
   commands: readonly { name: string; aliases: readonly string[]; summary: string }[],
+  locale: Locale = 'en',
 ): readonly CommandSuggestion[] {
   if (!input.startsWith('/') || input.startsWith('//')) return []
-  if (/\s/.test(input)) return []
+  if (/\s/.test(input)) {
+    const name = input.slice(1).split(/\s/, 1)[0]?.toLowerCase()
+    return commands.some(command => command.name === name) ? commandArgumentChoices(input, locale) : []
+  }
   const prefix = input.slice(1).toLowerCase()
   return commands
     .filter(command => command.name.startsWith(prefix))
@@ -1474,11 +1743,12 @@ export function menuWindow(count: number, capacity: number, index: number): {
   return { offset, shown, above: offset, below: Math.max(0, count - offset - shown) }
 }
 
-function CommandMenu({ suggestions, view, selected, width }: {
+function CommandMenu({ suggestions, view, selected, width, locale }: {
   suggestions: readonly CommandSuggestion[]
   view: { offset: number; shown: number; above: number; below: number }
   selected: number
   width: number
+  locale: Locale
 }): React.ReactElement {
   const nameWidth = Math.max(...suggestions.map(item => item.name.length + 1))
   const visible = suggestions.slice(view.offset, view.offset + view.shown)
@@ -1486,7 +1756,7 @@ function CommandMenu({ suggestions, view, selected, width }: {
     <Box flexDirection="column" flexShrink={0} paddingX={1}>
       {view.above > 0 && (
         <Box flexShrink={0}>
-          <Text dimColor>{`↑ ${view.above} more`}</Text>
+          <Text dimColor>{`↑ ${translate(locale, 'moreChoices', { count: view.above })}`}</Text>
         </Box>
       )}
       {visible.map((item, position) => {
@@ -1504,19 +1774,20 @@ function CommandMenu({ suggestions, view, selected, width }: {
       })}
       {view.below > 0 && (
         <Box flexShrink={0}>
-          <Text dimColor>{`↓ ${view.below} more`}</Text>
+          <Text dimColor>{`↓ ${translate(locale, 'moreChoices', { count: view.below })}`}</Text>
         </Box>
       )}
     </Box>
   )
 }
 
-function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey }: {
+function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en' }: {
   activity: ToolActivityProjection
   rows: number
   droppedEvents: number
   focused: boolean
   selectedKey?: string
+  locale?: Locale
 }): React.ReactElement {
   const inner = TOOL_SIDEBAR_WIDTH - 3
   // Reserve the header, the counter line, and the eviction note when present.
@@ -1525,10 +1796,12 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
     ? -1
     : activity.rows.findIndex(row => row.key === selectedKey)
   // Which entry is selected is stated in words, not carried by highlight alone.
-  const heading = focused
+  const heading = locale === 'zh-CN' ? `← 概览 / 工具${focused ? ` ${selectedIndex + 1}/${activity.rows.length}` : ''}` : focused
     ? `tools · focus ${selectedIndex < 0 ? '-' : selectedIndex + 1}/${activity.rows.length}`
     : 'tools'
-  const visible = activity.rows.slice(-Math.max(1, rows - notes))
+  const capacity = Math.max(1, rows - notes)
+  const start = selectedIndex < 0 ? Math.max(0, activity.rows.length - capacity) : Math.max(0, Math.min(selectedIndex, activity.rows.length - capacity))
+  const visible = activity.rows.slice(start, start + capacity)
   return (
     <Box flexDirection="column" flexShrink={0} width={TOOL_SIDEBAR_WIDTH} borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} paddingX={1} overflow="hidden">
       <Box flexShrink={0}>
@@ -1611,332 +1884,26 @@ function terminalCommandTokens(value: string): string[] {
   return tokens
 }
 
-function TranscriptBlockView({ block, width, condensed = false }: {
-  block: TranscriptBlock
-  width: number
-  condensed?: boolean
-}): React.ReactElement {
-  const status = blockStatus(block)
-  const header = blockHeaderText(block)
-  // While reviewing older context, a tool call collapses to its header: the
-  // outcome is what you are scanning for, and its arguments and output would
-  // push the prose you are actually looking for off the screen.
-  const collapsed = condensed && isActivityBlock(block)
-  // Tool and subagent activity is framed so a call is a distinct object on the
-  // screen rather than another paragraph. Prose keeps flowing unframed: boxing
-  // an assistant answer would cost two columns and gain nothing.
-  const framed = isActivityBlock(block) && !collapsed
-  const bodyWidth = framed ? Math.max(10, width - 4) : width
-  return (
-    <Box
-      flexDirection="column"
-      flexShrink={0}
-      marginBottom={1}
-      {...(framed
-        ? { borderStyle: 'round' as const, borderColor: status.color, paddingX: 1 }
-        : {})}
-    >
-      {/* One Text node, one row. Nesting Text inside Text made Ink lay the
-          header and the body on the same row, so the colour applies to the
-          whole header line instead. */}
-      <Text bold={block.kind === 'user' || block.kind === 'assistant'} color={status.color}>{header}</Text>
-      {!collapsed && block.text.length > 0 && (
-        // Prose is rendered as markdown; tool output is not. A tool result is
-        // program output, and a log line containing an asterisk must survive
-        // exactly as the program wrote it.
-        block.kind === 'assistant' && looksLikeMarkdown(block.text)
-          ? <MarkdownBody text={foldTerminalText(block.text, block.foldable === true, bodyWidth)} width={bodyWidth} />
-          : <Text wrap="wrap">{foldTerminalText(block.text, block.foldable === true, bodyWidth)}</Text>
-      )}
-      {!collapsed && block.detail !== undefined && block.detail.length > 0 && <Text dimColor wrap="wrap">{foldTerminalText(block.detail, true, bodyWidth)}</Text>}
-    </Box>
-  )
-}
-
-/**
- * Draw parsed markdown with Ink props only.
- *
- * Every style here is a prop on a `<Text>` element. Nothing in this component,
- * or in the parser behind it, may emit an escape sequence: the sanitizer strips
- * those out of upstream text precisely so they cannot reach the terminal, and
- * re-introducing them on the rendering side would reopen that hole.
- */
-function MarkdownBody({ text, width }: { text: string; width: number }): React.ReactElement {
-  const lines = parseMarkdown(text)
-  return (
-    <Box flexDirection="column" flexShrink={0}>
-      {lines.map((line, index) => (
-        <Box key={index} flexShrink={0}>
-          <MarkdownLineView line={line} width={width} />
-        </Box>
-      ))}
-    </Box>
-  )
-}
-
-function MarkdownLineView({ line, width }: { line: MarkdownLine; width: number }): React.ReactElement {
-  switch (line.kind) {
-    case 'blank':
-      return <Text> </Text>
-    case 'rule':
-      return <Text dimColor>{'─'.repeat(Math.max(1, Math.min(width, 80)))}</Text>
-    case 'heading':
-      // Level is carried by the prefix as well as the weight, so the structure
-      // survives a monochrome terminal.
-      return (
-        <Text bold color="cyan" wrap="wrap">
-          {`${'#'.repeat(line.level)} `}
-          <Spans spans={line.spans} />
-        </Text>
-      )
-    case 'quote':
-      return (
-        <Text dimColor wrap="wrap">
-          {'│ '}
-          <Spans spans={line.spans} />
-        </Text>
-      )
-    case 'bullet':
-      return (
-        <Text wrap="wrap">
-          {`${' '.repeat(Math.min(line.indent, 8))}${line.marker} `}
-          <Spans spans={line.spans} />
-        </Text>
-      )
-    case 'code':
-      return (
-        <Box flexDirection="column" flexShrink={0} paddingLeft={2}>
-          {line.text.split('\n').map((row, index) => (
-            <Text key={index} color="yellow" dimColor wrap="wrap">{row.length === 0 ? ' ' : row}</Text>
-          ))}
-        </Box>
-      )
-    case 'table':
-      return <MarkdownTable rows={line.rows} headerRows={line.headerRows} width={width} />
-    case 'text':
-      return (
-        <Text wrap="wrap">
-          {' '.repeat(Math.min(line.indent, 8))}
-          <Spans spans={line.spans} />
-        </Text>
-      )
-  }
-}
-
-function MarkdownTable({ rows, headerRows, width }: {
-  rows: readonly (readonly (readonly MarkdownSpan[])[])[]
-  headerRows: number
-  width: number
-}): React.ReactElement {
-  const widths = tableColumnWidths(rows)
-  return (
-    <Box flexDirection="column" flexShrink={0}>
-      {rows.map((row, rowIndex) => (
-        <Text key={rowIndex} bold={rowIndex < headerRows} wrap="truncate">
-          {cropTerminalText(
-            row
-              .map((cell, column) => padToCells(spanText(cell), widths[column] ?? 0))
-              .join('  '),
-            Math.max(10, width),
-          )}
-        </Text>
-      ))}
-    </Box>
-  )
-}
-
-/**
- * Inline spans inside one parent Text. Emphasis inside a table cell is dropped
- * rather than rendered, because a cell has to be padded to a measured width and
- * a nested element cannot be padded without guessing where it breaks.
- */
-function Spans({ spans }: { spans: readonly MarkdownSpan[] }): React.ReactElement {
-  return (
-    <>
-      {spans.map((span, index) => (
-        <Text
-          key={index}
-          bold={span.bold === true}
-          italic={span.italic === true}
-          {...(span.code === true ? { color: 'yellow' as const } : {})}
-        >{span.text}</Text>
-      ))}
-    </>
-  )
-}
-
-/** Pad to a cell count rather than a character count, so CJK columns line up. */
-function padToCells(value: string, cells: number): string {
-  const missing = Math.max(0, cells - terminalCellWidth(value))
-  return `${value}${' '.repeat(missing)}`
-}
-
-/**
- * Outcome is carried by a glyph *and* a word, never by colour alone: the
- * transcript has to stay correct on a monochrome terminal and for a reader who
- * cannot distinguish the colours.
- */
-function blockStatus(block: TranscriptBlock): { marker: string; color?: string } {
-  switch (block.state) {
-    case 'running': return { marker: '▸', color: 'cyan' }
-    case 'success': return { marker: '✓', color: 'green' }
-    case 'error': return { marker: '✗', color: 'red' }
-    case 'finished': return { marker: '•' }
-    default: break
-  }
-  if (block.kind === 'error') return { marker: '!', color: 'red' }
-  return { marker: kindMarker(block.kind) }
-}
-
-function kindMarker(kind: TranscriptBlock['kind']): string {
-  switch (kind) {
-    case 'user': return '›'
-    case 'assistant': return '◆'
-    case 'tool': return '⚙'
-    case 'agent': return '◇'
-    case 'error': return '!'
-    default: return '·'
-  }
-}
-
-function blockStatusSuffix(block: TranscriptBlock): string {
-  const state = block.state === undefined ? '' : ` · ${block.state}`
-  const elapsed = blockElapsedMs(block)
-  return elapsed === undefined ? state : `${state} · ${formatElapsedMs(elapsed)}`
-}
-
-/**
- * Span between the two upstream timestamps bounding the block. Absent when
- * either end is missing or the pair runs backwards, so an unknown span is never
- * rendered as zero.
- */
-export function blockElapsedMs(block: TranscriptBlock): number | undefined {
-  const { startedAt, endedAt } = block
-  if (startedAt === undefined || endedAt === undefined) return undefined
-  const elapsed = endedAt - startedAt
-  return elapsed >= 0 ? elapsed : undefined
-}
-
-export function formatElapsedMs(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
-}
-
-function ViewPanel({ title, text }: { title: string; text: string }): React.ReactElement {
-  return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
-      <Text bold>{sanitizeTerminalText(title)}</Text>
-      <Text wrap="wrap">{sanitizeTerminalText(text)}</Text>
-    </Box>
-  )
-}
-
-export interface VisibleTranscript {
-  blocks: readonly TranscriptBlock[]
-  /** Blocks below the viewport; zero means the newest activity is shown. */
-  below: number
-  /** Blocks above the viewport, so the view can say how much is out of sight. */
-  above: number
-}
-
-/**
- * Choose the blocks that fit, ending `offset` blocks before the newest.
- *
- * `offset` is the scroll position, counted in blocks from the tail rather than
- * in rows, so a scroll step never lands halfway through a block and never
- * depends on the width the last render happened to use.
- */
-export function selectVisibleBlocks(
-  blocks: readonly TranscriptBlock[],
-  rows: number,
-  width = 72,
-  offset = 0,
-  condensed = offset > 0,
-): VisibleTranscript {
-  const below = Math.max(0, Math.min(offset, Math.max(0, blocks.length - 1)))
-  const end = blocks.length - below
-  const result: TranscriptBlock[] = []
-  let budget = rows
-  for (let index = end - 1; index >= 0 && budget > 0; index--) {
-    const block = blocks[index]!
-    const needed = estimateRows(block, width, condensed)
-    // Admitting a block before checking that it fits lets the selection
-    // overshoot the frame by almost a whole block. Ink then compresses the
-    // children instead of clipping them, and body text lands on top of the
-    // header row. The newest visible block is still always shown, because an
-    // oversized latest activity must not vanish.
-    if (result.length > 0 && needed > budget) break
-    result.unshift(block)
-    budget -= needed
-  }
-  return { blocks: result, below, above: Math.max(0, end - result.length) }
-}
-
-/** Back-compatible view of {@link selectVisibleBlocks} for the tail. */
-export function takeVisibleBlocks(
-  blocks: readonly TranscriptBlock[],
-  rows: number,
-  width = 72,
-): readonly TranscriptBlock[] {
-  return selectVisibleBlocks(blocks, rows, width).blocks
-}
-
-/** Tool and subagent activity, the blocks that collapse while reviewing. */
-function isActivityBlock(block: TranscriptBlock): boolean {
-  return block.kind === 'tool' || block.kind === 'agent'
-}
-
-function estimateRows(block: TranscriptBlock, width: number, condensed = false): number {
-  const collapsed = condensed && isActivityBlock(block)
-  // A framed block spends two rows on its border and two columns on padding.
-  const framed = isActivityBlock(block) && !collapsed
-  const frameRows = framed ? 2 : 0
-  const contentWidth = Math.max(10, width - (framed ? 6 : 2))
-  if (collapsed) return wrappedTerminalRows(blockHeaderText(block), contentWidth) + 1
-  const text = foldTerminalText(block.text, block.foldable === true, contentWidth)
-  const detail = block.detail === undefined ? '' : foldTerminalText(block.detail, true, contentWidth)
-  const textRows = block.text.length === 0 ? 0 : wrappedTerminalRows(text, contentWidth)
-  const detailRows = detail.length === 0 ? 0 : wrappedTerminalRows(detail, contentWidth)
-  // The header wraps like any other line; budgeting it as exactly one row
-  // under-counts a long title and overflows the frame.
-  const headerRows = wrappedTerminalRows(blockHeaderText(block), contentWidth)
-  return frameRows + headerRows + 1 + Math.max(1, textRows + detailRows)
-}
-
-/** The rendered header line, shared by the view and the row estimate. */
-export function blockHeaderText(block: TranscriptBlock): string {
-  const status = blockStatus(block)
-  return `${status.marker} ${sanitizeTerminalText(block.title ?? block.kind)}${blockStatusSuffix(block)}`
-}
-
-export function foldTerminalText(
-  text: string,
-  foldable: boolean,
-  width: number,
-  limit = DEFAULT_FOLD_LIMIT,
-): string {
-  const safe = sanitizeTerminalText(text)
-  const displayUnits = Math.max(terminalCellWidth(safe), graphemeCount(safe))
-  if (!foldable || displayUnits <= limit) return safe
-  const head = Math.max(240, Math.min(limit - 160, Math.max(20, width) * 8))
-  const tail = Math.min(120, Math.max(40, Math.floor(limit / 5)))
-  const headText = prefixByCells(safe, head)
-  const tailText = suffixByCells(safe, tail)
-  const hidden = Math.max(0, graphemeCount(safe) - graphemeCount(headText) - graphemeCount(tailText))
-  return `${headText}\n… ${hidden} characters folded; content retained in this terminal process …\n${tailText}`
-}
-
-function renderEditor(value: string, cursor: number, disabled: boolean): string {
+function renderEditor(value: string, cursor: number, disabled: boolean, width: number): string {
   if (disabled) return '…'
   const before = sanitizeTerminalText(sliceByGrapheme(value, 0, cursor))
   const currentGrapheme = graphemeAt(value, cursor)
   const current = currentGrapheme === undefined ? ' ' : sanitizeTerminalText(currentGrapheme)
   const after = sanitizeTerminalText(sliceByGrapheme(value, cursor + (currentGrapheme === undefined ? 0 : 1)))
-  return `❯ ${before}▌${current}${after}`
+  const left = before.replaceAll('\n', ' ↵ ')
+  const right = after.replaceAll('\n', ' ↵ ')
+  const currentText = current.replaceAll('\n', '↵')
+  const budget = Math.max(0, width - 3 - terminalCellWidth(currentText))
+  const rightBudget = Math.min(terminalCellWidth(right), Math.floor(budget / 3))
+  const leftBudget = budget - rightBudget
+  const compactBefore = terminalCellWidth(left) <= leftBudget ? left : `…${suffixByCells(left, Math.max(0, leftBudget - 1))}`
+  const compactAfter = cropTerminalText(right, rightBudget)
+  return `❯ ${compactBefore}▌${currentText}${compactAfter}`
 }
 
 function renderViewSafely(view: TerminalViewSpec, context: TerminalViewContext): string {
   try {
-    return view.render(context)
+    return view.render(view.eventKinds === undefined ? context : { ...context, events: context.events.filter(event => view.eventKinds!.includes(event.kind)) })
   } catch (error) {
     return `Terminal view ${view.id} failed locally: ${pluginErrorMessage(error)}`
   }

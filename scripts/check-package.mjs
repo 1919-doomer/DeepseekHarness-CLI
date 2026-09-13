@@ -50,6 +50,7 @@ const required = [
   'CHANGELOG.md',
   'docs/INSTALLATION.md',
   'docs/COMPATIBILITY.md',
+  'docs/NEXT-STAGE.md',
   'docs/DEMO.md',
   'docs/EXTENSIONS.md',
   'docs/PLUGIN-WORKBENCH.md',
@@ -58,6 +59,9 @@ const required = [
   'runtime/cordis.yml',
   'runtime/cordis.dev.patch.yml',
   'runtime/jsonrpc-agent.mjs',
+  'runtime/mode-policy.mjs',
+  'runtime/profile-policy.mjs',
+  'runtime/profile-policy.patch.yml',
 ]
 for (const path of required) {
   if (!paths.has(path)) throw new Error(`Published package is missing required file: ${path}`)

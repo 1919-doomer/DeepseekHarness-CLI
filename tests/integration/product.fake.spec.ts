@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -8,11 +8,13 @@ import { TERMINAL_PLUGIN_API_VERSION } from '../../src/plugins/api.js'
 import { createDefaultTerminalHost } from '../../src/plugins/builtins.js'
 import { HistoryWorkbench } from '../../src/plugins/history.js'
 import type { HistoryReader, HistorySessionDetail } from '../../src/history/types.js'
-import { runTerminalProduct } from '../../src/terminal/product.js'
+import { runTerminalProduct as renderTerminalProduct } from '../../src/terminal/product.js'
 import { HarnessRuntime } from '../../src/upstream/runtime.js'
 
 const fakeRuntimePath = fileURLToPath(new URL('../fixtures/fake-runtime.mjs', import.meta.url))
 const tempRoots: string[] = []
+let completedTurns = 0
+const runTerminalProduct: typeof renderTerminalProduct = (runtime, options = {}) => renderTerminalProduct(runtime, { ...options, preferences: { ...options.preferences, animation: false } })
 const ALT_SCREEN_ON = '\u001B[?1049h'
 const ALT_SCREEN_OFF = '\u001B[?1049l'
 
@@ -40,7 +42,7 @@ interface PromptRecord {
 
 function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRuntime {
   const env = { ...process.env, DSHC_FAKE_MODE: mode, DSHC_FAKE_LOG: logPath }
-  return new HarnessRuntime({
+  const runtime = new HarnessRuntime({
     workspace: root,
     env,
     skipInstalledVersionCheck: true,
@@ -56,6 +58,9 @@ function runtimeFor(root: string, logPath: string, mode = 'success'): HarnessRun
       disposeGraceMs: 250,
     },
   })
+  const run = runtime.run.bind(runtime)
+  runtime.run = async (...args) => { const result = await run(...args); completedTurns++; return result }
+  return runtime
 }
 
 /**
@@ -80,10 +85,171 @@ function capture(stream: PassThrough): () => string {
 }
 
 afterEach(async () => {
+  completedTurns = 0
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('M3 Ink terminal product with injected TTY streams', () => {
+  it('keeps one terminal owner from animated startup to chat and preserves typed drafts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-splash-')); tempRoots.push(root)
+    const log = join(root, 'prompts.jsonl'), runtime = runtimeFor(root, log)
+    const start = runtime.start.bind(runtime)
+    let unlock!: () => void
+    const gate = new Promise<void>(resolve => { unlock = resolve })
+    runtime.start = async () => { await gate; return start() }
+    const input = new TestInput(), output = new TestOutput(), error = new TestOutput()
+    const readOutput = capture(output); capture(error)
+    const listeners = process.listenerCount('beforeExit')
+    const product = renderTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream, stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
+      preferences: { locale: 'en', animation: true }, interactive: true, useAlternateScreen: false })
+    try {
+      await waitFor(() => input.isRaw)
+      input.write('启动草稿😀'); await delay(50); unlock()
+      await waitFor(() => readOutput().includes('deepseek-harness-sdk-runtime/0.0.1')); await delay(80)
+      input.write('\r'); await waitForTurn(readOutput, 1)
+      expect(promptText((await promptRecords(log))[0]!)).toBe('启动草稿😀')
+      await submitLine(input, '/exit'); expect((await product).exitCode).toBe(0)
+      expect(input.isRaw).toBe(false); expect(input.referenced).toBe(false)
+      expect(process.listenerCount('beforeExit')).toBe(listeners)
+    } finally { unlock(); input.end(); await runtime.close() }
+  }, 10_000)
+  it('restores the draft and cursor after history, deletes forward, and keeps Alt+Enter local', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-editor-flow-'))
+    tempRoots.push(root)
+    const log = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, log)
+    const input = new TestInput(); const output = new TestOutput(); const error = new TestOutput()
+    const readOutput = capture(output)
+    const product = runTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true, useAlternateScreen: false, preferences: { locale: 'en' } })
+    const key = async (value: string): Promise<void> => { input.write(value); await delay(40) }
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'earlier prompt')
+      await waitForTurn(readOutput, 1)
+      await key('A😀B')
+      await key('\u001b[D')
+      await key('\u001b[A')
+      await key('\u001b[B')
+      await key('\u001b[3~')
+      await key('\u001b[H')
+      await key('>')
+      await key('\u001b[F')
+      await key('<')
+      await key('\u001b\r')
+      expect(await promptRecords(log)).toHaveLength(1)
+      await submitLine(input, '第二行')
+      await waitForTurn(readOutput, 2)
+      expect(promptText((await promptRecords(log))[1]!)).toBe('>A😀<\n第二行')
+      await submitLine(input, '/exit')
+      expect((await product).exitCode).toBe(0)
+    } finally { input.write('\u0003'); await product; input.end(); await runtime.close() }
+  }, 10_000)
+
+  it('completes preference choices without applying a restart and preserves invalid commands for repair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-preference-flow-'))
+    tempRoots.push(root)
+    const log = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, log)
+    const input = new TestInput(); const output = new TestOutput(); const error = new TestOutput()
+    const readOutput = capture(output)
+    const restart = vi.fn(async () => { throw new Error('Preview must not restart') })
+    const product = runTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true, useAlternateScreen: false, preferences: { locale: 'en' }, restart })
+    const key = async (value: string): Promise<void> => { input.write(value); await delay(60) }
+    try {
+      await waitFor(() => input.isRaw)
+      await key('/mode')
+      await key('\t') // An exact command name opens its argument choices.
+      await waitFor(() => readOutput().includes('/mode plan'))
+      await key('\u001b[B')
+      await key('\t')
+      await key('\r')
+      await waitFor(() => readOutput().includes('/mode plan --yes'))
+      expect(restart).not.toHaveBeenCalled()
+      await key('/language ')
+      await key('\u001b[B')
+      await key('\r') // Insert zh-CN; this must not execute yet.
+      expect(readOutput()).not.toContain('界面语言：zh-CN')
+      await key('\r')
+      await waitFor(() => readOutput().includes('界面语言：zh-CN'))
+      await key('/not-a-command\r') // Coalesced input follows the same local command path.
+      await waitFor(() => readOutput().includes('已保留输入'))
+      expect(await renderedAfterTick(input, readOutput)).toContain('❯ /not-a-command')
+      expect(await promptRecords(log)).toHaveLength(0)
+      await key('\u0015')
+      await submitLine(input, '/exit')
+      expect((await product).exitCode).toBe(0)
+    } finally { input.write('\u0003'); await product; input.end(); await runtime.close() }
+  }, 10_000)
+
+  it('selects a file reference without sending or inlining its content', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-file-picker-'))
+    tempRoots.push(root)
+    await writeFile(join(root, 'fixture-a.txt'), 'private-fixture-content-a')
+    await writeFile(join(root, 'fixture-b.txt'), 'private-fixture-content-b')
+    const log = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, log)
+    const input = new TestInput(); const output = new TestOutput(); const error = new TestOutput()
+    const readOutput = capture(output)
+    const product = runTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true, useAlternateScreen: false, preferences: { locale: 'en' } })
+    try {
+      await waitFor(() => input.isRaw)
+      input.write('@fixture-')
+      await delay(40)
+      input.write('\t')
+      await waitFor(() => readOutput().includes('Enter insert path'))
+      input.write('\u001b[B')
+      await delay(40)
+      input.write('\r')
+      await delay(40)
+      expect(await promptRecords(log)).toHaveLength(0)
+      input.write('\r')
+      await waitForTurn(readOutput, 1)
+      expect(promptText((await promptRecords(log))[0]!)).toBe('@fixture-b.txt')
+      expect(readOutput()).not.toContain('private-fixture-content')
+      await submitLine(input, '/exit')
+      expect((await product).exitCode).toBe(0)
+    } finally { input.end(); await runtime.close() }
+  }, 10_000)
+  it('edits queued prompts, switches language immediately and keeps bracketed paste as one draft', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshc-queue-language-'))
+    tempRoots.push(root)
+    const log = join(root, 'prompts.jsonl')
+    const runtime = runtimeFor(root, log, 'queue-delay')
+    const input = new TestInput(); const output = new TestOutput(); const error = new TestOutput()
+    const readOutput = capture(output)
+    const product = runTerminalProduct(runtime, { stdin: input as unknown as NodeJS.ReadStream,
+      stdout: output as unknown as NodeJS.WriteStream, stderr: error as unknown as NodeJS.WriteStream,
+      interactive: true, useAlternateScreen: false, initialSessionId: 'queue-session', preferences: { locale: 'en' } })
+    try {
+      await waitFor(() => input.isRaw)
+      await submitLine(input, 'first')
+      await waitFor(async () => (await promptRecords(log)).length === 1)
+      await submitLine(input, 'queued original')
+      await submitLine(input, '/queue edit 1 edited queued prompt')
+      await submitLine(input, '/language zh-CN')
+      await waitFor(() => readOutput().includes('界面语言'))
+      await waitFor(async () => (await promptRecords(log)).length === 2)
+      expect((await promptRecords(log)).map(record => promptText(record))).toEqual(['first', 'edited queued prompt'])
+      expect((await promptRecords(log)).every(record => record.sessionId === 'queue-session')).toBe(true)
+      await waitForTurn(readOutput, 2)
+      input.write('\u001b[200~pasted line one\r\npasted line two\u001b[201~')
+      await delay(100)
+      expect(await promptRecords(log)).toHaveLength(2)
+      input.write('\r')
+      await waitFor(async () => (await promptRecords(log)).length === 3)
+      expect(promptText((await promptRecords(log))[2]!)).toBe('pasted line one\npasted line two')
+      await waitForTurn(readOutput, 3)
+      await submitLine(input, '/exit')
+      expect((await product).exitCode).toBe(0)
+      expect(input.isRaw).toBe(false)
+    } finally { input.end(); await runtime.close() }
+  }, 15_000)
   it('reviews Ask History evidence before sending it to a fresh ordinary session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshc-m7-history-'))
     tempRoots.push(root)
@@ -148,7 +314,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
     try {
       await waitFor(() => readOutput().includes('DeepSeek Harness Console'), 5_000, 'product shell render')
-      expect(await renderedAfterTick(input, readOutput)).toContain('/history past conversations')
+      expect(await renderedAfterTick(input, readOutput)).toContain('/history')
 
       await submitLine(input, '/history')
       await waitFor(() => readOutput().includes('Source task'), 5_000, 'History catalog')
@@ -254,6 +420,8 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => readOutput().includes('Capability Explorer'), 5_000, 'Capability Explorer view')
       expect(readOutput()).toContain('partial/unavailable on SDK protocol 0.0.1')
       expect(readOutput()).toContain('prompt cancel: unavailable')
+      input.write('\u001b[6~')
+      await waitFor(() => readOutput().includes('dshc.core@1.0.0'), 5_000, 'paged plugin list')
       expect(readOutput()).toContain('dshc.core@1.0.0')
 
       input.write('q')
@@ -304,6 +472,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
 
       // The sidebar is on by default and projects the same activity the
       // transcript shows, one row per call with its outcome.
+      await submitLine(input, '/sidebar tools')
       await waitFor(() => readOutput().includes('calls'), 5_000, 'sidebar counters')
       const wide = readOutput()
       expect(wide).toMatch(/\d+ calls · \d+ ok · \d+ failed/)
@@ -367,6 +536,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => input.isRaw, 5_000, 'focus raw-mode ownership')
       await submitLine(input, 'drive one turn')
       await waitForTurn(readOutput, 1)
+      await submitLine(input, '/sidebar tools')
       await waitFor(() => readOutput().includes('calls'), 5_000, 'sidebar counters')
 
       // Before Tab the prompt owns the arrows, and the hint says so.
@@ -451,7 +621,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(rendered).toContain('Enter submit')
       expect(rendered).not.toMatch(/\br submit\b/)
       // The status line sits between two rules and was eaten the same way.
-      expect(rendered).toContain('turns:1')
+      expect(rendered).toContain('session 00:')
 
       await submitLine(input, '/exit')
       await product
@@ -501,7 +671,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await delay(150)
 
       // At rest the newest activity is shown and nothing claims to be below.
-      expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
+      const tail = await renderedAfterTick(input, readOutput)
+      expect(tail).not.toContain('newer below')
+      expect(tail).toContain('第 39 行')
 
       input.write(PAGE_UP)
       await delay(150)
@@ -513,6 +685,19 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       input.write(PAGE_DOWN)
       await delay(150)
       expect(await renderedAfterTick(input, readOutput)).not.toContain('newer below')
+
+      // Read all of the same reply by paging up; whole-block navigation used
+      // to skip from its clipped beginning straight to the previous message.
+      const pages: string[] = [tail]
+      for (let step = 0; step < 20; step++) {
+        const mark = readOutput().length
+        input.write(PAGE_UP)
+        await delay(60)
+        pages.push(readOutput().slice(mark))
+      }
+      const entireReply = pages.join('\n')
+      for (let line = 0; line < 40; line++) expect(entireReply).toContain(`第 ${line} 行`)
+      for (let step = 0; step < 20; step++) { input.write(PAGE_DOWN); await delay(30) }
 
       // Scroll back again, then submit: a reply arriving off-screen would look
       // like nothing happened, so submitting returns to the newest activity.
@@ -684,6 +869,8 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => readOutput().includes('status:exploding-status:error'))
       await submitLine(input, '/boom')
       await waitFor(() => readOutput().includes('command exploded'))
+      input.write('\u0015') // Failed command remains available for editing.
+      await delay(30)
       await submitLine(input, '/badview')
       await waitFor(() => readOutput().includes('view exploded'))
       input.write('q')
@@ -719,7 +906,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => input.isRaw)
       await submitLine(input, 'wait for ctrl-c')
       await waitFor(async () => (await promptRecords(logPath)).length === 1)
-      await waitFor(() => readOutput().includes('Harness is running'))
+      await waitFor(() => readOutput().includes('Enter queue'))
       input.write('\u0003')
       const result = await product
       expect(result).toEqual({ exitCode: 130, interrupted: true, totalTurns: 0, sessionId: 'm3-product-signal' })
@@ -799,6 +986,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
     const input = new TestInput()
     const output = new TestOutput()
     const error = new TestOutput()
+    const readOutput = capture(output)
 
     const product = runTerminalProduct(runtime, {
       stdin: input as unknown as NodeJS.ReadStream,
@@ -814,6 +1002,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(async () => (await promptRecords(logPath)).length === 2, 8_000, 'coalesced prompts')
       const records = await promptRecords(logPath)
       expect(records.map(record => promptText(record))).toEqual(['first', 'second'])
+      await waitForTurn(readOutput, 2)
       await submitLine(input, '/exit')
       await expect(product).resolves.toMatchObject({ exitCode: 0, totalTurns: 2 })
     } finally {
@@ -842,7 +1031,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       useAlternateScreen: true,
       initialSessionId: 'interrupt-source-session',
       restart: async selection => {
-        expect(selection).toEqual({})
+        expect(selection).toMatchObject({ mode: 'code', replyLanguage: 'auto', runtime: 'bundled' })
         restartCalls += 1
         replacement = runtimeFor(root, logPath)
         return { runtime: replacement, metadata: await replacement.start() }
@@ -853,7 +1042,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => input.isRaw)
       await submitLine(input, 'wait until interrupted')
       await waitFor(async () => (await promptRecords(logPath)).length === 1)
-      await waitFor(() => readOutput().includes('Ctrl+C interrupts via a fresh runtime and session'))
+      await waitFor(() => readOutput().includes('Enter queue'))
       input.write('\u0003')
 
       await waitFor(() => readOutput().includes('Interrupt completed by replacing the whole Harness runtime'))
@@ -976,7 +1165,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await waitFor(() => input.isRaw)
       // Nothing has reported usage yet, so the segment must be absent rather
       // than showing a confident zero.
-      expect(await renderedAfterTick(input, readOutput)).not.toContain('ctx ')
+      expect(await renderedAfterTick(input, readOutput)).toContain('ctx —')
 
       await submitLine(input, 'a turn that reports usage')
       await waitFor(async () => (await promptRecords(logPath)).length === 1)
@@ -988,7 +1177,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       // describing this conversation's size. Its uncached input still belongs
       // in the runtime-wide cache share, hence 384 / (4267 + 384 + 900) = 7%.
       expect(frame).toContain('ctx 4.7K')
-      expect(frame).toContain('cache 7%')
+      expect(frame).not.toContain('cache 7%') // details moved out of the footer
       expect(frame).not.toContain('ctx 900')
 
       await submitLine(input, '/status')
@@ -1170,7 +1359,9 @@ function hasLoneSurrogate(value: string): boolean {
 }
 
 async function waitForTurn(readOutput: () => string, turn: number): Promise<void> {
-  await waitFor(() => readOutput().includes(`turns:${turn}`), 5_000, `turn ${turn} completion`)
+  await waitFor(() => completedTurns >= turn, 5_000, `turn ${turn} completion`)
+  await delay(100) // allow the terminal's batched final snapshot to commit
+  void readOutput
 }
 
 async function waitFor(

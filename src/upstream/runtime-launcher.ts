@@ -6,8 +6,12 @@ import type { HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import { DshcRuntimeError } from './errors.js'
 import { readNetworkFacts } from './network.js'
 import { PERSONA_ENV_VAR, resolvePersona } from './persona.js'
+import type { Preferences } from '../preferences.js'
+import { findDsh, inspectProfile, profileLaunch, type ProfileFacts } from './dsh-profile.js'
+import { ProfileManager } from './profile-manager.js'
 
 export interface RuntimeLaunchOptions {
+  preferences?: Partial<Preferences>
   workspace: string
   configPath?: string
   patchPaths?: readonly string[]
@@ -34,10 +38,13 @@ export interface RuntimeLaunchOptions {
  */
 export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): NodeJS.ProcessEnv {
   if (options.override !== undefined) return options.override.env ?? process.env
+  if (options.preferences?.runtime === 'dsh-profile') return { ...process.env, ...options.env, DSH_CWD: options.workspace }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...options.env,
     DSH_CWD: options.workspace,
+    DSHC_WORK_MODE: options.preferences?.mode ?? 'code',
+    ...(options.preferences?.reasoningEffort === undefined ? {} : { DSHC_REASONING_EFFORT: options.preferences.reasoningEffort }),
     DSHC_CORDIS_PATCHES: JSON.stringify(options.patchPaths ?? []),
     DSHC_MODULE_BASE_URL: pathToFileURL(
       options.moduleBasePath ?? defaultRuntimeModuleBasePath(options.workspace),
@@ -50,13 +57,23 @@ export function effectiveRuntimeEnvironment(options: RuntimeLaunchOptions): Node
     platform: process.platform,
     workspace: options.workspace,
     network: readNetworkFacts(env, options.workspace),
+    preferences: options.preferences,
   }, options.devMode === true)
   if (persona !== undefined) env[PERSONA_ENV_VAR] = persona
   return env
 }
 
-export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promise<HarnessClientOptions> {
+export async function resolveRuntimeLaunch(options: RuntimeLaunchOptions): Promise<HarnessClientOptions & { profileFacts?: ProfileFacts }> {
   if (options.override !== undefined) return options.override
+  if (options.preferences?.runtime === 'dsh-profile') {
+    if (options.configPath !== undefined || options.devMode || (options.patchPaths?.length ?? 0) > 0) throw new DshcRuntimeError('Profile backend cannot inherit bundled configuration, patches or developer mode', 'configuration')
+    const env = effectiveRuntimeEnvironment(options)
+    const dsh = await findDsh(env)
+    const name = await new ProfileManager(options.workspace, env, dsh).active(options.preferences.dshProfile ?? 'sdk')
+    const profileFacts = await inspectProfile(name, options.workspace, env, dsh)
+    return { ...profileLaunch(dsh, profileFacts, options.workspace, env, options.preferences), profileFacts,
+      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }) }
+  }
 
   const configPath = resolve(options.configPath ?? defaultRuntimeConfigPath())
   try {

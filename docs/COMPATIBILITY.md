@@ -1,6 +1,11 @@
 # Public-alpha compatibility statement
 
-This statement applies to `@liaosiyuan123/dshc@0.1.0-alpha.10`.
+This statement applies to the alpha.12 GitHub prerelease, building on the alpha.10 baseline.
+
+For `0.1.0-alpha.12`, the bundled model default is now `deepseek-flash`, with
+the same exact `0.1.1-rc.2` dependency closure. The optional official Profile
+backend independently requires CLI/SDK server `0.1.5-rc.2`. See
+[next-stage compatibility and validation](NEXT-STAGE.md); the alpha.12 release validates its packaged tarball on the installed-package matrix below.
 
 | Boundary | Supported alpha baseline |
 | --- | --- |

@@ -4,7 +4,42 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
-## Unreleased
+## 0.1.0-alpha.12 — 2026-09-13
+
+GitHub prerelease; alpha.11 remained local and was not published. This release does not update the npm dist-tags.
+
+- Update js-yaml to 4.3.2, fast-uri to 3.1.7 and sharp to 0.35.4 in the dependency lockfile to resolve high-severity release audit findings.
+- Fix Node 24 Profile candidate copying and preserve explicit interactive rendering from splash to chat in CI.
+- Simplify the footer and move model, token, timing and compaction details into an overview/tools sidebar.
+- Add a text-only warm star, dshc startup wordmark, `--no-animation`, and clearer conversation role markers.
+- Add first-party structured clarification and reviewed-plan tools with session/call correlation, human-wait timeout suspension, and explicit handoff into a new coding session.
+- Preserve question drafts across hiding and resizing; retain runtime-enforced read-only planning and reject stale answers and superseded plan approvals.
+- Surface automatic compaction lifecycle and session wall/running/waiting time without changing the bundled 80% policy.
+
+- Add measured per-request TPS, observed context capacity and cache/input token
+  composition, expanded model identity, and a warm orange animated asterisk indicator.
+- Keep the footer to one row with model, work mode, session duration and context,
+  omitting whole fields on narrow terminals.
+- Fix clipped long replies with row-based transcript pagination, anchored reading
+  during streaming, accurate viewport budgets and wrapping for wide table cells.
+- Add a breathing status light, preference argument choices, explicit restart
+  previews and persistent queue status. Restore drafts after history navigation,
+  keep failed commands editable, and fix Alt+Enter, Delete and Home/End editing.
+- Validate V4.1 `deepseek-flash` text, image, tool-error and long-output behavior
+  against the unchanged exact Harness `0.1.1-rc.2` closure; update bundled model
+  and vision defaults while preserving explicit model choices.
+- Batch terminal events before React, bound runtime event storage, cache Markdown
+  and row measurements, yield during event processing, and page long views.
+- Add Chinese/English UI preferences, independent reply language, text templates,
+  path completion, external editing, bracketed paste and a session-bound queue.
+- Add runtime-enforced `plan`, `review`, `research` modes, independent output
+  styles, adapter effort forwarding and a read-only Git diff view.
+- Add opt-in official DSH `0.1.5-rc.2` SDK Profiles with isolated Bundle candidate
+  installation, previews, disable/uninstall/upgrade, rollback and revision checks.
+- Preserve terminal plugin API v1 with optional localization and event subscriptions.
+- Add deterministic replay, official mode/Profile/Bundle regressions, opt-in real
+  model tests and a real-terminal smoke fixture. See `docs/NEXT-STAGE.md` for
+  measured results and manual/platform release gates.
 
 ## 0.1.0-alpha.10 — 2026-08-26
 

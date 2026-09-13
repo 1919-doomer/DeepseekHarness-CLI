@@ -21,10 +21,14 @@ import { HarnessRuntime } from '../upstream/runtime.js'
 import { DSHC_VERSION } from '../version.js'
 import { JsonlHistoryReader } from '../history/reader.js'
 import { HistoryWorkbench } from '../plugins/history.js'
-import { HELP_TEXT, parseCliArgs, type CliOptions } from './args.js'
+import { parseCliArgs, type CliOptions } from './args.js'
+import { cliHelp } from './help.js'
 import { collectDoctorReport, doctorExitCode, renderDoctorHuman, shellTempRootFacts, type DoctorFinding } from './doctor.js'
 import { runInteractiveLoop } from './interactive.js'
 import { DEV_MODE_WARNING } from '../workbench/contract.js'
+import { pickPreferences, preferencePaths, resolvePreferences, savePreferences } from '../preferences.js'
+import { resolveLocale, translate } from '../i18n.js'
+import { ProfileManager, type BundleAction, type BundlePreview } from '../upstream/profile-manager.js'
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024
 
@@ -32,6 +36,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   let options: CliOptions
   try {
     options = parseCliArgs(argv)
+    const preferences = await resolvePreferences(options.workspace ?? process.cwd(), pickPreferences(options))
+    options = { ...options, ...preferences.values, preferenceSources: preferences.sources }
     validateModeOptions(options)
   } catch (error) {
     writeError(error)
@@ -39,7 +45,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (options.help) {
-    process.stdout.write(HELP_TEXT)
+    process.stdout.write(cliHelp(resolveLocale(options.locale)))
+    process.stdout.write(`\n${translate(resolveLocale(options.locale), 'helpPreferences')}\n`)
     return 0
   }
   if (options.version) {
@@ -82,6 +89,12 @@ export function validateModeOptions(
   },
 ): void {
   if (options.help || options.version) return
+  if (options.runtime === 'dsh-profile' && (options.runtimeConfig !== undefined || options.dev)) {
+    throw new DshcRuntimeError('The dsh-profile backend cannot be combined with --runtime-config or --dev.', 'configuration')
+  }
+  if (options.mode !== undefined && options.mode !== 'code' && options.dev) {
+    throw new DshcRuntimeError('Developer mode requires code mode.', 'configuration')
+  }
   if (options.dev && options.runtimeConfig !== undefined) {
     throw new DshcRuntimeError('`--dev` cannot be combined with `--runtime-config`; developer mode requires the shipped base composition.', 'configuration')
   }
@@ -131,17 +144,25 @@ function createRuntime(
   moduleBasePath?: string,
 ): HarnessRuntime {
   return new HarnessRuntime({
+    preferences: pickPreferences(options),
+    preferenceSources: options.preferenceSources,
     workspace: options.workspace,
     provider: options.provider,
     model: options.model,
     maxTokens: options.maxTokens,
-    configPath: composition.path,
-    patchPaths: composition.patchPaths,
+    ...(options.runtime === 'dsh-profile' ? {} : { configPath: composition.path, patchPaths: composition.patchPaths }),
     devMode: options.dev,
     ...(moduleBasePath === undefined ? {} : { moduleBasePath }),
     activityTimeoutMs: options.activityTimeoutMs,
     requestTimeoutMs: options.requestTimeoutMs,
   })
+}
+
+/** The official backend owns its config sources; do not even read a bundled workspace patch. */
+async function resolveBackendComposition(options: CliOptions): Promise<ResolvedComposition> {
+  if (options.runtime === 'dsh-profile') return { path: '', source: 'override', patchPaths: [] }
+  return resolveComposition(options.workspace ?? process.cwd(), options.runtimeConfig, defaultRuntimeConfigPath(),
+    { devMode: options.dev, devPatchPath: defaultRuntimeDevPatchPath() })
 }
 
 /** Close a command-owned candidate promptly when the terminal begins shutdown. */
@@ -170,10 +191,11 @@ async function runDoctorCommand(options: CliOptions): Promise<number> {
       configPath: options.runtimeConfig,
       requestTimeoutMs: options.requestTimeoutMs,
       devMode: options.dev,
+      preferences: pickPreferences(options),
     })
     process.stdout.write(options.json
       ? `${stringifyTerminalSafeJson(report)}\n`
-      : renderDoctorHuman(report))
+      : renderDoctorHuman(report, resolveLocale(options.locale)))
     return doctorExitCode(report)
   } catch (error) {
     writeError(error)
@@ -183,12 +205,9 @@ async function runDoctorCommand(options: CliOptions): Promise<number> {
 
 async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
   let activeOptions = { ...cliOptions }
-  const resolved = await resolveComposition(
-    cliOptions.workspace ?? process.cwd(),
-    cliOptions.runtimeConfig,
-    defaultRuntimeConfigPath(),
-    { devMode: cliOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
-  )
+  const profileManager = new ProfileManager(cliOptions.workspace ?? process.cwd())
+  const bundlePreviews = new Map<string, BundlePreview>()
+  const resolved = await resolveBackendComposition(cliOptions)
   const options = activeOptions
   const runtime = createRuntime(activeOptions, resolved)
   let primaryFailure = false
@@ -206,11 +225,45 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
         },
       })
       try {
-        const composition = await readCompositionSummary(resolved.path, resolved.source, resolved.patchPaths)
+        const composition = options.runtime === 'dsh-profile' ? undefined : await readCompositionSummary(resolved.path, resolved.source, resolved.patchPaths)
         const workspace = options.workspace ?? process.cwd()
         const history = new HistoryWorkbench(new JsonlHistoryReader())
         const startupNotice = startupWarnings(workspace, process.env, options.dev)
         const result = await runTerminalProduct(runtime, {
+          preferences: pickPreferences(options),
+          profileOperation: async (args, signal, preferences) => {
+            const selected = activeOptions.dshProfile ?? 'sdk'
+            const [action = 'list', ...rest] = args
+            const subject = rest.filter(arg => arg !== '--yes').join(' ')
+            if (action === 'list' || action === 'details') {
+              const inventory = await profileManager.inventory(selected)
+              const items = action === 'details' ? inventory.filter(item => item.name === subject) : inventory
+              return { message: JSON.stringify({ profile: await profileManager.active(selected), bundles: items, rollback: (await profileManager.pointer())?.history ?? [] }, null, 2) }
+            }
+            if (!['install', 'upgrade', 'disable', 'uninstall', 'rollback'].includes(action)) return { message: '/plugin list | details <name> | install <package@version|./bundle.tgz> | upgrade <package@version> | disable <name> | uninstall <name> | rollback [profile]\nRun without --yes to review the candidate; repeat with --yes to activate.' }
+            const key = `${selected}:${action}:${subject}`
+            if (!args.includes('--yes')) {
+              const preview = await profileManager.preview(selected, action as BundleAction, subject, signal)
+              bundlePreviews.clear()
+              bundlePreviews.set(key, preview)
+              return { message: `${preview.summary}\n\n/plugin ${action} ${subject} --yes` }
+            }
+            const preview = bundlePreviews.get(key)
+            if (!preview) throw new Error('Run the same command without --yes first to review its exact target Profile and configuration changes')
+            bundlePreviews.clear()
+            const applied = await profileManager.apply(preview, async (name, signal) => {
+              const nextOptions: CliOptions = { ...activeOptions, ...pickPreferences(preferences ?? {}), runtime: 'dsh-profile', dshProfile: name }
+              const next = new HarnessRuntime({ workspace: nextOptions.workspace, provider: nextOptions.provider, model: nextOptions.model,
+                maxTokens: nextOptions.maxTokens, preferences: pickPreferences(nextOptions), preferenceSources: nextOptions.preferenceSources,
+                activityTimeoutMs: nextOptions.activityTimeoutMs, requestTimeoutMs: nextOptions.requestTimeoutMs })
+              next.enableInteraction()
+              try { return { runtime: next, metadata: await startRuntimeWithAbort(next, signal) } }
+              catch (error) { await next.close(); throw error }
+            }, value => value.runtime.close(), signal)
+            activeOptions = { ...activeOptions, ...pickPreferences(preferences ?? {}), runtime: 'dsh-profile', dshProfile: 'managed' }
+            applied.value.metadata.requestedPreferences = pickPreferences(activeOptions)
+            return { message: `Activated ${applied.profile}. Startup verified; individual tool paths are unverified. Reopen with --runtime dsh-profile --dsh-profile managed.`, replacement: applied.value }
+          },
           initialSessionId: options.sessionId,
           debug: options.debug,
           devMode: options.dev,
@@ -231,25 +284,26 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
             }
             const nextOptions: CliOptions = {
               ...activeOptions,
+              ...pickPreferences(selection),
               ...(selection.provider === undefined ? {} : { provider: selection.provider }),
               ...(selection.model === undefined ? {} : { model: selection.model }),
               ...(selection.maxTokens === undefined ? {} : { maxTokens: selection.maxTokens }),
               ...(selection.runtimeConfig === undefined ? {} : { runtimeConfig: selection.runtimeConfig }),
             }
-            const nextResolved = await resolveComposition(
-              nextOptions.workspace ?? process.cwd(),
-              nextOptions.runtimeConfig,
-              defaultRuntimeConfigPath(),
-              { devMode: nextOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
-            )
+            validateModeOptions(nextOptions)
+            const nextResolved = await resolveBackendComposition(nextOptions)
             const next = createRuntime(nextOptions, nextResolved)
+            next.enableInteraction()
             try {
               const metadata = await startRuntimeWithAbort(next, signal)
-              const nextComposition = await readCompositionSummary(
+              const nextComposition = nextOptions.runtime === 'dsh-profile' ? undefined : await readCompositionSummary(
                 nextResolved.path,
                 nextResolved.source,
                 nextResolved.patchPaths,
               )
+              const changed = pickPreferences(Object.fromEntries(Object.entries(pickPreferences(selection))
+                .filter(([key, value]) => value !== activeOptions[key as keyof CliOptions])))
+              if (Object.keys(changed).length > 0) await savePreferences(preferencePaths(nextOptions.workspace ?? process.cwd()).workspacePath, changed)
               activeOptions = nextOptions
               return {
                 runtime: next,
@@ -276,6 +330,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
             signal,
           ),
           installPlugin: async (exactSpec, signal) => {
+            if (activeOptions.runtime === 'dsh-profile') throw new Error('Use the Profile Bundle manager for the official backend')
             if (activeOptions.runtimeConfig !== undefined) {
               throw new DshcRuntimeError(
                 'Workspace plugin installation requires the shipped base composition; remove --runtime-config first.',
@@ -409,12 +464,7 @@ export function startupWarnings(
 }
 
 async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<number> {
-  const resolved = await resolveComposition(
-    cliOptions.workspace ?? process.cwd(),
-    cliOptions.runtimeConfig,
-    defaultRuntimeConfigPath(),
-    { devMode: cliOptions.dev, devPatchPath: defaultRuntimeDevPatchPath() },
-  )
+  const resolved = await resolveBackendComposition(cliOptions)
   const options = cliOptions
   const runtime = createRuntime(options, resolved)
   const renderer = options.json ? undefined : new PlainRenderer({

@@ -85,7 +85,17 @@ export function formatSessionUsage(usage: SessionUsage): string | undefined {
 }
 
 /** Longer form for `/status`, where there is room to name every field. */
-export function describeSessionUsage(usage: SessionUsage): readonly string[] {
+export function describeSessionUsage(usage: SessionUsage, locale: 'en' | 'zh-CN' = 'en'): readonly string[] {
+  if (locale === 'zh-CN') return usage.requests === 0 ? ['模型尚未报告 Token 用量。'] : [
+    `最新请求输入：${usage.latestInputTokens.toLocaleString('en-US')} tokens`,
+    `累计总输入：${totalInputTokens(usage).toLocaleString('en-US')}`,
+    `累计未缓存输入：${usage.inputTokens.toLocaleString('en-US')}`,
+    `累计输出：${usage.outputTokens.toLocaleString('en-US')}`,
+    `推理输出：${usage.reasoningTokens.toLocaleString('en-US')}`,
+    `缓存读取：${usage.cacheReadTokens.toLocaleString('en-US')} · 缓存写入：${usage.cacheWriteTokens.toLocaleString('en-US')}`,
+    `报告用量的请求：${usage.requests}`,
+    '累计值包含此运行时的子 Agent；最新输入仅指所选会话。只有观察到公共容量字段后，/context 才显示百分比。',
+  ]
   if (usage.requests === 0) return ['No model request has reported token usage yet.']
   const cumulativeInputTokens = totalInputTokens(usage)
   const lines = [

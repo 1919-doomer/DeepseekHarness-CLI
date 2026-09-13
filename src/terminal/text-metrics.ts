@@ -58,6 +58,22 @@ export function wrappedTerminalRows(value: string, columns: number): number {
   return value.split('\n').reduce((rows, line) => rows + lineRows(line, width), 0)
 }
 
+/** Preserve grapheme boundaries and explicit blank lines when paging narrow views. */
+export function wrapTerminalLines(value: string, columns: number): string[] {
+  const width = Math.max(1, columns)
+  const result: string[] = []
+  for (const line of value.split('\n')) {
+    let row = ''; let cells = 0
+    for (const grapheme of splitGraphemes(line)) {
+      const next = graphemeCellWidth(grapheme)
+      if (cells > 0 && cells + next > width) { result.push(row); row = ''; cells = 0 }
+      row += grapheme; cells += next
+    }
+    result.push(row)
+  }
+  return result
+}
+
 function lineRows(line: string, width: number): number {
   let rows = 1
   let used = 0

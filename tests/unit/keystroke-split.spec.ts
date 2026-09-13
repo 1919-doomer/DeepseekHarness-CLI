@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitKeystrokes } from '../../src/terminal/product.js'
+import { splitKeystrokes } from '../../src/terminal/input-controller.js'
 
 const plain = {
   ctrl: false, meta: false, escape: false, tab: false, return: false,
@@ -11,6 +11,10 @@ const CR = '\r'
 const LF = '\n'
 
 describe('stdin chunk splitting', () => {
+  it('preserves coalesced Ctrl shortcuts ahead of a submitted command', () => {
+    expect(splitKeystrokes('\u0015/exit\r', plain).map(stroke => [stroke.text, stroke.key.ctrl, stroke.key.return]))
+      .toEqual([['u', true, false], ['/exit', false, false], ['\r', false, true]])
+  })
   it('leaves an ordinary keystroke untouched', () => {
     expect(splitKeystrokes('a', plain)).toEqual([{ text: 'a', key: plain }])
   })

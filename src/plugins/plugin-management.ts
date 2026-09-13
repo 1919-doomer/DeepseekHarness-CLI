@@ -23,7 +23,8 @@ export function pluginManagementPlugin(): TerminalPluginSpec {
       name: 'plugin',
       summary: 'Search or transactionally install an @deepseek-ai Harness plugin',
       usage: '/plugin <search|install> ...',
-      execute: (_context, args) => pluginCommand(args),
+      execute: (context, args) => context.runtime.backend === 'dsh-profile'
+        ? { kind: 'profile-operation', args } : pluginCommand(args),
     }],
   }
 }

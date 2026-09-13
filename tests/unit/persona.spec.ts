@@ -32,8 +32,8 @@ describe('deployment persona', () => {
     expect(persona).toContain('no per-request cancel')
     expect(persona).toContain('Interrupt')
     expect(persona).toContain('fresh one')
-    expect(persona).toContain('unable to render Markdown')
-    expect(persona).toContain('Write plain text')
+    expect(persona).toContain('supports basic Markdown')
+    expect(persona).toContain('unsupported constructs remain text')
   })
 
   it('does not restate a setting the composition owns', () => {

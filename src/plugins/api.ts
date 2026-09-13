@@ -1,6 +1,10 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import type { SessionUsage } from '../session/usage.js'
 import type { HarnessRuntimeMetadata } from '../upstream/runtime.js'
+import type { Preferences } from '../preferences.js'
+import type { Locale } from '../i18n.js'
+import type { ModelTelemetry } from '../session/model-telemetry.js'
+import type { SessionTiming, CompactionStats } from '../session/session-clock.js'
 
 export const TERMINAL_PLUGIN_API_VERSION = 1 as const
 
@@ -13,15 +17,26 @@ export interface TerminalSessionSnapshot {
 }
 
 export interface TerminalCommandContext {
+  sessionTiming?: SessionTiming
+  compaction?: CompactionStats
+  locale?: Locale
+  preferences?: Partial<Preferences>
   runtime: HarnessRuntimeMetadata
   session: TerminalSessionSnapshot
   phase: TerminalRuntimePhase
   totalTurns: number
   /** Token accounting folded from upstream. Optional to keep API v1 compatible. */
   usage?: SessionUsage
+  /** Optional local timing of observed model requests; API v1 remains compatible. */
+  modelTelemetry?: ModelTelemetry
 }
 
 export type TerminalCommandOutcome =
+  | { kind: 'sidebar'; page?: 'overview' | 'tools' }
+  | { kind: 'profile-operation'; args: readonly string[] }
+  | { kind: 'edit-input'; text: string }
+  | { kind: 'external-editor' }
+  | { kind: 'preferences'; patch: Partial<Preferences> }
   | { kind: 'message'; title?: string; text: string }
   | { kind: 'new-session' }
   | { kind: 'clear' }
@@ -40,7 +55,7 @@ export type TerminalCommandOutcome =
    */
   | {
       kind: 'restart-runtime'
-      selection: { provider?: string; model?: string; maxTokens?: number; runtimeConfig?: string }
+      selection: Partial<Preferences> & { provider?: string; model?: string; maxTokens?: number; runtimeConfig?: string }
       summary: string
     }
 
@@ -104,6 +119,7 @@ export interface TerminalRenderContext {
 
 export interface TerminalEventRendererSpec {
   id: string
+  eventKinds?: readonly NormalizedEvent['kind'][]
   priority?: number
   match(event: NormalizedEvent): boolean
   render(event: NormalizedEvent, context: TerminalRenderContext): readonly TranscriptMutation[]
@@ -156,6 +172,7 @@ export interface TerminalViewContext extends TerminalCommandContext {
 
 export interface TerminalViewSpec {
   id: string
+  eventKinds?: readonly NormalizedEvent['kind'][]
   title: string
   render(context: TerminalViewContext): string
 }
@@ -168,6 +185,7 @@ export interface TerminalStatusSegmentSpec {
 
 export interface TerminalPluginSpec {
   id: string
+  locales?: Partial<Record<Locale, Readonly<Record<string, string>>>>
   version: string
   apiVersion: typeof TERMINAL_PLUGIN_API_VERSION
   commands?: readonly TerminalCommandSpec[]

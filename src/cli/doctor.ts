@@ -27,6 +27,10 @@ import { describeNetwork, readNetworkFacts, type NetworkFacts } from '../upstrea
 import { HarnessRuntime, type HarnessRuntimeMetadata, type HarnessRuntimeOptions } from '../upstream/runtime.js'
 import { defaultRuntimeConfigPath, defaultRuntimeDevPatchPath, effectiveRuntimeEnvironment } from '../upstream/runtime-launcher.js'
 import { DSHC_VERSION } from '../version.js'
+import { type Locale } from '../i18n.js'
+import { profilePath, TESTED_PROFILE_VERSION } from '../upstream/dsh-profile.js'
+import { describePreferences } from '../plugins/preferences.js'
+import type { Preferences } from '../preferences.js'
 
 export type DoctorStatus = 'PASS' | 'WARN' | 'FAIL' | 'UNKNOWN'
 
@@ -68,6 +72,8 @@ export interface DoctorRetentionFacts {
 }
 
 export interface DoctorReport {
+  backend?: 'bundled' | 'dsh-profile'
+  preferences?: Partial<Preferences>
   schemaVersion: 1
   ok: boolean
   dshcVersion: string
@@ -120,9 +126,10 @@ export interface DoctorOptions extends HarnessRuntimeOptions {
 }
 
 export async function collectDoctorReport(options: DoctorOptions = {}): Promise<DoctorReport> {
+  if (options.preferences?.runtime === 'dsh-profile') return collectProfileDoctorReport(options)
   const workspace = resolve(options.workspace ?? process.cwd())
   const provider = options.provider ?? 'deepseek-official'
-  const model = options.model ?? 'deepseek-v4-flash'
+  const model = options.model ?? 'deepseek-flash'
   const devMode = options.devMode === true
   const resolved = await resolveComposition(workspace, options.configPath, defaultRuntimeConfigPath(), {
     devMode,
@@ -309,6 +316,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   let runtimeMetadata: HarnessRuntimeMetadata | undefined
   if (nodeReady && workspaceReady && configReady && packageReady) {
     const runtime = new HarnessRuntime({
+      preferences: options.preferences,
       ...options,
       workspace,
       configPath: runtimeConfigPath,
@@ -375,6 +383,8 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   const counts = countStatuses(findings)
   return {
+    backend: 'bundled',
+    ...(options.preferences === undefined ? {} : { preferences: options.preferences }),
     schemaVersion: 1,
     ok: counts.FAIL === 0,
     dshcVersion: DSHC_VERSION,
@@ -405,9 +415,10 @@ export function doctorExitCode(report: DoctorReport): number {
   return report.ok ? 0 : 1
 }
 
-export function renderDoctorHuman(report: DoctorReport): string {
+export function renderDoctorHuman(report: DoctorReport, locale: Locale = 'en'): string {
   const lines = [
     `DeepSeek Harness Console doctor — dshc ${report.dshcVersion}`,
+    describePreferences(report.preferences ?? {}, locale, report.runtime),
     `workspace: ${safe(report.workspace)}`,
     `runtime config: ${safe(report.runtimeConfig.path)} (${report.runtimeConfig.source})`,
     ...(report.runtimeConfig.patchPath === undefined ? [] : [`runtime patch: ${safe(report.runtimeConfig.patchPath)}`]),
@@ -415,14 +426,66 @@ export function renderDoctorHuman(report: DoctorReport): string {
     '',
   ]
   for (const finding of report.findings) {
-    lines.push(`${finding.status.padEnd(7)} ${safe(finding.id).padEnd(30)} ${safe(finding.summary)}`)
+    const label = locale === 'zh-CN' ? ({ PASS: '通过', WARN: '注意', FAIL: '失败', UNKNOWN: '未知' } as const)[finding.status] : finding.status
+    const summary = locale === 'zh-CN' ? doctorFindingLabel(finding.id) : finding.summary
+    lines.push(`${label.padEnd(7)} ${safe(finding.id).padEnd(30)} ${safe(summary)}`)
+    if (locale === 'zh-CN' && summary !== finding.summary) lines.push(`        ${safe(finding.summary)}`)
     if (finding.detail !== undefined) lines.push(`        ${safe(finding.detail)}`)
   }
   lines.push(
     '',
-    `Summary: ${report.counts.PASS} pass, ${report.counts.WARN} warn, ${report.counts.FAIL} fail, ${report.counts.UNKNOWN} unknown`,
+    locale === 'zh-CN' ? `合计：${report.counts.PASS} 通过，${report.counts.WARN} 注意，${report.counts.FAIL} 失败，${report.counts.UNKNOWN} 未知`
+      : `Summary: ${report.counts.PASS} pass, ${report.counts.WARN} warn, ${report.counts.FAIL} fail, ${report.counts.UNKNOWN} unknown`,
   )
   return `${lines.join('\n')}\n`
+}
+
+function doctorFindingLabel(id: string): string {
+  const labels: Record<string, string> = {
+    workspace: '工作区访问检查', node: 'Node.js 版本检查', credential: '凭据来源检查（不显示凭据值）', selection: '模型与提供方选择', terminal: '终端交互能力',
+    'history.reader': '只读历史访问', 'bridge.protocol': '公共协议扩展能力', 'approval.answerer': '审批交互能力', 'context.capacity': '上下文容量信息',
+    'prompt.runtime-inspection': '运行时提示词检查能力', 'workbench.mode': '开发工作台模式', 'workbench.isolation': '普通模式隔离', 'workbench.patch-order': '开发补丁顺序',
+    'composition.coding': '工作区编码工具配置', 'composition.sandbox': '沙箱策略配置', 'composition.approval': '审批策略配置', 'composition.extensions': '运行时扩展配置',
+    'composition.mcp': 'MCP 配置', 'composition.patch': '工作区补丁', 'composition.dev-patch': '开发补丁', 'composition.override': '显式配置覆盖', 'composition.workspace': '工作区配置',
+    retention: '本地事件与文本保留上限', 'runtime.initialize': '运行时初始化验证', 'runtime.server': '服务身份验证', 'runtime.protocol': '协议兼容性验证',
+    'runtime.protocol-limitations': '取消、恢复与审批的协议边界', 'runtime.cleanup': '运行时退出检查', 'runtime.config': '运行时配置检查', 'runtime.patch': '补丁检查',
+    'runtime.packages': '固定依赖版本检查', 'workbench.packages': '工作台依赖检查', 'shell.temp-root': 'Shell 临时目录检查', network: '网络与代理配置', 'plugin.registry': '插件源配置',
+    'profile.sources': '官方 Profile 配置来源', 'profile.version': '官方 CLI 精确版本',
+  }
+  return labels[id] ?? id
+}
+
+async function collectProfileDoctorReport(options: DoctorOptions): Promise<DoctorReport> {
+  const workspace = resolve(options.workspace ?? process.cwd())
+  const env = { ...process.env, ...options.env }
+  const findings: DoctorFinding[] = []
+  const provider = options.provider ?? 'deepseek-official'; const model = options.model ?? 'deepseek-flash'
+  const nodeReady = checkNodeVersion(process.versions.node, findings)
+  const workspaceReady = await checkWorkspace(workspace, findings)
+  const packageReady = await checkInstalledPackages(findings)
+  const runtime = new HarnessRuntime(options)
+  let metadata: HarnessRuntimeMetadata | undefined
+  try {
+    if (nodeReady && workspaceReady && packageReady) {
+      metadata = await runtime.start()
+      findings.push({ id: 'runtime.initialize', status: 'PASS', category: 'capability', summary: 'Official SDK Profile initialize completed without a model prompt.' })
+      findings.push({ id: 'profile.version', status: 'PASS', category: 'compatibility', summary: `Official CLI ${metadata.profile?.cliVersion}; verified version ${TESTED_PROFILE_VERSION}.` })
+      findings.push({ id: 'profile.sources', status: 'PASS', category: 'configuration', summary: 'Official Profile and home layers are used; bundled workspace configuration is not merged.', detail: metadata.profile?.configurationSources.join('\n') })
+    }
+  } catch (error) {
+    const failure = classifyRuntimeError(error, env)
+    findings.push({ id: 'runtime.initialize', status: 'FAIL', category: failure.code, summary: failure.message })
+  } finally {
+    try { await runtime.close() } catch (error) { findings.push({ id: 'runtime.cleanup', status: 'FAIL', category: 'runtime', summary: classifyRuntimeError(error, env).message }) }
+  }
+  findings.push({ id: 'credential', status: 'UNKNOWN', category: 'environment', summary: 'Official Profile owns environment/file credential resolution; doctor does not send a model request.' })
+  const counts = countStatuses(findings)
+  return { schemaVersion: 1, backend: 'dsh-profile', preferences: options.preferences, ok: counts.FAIL === 0,
+    dshcVersion: DSHC_VERSION, nodeVersion: process.versions.node, platform: process.platform, arch: process.arch, workspace,
+    runtimeConfig: { path: metadata?.profile?.path ?? profilePath(options.preferences?.dshProfile ?? 'sdk', env), source: 'override', patchPaths: metadata?.profile?.configurationSources ?? [] },
+    devMode: false, selection: { provider, model }, credential: { provider, present: null },
+    tty: ttyFacts(options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, env),
+    network: readNetworkFacts(env, workspace), testedBaseline: TESTED_DSH_BASELINE, retention: retentionFacts(), runtime: metadata, findings, counts }
 }
 
 async function checkWorkspace(workspace: string, findings: DoctorFinding[]): Promise<boolean> {

@@ -14,6 +14,7 @@ import type {
 } from '../history/types.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { splitGraphemes } from '../terminal/text-metrics.js'
+import type { Locale } from '../i18n.js'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
   TERMINAL_PLUGIN_API_VERSION,
@@ -153,11 +154,11 @@ export class HistoryWorkbench {
     return `/history continue ${selected.id} all${selected.crossWorkspace ? ' --cross-workspace' : ''} -- Continue from this conversation.`
   }
 
-  render(): string {
+  render(locale: Locale = 'en'): string {
     switch (this.state.kind) {
       case 'empty': return this.state.message
-      case 'catalog': return renderCatalog(this.state.catalog, this.state.selected, this.state.query, this.state.focus)
-      case 'detail': return renderDetail(this.state.detail, this.state.returnTo !== undefined)
+      case 'catalog': return renderCatalog(this.state.catalog, this.state.selected, this.state.query, this.state.focus, locale)
+      case 'detail': return renderDetail(this.state.detail, this.state.returnTo !== undefined, locale)
     }
   }
 
@@ -172,7 +173,7 @@ export class HistoryWorkbench {
   }
 
   private view(): TerminalViewSpec {
-    return { id: 'history', title: 'History', render: () => this.render() }
+    return { id: 'history', title: 'History', eventKinds: [], render: context => this.render(context.locale) }
   }
 
   private async execute(
@@ -269,12 +270,22 @@ function renderCatalog(
   selected: number,
   query: string,
   focus: 'list' | 'search' = 'list',
+  locale: Locale = 'en',
 ): string {
   const sessions = catalog.sessions
   const radius = 7
   const start = Math.max(0, Math.min(Math.max(0, sessions.length - radius * 2 - 1), selected - radius))
   const visible = sessions.slice(start, start + radius * 2 + 1)
   const rows = visible.map((session, offset) => renderSessionRow(session, start + offset === selected))
+  if (locale === 'zh-CN') return [
+    `来源：${catalog.root}`, `范围：${catalog.allWorkspaces ? '所有工作区（显式选择）' : catalog.workspace}`,
+    `会话：显示 ${sessions.length} · 范围内 ${catalog.matchingSnapshots} · 总计 ${catalog.totalSnapshots}`,
+    `搜索：${query || '全部'}${focus === 'search' ? '▌' : ''} · ${focus === 'search' ? '编辑搜索' : '选择会话'}`,
+    `本地省略 ${catalog.omittedSnapshots} 条；仅元数据可用 ${catalog.diagnostics.length} 条`,
+    '', ...(rows.length ? rows : ['没有匹配的会话。']), '',
+    focus === 'search' ? '输入编辑 · Backspace 删除 · Ctrl+U 清空 · Enter 搜索 · Tab/Esc 返回列表' : '↑/↓ 选择 · Enter 查看 · c 交接 · Tab 搜索 · Esc/q 返回对话',
+    '当前 SDK 不支持真正恢复会话；交接会先审阅选定内容，然后创建新会话。',
+  ].join('\n')
   return [
     `source: ${catalog.root}`,
     `scope: ${catalog.allWorkspaces ? 'all workspaces (explicit)' : catalog.workspace}`,
@@ -300,7 +311,7 @@ function renderSessionRow(session: HistorySessionSummary, selected: boolean): st
   return `${selected ? '›' : ' '} ${date} · ${short(session.id)}${model}${origin}${diagnostic}\n    ${oneLine(session.title, 100)}`
 }
 
-function renderDetail(detail: HistorySessionDetail, returnsToCatalog = false): string {
+function renderDetail(detail: HistorySessionDetail, returnsToCatalog = false, locale: Locale = 'en'): string {
   const { summary } = detail
   const messages = detail.messages.slice(-24).map(message => {
     const omitted = message.truncatedChars === 0 ? '' : ` · ${message.truncatedChars} chars omitted`
@@ -332,14 +343,14 @@ function renderDetail(detail: HistorySessionDetail, returnsToCatalog = false): s
     ...(detail.droppedMessageCount === 0 ? [] : [`retention: ${detail.droppedMessageCount} older message projections omitted locally`]),
     ...(summary.diagnostic === undefined ? [] : [`diagnostic: ${summary.diagnostic}`]),
     '',
-    'Recent message events',
+    locale === 'zh-CN' ? '最近消息事件' : 'Recent message events',
     ...(messages.length === 0 ? ['(none)'] : messages),
-    ...(tools.length === 0 ? [] : ['', 'Recent tool activity', ...tools]),
-    ...(approvals.length === 0 ? [] : ['', 'Approval audit', ...approvals]),
+    ...(tools.length === 0 ? [] : ['', locale === 'zh-CN' ? '最近工具活动' : 'Recent tool activity', ...tools]),
+    ...(approvals.length === 0 ? [] : ['', locale === 'zh-CN' ? '审批记录' : 'Approval audit', ...approvals]),
     '',
-    'c prepares a review-first continuation command for this conversation.',
-    `${returnsToCatalog ? 'Esc/q returns to the history list.' : 'Esc/q returns to the live conversation.'}`,
-    'True resume is unavailable on SDK protocol 0.0.1; Continue creates a NEW session.',
+    locale === 'zh-CN' ? 'c 准备历史交接命令；先审阅，再创建新会话。' : 'c prepares a review-first continuation command for this conversation.',
+    locale === 'zh-CN' ? `Esc/q 返回${returnsToCatalog ? '历史列表' : '当前对话'}。` : `${returnsToCatalog ? 'Esc/q returns to the history list.' : 'Esc/q returns to the live conversation.'}`,
+    locale === 'zh-CN' ? '当前 SDK 不支持真正恢复会话；交接将创建新会话。' : 'True resume is unavailable on SDK protocol 0.0.1; Continue creates a NEW session.',
   ].join('\n')
 }
 

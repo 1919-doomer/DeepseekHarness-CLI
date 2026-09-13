@@ -5,6 +5,10 @@
 autoInstallPeers: true
 strictPeerDependencies: false
 saveExact: true
+# Keep the direct parser and compatible Harness transitive parsers on the
+# patched v4 release (GHSA-2883-xcg3-v3hh), including frozen CI installs.
+overrides:
+  js-yaml: 4.3.2
 minimumReleaseAgeExclude:
   - '@deepseek-ai/*'
 

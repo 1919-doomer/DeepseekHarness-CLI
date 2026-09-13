@@ -1,5 +1,8 @@
 # Extensions and composition
 
+The unreleased official Profile/Bundle backend and optional terminal API v1
+localization/event subscriptions are documented in [next-stage usage](NEXT-STAGE.md).
+
 For interactive development of an ordinary DSH/Cordis package, see the trusted
 [Cordis Plugin Workbench](PLUGIN-WORKBENCH.md). It is a Harness development
 surface, not a third-party terminal-plugin SDK.
@@ -23,7 +26,8 @@ does not inherit the workspace patch.
 
 ## Vision and web
 
-The shipped `vision` subagent routes to `deepseek-v4-flash-vision-exp` and keeps
+In unreleased source, the shipped `vision` subagent routes to `deepseek-flash`
+(alpha.10 used `deepseek-v4-flash-vision-exp`) and keeps
 only `read`, `read_image`, `glob` and `grep`. Images are stored by
 `@deepseek-ai/dsh-attachment-local`.
 

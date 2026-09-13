@@ -42,7 +42,7 @@ describe('published DeepSeek Harness doctor', () => {
       ok: true,
       workspace: root,
       runtimeConfig: { source: 'shipped-default' },
-      selection: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      selection: { provider: 'deepseek-official', model: 'deepseek-flash' },
       credential: {
         provider: 'deepseek-official',
         environmentVariable: 'DEEPSEEK_API_KEY',

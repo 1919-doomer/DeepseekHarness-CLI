@@ -229,6 +229,10 @@ function emitCompletedTurn(sessionId, turn) {
 function emitTurn(sessionId, messageId, contentBlocks, turn) {
   emitReceiptAndStart(sessionId, messageId, contentBlocks, turn)
   if (mode === 'hang-activity') return
+  if (mode === 'queue-delay') {
+    setTimeout(() => emitCompletedTurn(sessionId, turn), 650)
+    return
+  }
 
   if (mode === 'slow-receipt-turn') {
     setTimeout(() => emitCompletedTurn(sessionId, turn), 40)

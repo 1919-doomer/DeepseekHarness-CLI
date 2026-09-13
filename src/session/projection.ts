@@ -497,7 +497,7 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
     return { sequence, kind: 'internal', sessionId, type }
   }
 
-  if (type === 'compaction/start' || type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header') {
+  if (type === 'compaction/start' || type === 'compaction/end' || type === 'agent/inbox/spliced' || type === 'turn/start' || type === 'step/start' || type === 'step/end' || type === 'request/header') {
     return { sequence, kind: 'internal', sessionId, type }
   }
 

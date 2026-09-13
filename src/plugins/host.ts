@@ -9,6 +9,7 @@ import {
   type TerminalStatusSegmentSpec,
   type TerminalViewSpec,
 } from './api.js'
+import type { Locale } from '../i18n.js'
 
 interface OwnedCommand { pluginId: string; spec: TerminalCommandSpec }
 interface OwnedRenderer { pluginId: string; spec: TerminalEventRendererSpec; order: number }
@@ -104,7 +105,7 @@ export class TerminalPluginHost {
   }
 
   matchingRenderer(event: Parameters<TerminalEventRendererSpec['match']>[0]): TerminalEventRendererSpec | undefined {
-    return this.renderers.find(item => item.spec.match(event))?.spec
+    return this.renderers.find(item => (item.spec.eventKinds === undefined || item.spec.eventKinds.includes(event.kind)) && item.spec.match(event))?.spec
   }
 
   orderedStatusSegments(): readonly TerminalStatusSegmentSpec[] {
@@ -117,16 +118,21 @@ export class TerminalPluginHost {
       .sort((a, b) => a.id.localeCompare(b.id))
   }
 
-  listCommands(): readonly RegisteredCommandInfo[] {
+  listCommands(locale: Locale = 'en'): readonly RegisteredCommandInfo[] {
     return [...this.canonicalCommands.entries()]
       .map(([name, item]) => ({
         name,
         aliases: (item.spec.aliases ?? []).map(normalizeName),
-        summary: item.spec.summary,
+        summary: this.localize(item.pluginId, locale, `command.${name}.summary`, item.spec.summary),
         ...(item.spec.usage === undefined ? {} : { usage: item.spec.usage }),
         pluginId: item.pluginId,
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  localize(pluginId: string, locale: Locale, key: string, fallback: string): string {
+    const catalogs = this.plugins.get(pluginId)?.locales
+    return catalogs?.[locale]?.[key] ?? catalogs?.en?.[key] ?? fallback
   }
 
   listRenderers(): readonly RegisteredRendererInfo[] {
