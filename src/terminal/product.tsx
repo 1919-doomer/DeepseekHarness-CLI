@@ -1164,7 +1164,35 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (['language', 'sidebar'].includes(parseTerminalCommand(raw)?.name ?? '')) { await runCommand(raw); return }
       try {
         if (raw.startsWith('/') && !raw.startsWith('//')) throw new Error('Only /queue and /language commands are available while a prompt is running.')
-        queue.add(sessionRef.current, raw.startsWith('//') ? raw.slice(1) : raw)
+        const text = raw.startsWith('//') ? raw.slice(1) : raw
+        // Steering joins the turn already running; queueing waits for the next
+        // one. Prefer steering when the runtime exposes it, and say which one
+        // happened — the difference is the whole point of typing now.
+        const bridge = props.runtimeRef.current.interaction
+        if (bridge?.canSteer === true) {
+          try {
+            await bridge.steer(sessionRef.current, text)
+            setTranscript(state => appendSystemMessage(
+              state,
+              locale === 'zh-CN'
+                ? '已插入当前这一轮。模型会先跑完手上这一步，然后在下一步读到它——不会丢掉已经生成的内容。'
+                : 'Added to the turn already running. The model finishes the step it is on, then reads this on the next one; nothing already generated is discarded.',
+              locale === 'zh-CN' ? '插话' : 'steered',
+              nextId('steer'),
+            ))
+            return
+          } catch (error) {
+            // Fall through to the queue, naming the downgrade rather than
+            // pretending the message went into this turn.
+            setTranscript(state => appendSystemMessage(
+              state,
+              `${pluginErrorMessage(error)}${locale === 'zh-CN' ? ' 已改为排队到下一轮。' : ' Queued for the next turn instead.'}`,
+              locale === 'zh-CN' ? '插话失败' : 'steering unavailable',
+              nextId('steer-failed'),
+            ))
+          }
+        }
+        queue.add(sessionRef.current, text)
         setQueueRevision(value => value + 1)
       } catch (error) {
         setEditor(raw, graphemeCount(raw))
