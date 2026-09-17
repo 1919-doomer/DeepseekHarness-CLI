@@ -4,6 +4,7 @@ import { StatusBar, statusBarContentRows } from './status-bar.js'
 import { OverviewSidebar, ToolSidebarStats } from './overview.js'
 import { AgentWindows } from './agent-windows.js'
 import { startWithSplash } from './splash.js'
+import { installCrashGuard } from './crash-guard.js'
 import { SessionClock } from '../session/session-clock.js'
 import { InteractionCard, createInteractionDraft, type InteractionCardHandle } from './interaction-card.js'
 import type { InteractionRequest, InteractionAnswer } from '../upstream/interaction.js'
@@ -157,6 +158,7 @@ export async function runTerminalProduct(
   const stderr = options.stderr ?? process.stderr
   const alternate = options.useAlternateScreen ?? true
   let alternateEntered = false
+  let exitReason: string | undefined
   let instance: ReturnType<typeof render> | undefined = startupInstance
   let latest = { totalTurns: 0, sessionId: initialSessionId }
   let signalClosing = false
@@ -197,11 +199,26 @@ export async function runTerminalProduct(
   // Ink does not turn a closed injected/stdin stream into an application
   // result by itself. Treat terminal EOF as the same clean whole-runtime exit
   // as `/exit`; the protocol has no smaller session or plugin disposal scope.
-  const onEof = (): void => finish({
-    exitCode: 0,
-    interrupted: false,
-    totalTurns: latest.totalTurns,
-    sessionId: latest.sessionId,
+  const onEof = (): void => {
+    // Reported after the alternate screen is restored, below: anything written
+    // while it is still on goes into a buffer the terminal discards.
+    exitReason = resolveLocale(options.preferences?.locale) === 'zh-CN'
+      ? 'dshc: 标准输入已关闭，会话随之结束。\n'
+      : 'dshc: standard input closed, so the session ended with it.\n'
+    finish({
+      exitCode: 0,
+      interrupted: false,
+      totalTurns: latest.totalTurns,
+      sessionId: latest.sessionId,
+    })
+  }
+
+  // Installed before the alternate screen is entered and removed in the finally
+  // below, so it can never outlive the terminal state it knows how to restore.
+  const disposeCrashGuard = installCrashGuard({
+    terminal: () => ({ stdout, alternateEntered, stdin }),
+    stderr,
+    locale: resolveLocale(options.preferences?.locale),
   })
 
   try {
@@ -264,11 +281,14 @@ export async function runTerminalProduct(
     await exited
     return result
   } finally {
+    disposeCrashGuard()
     process.off('SIGINT', onInt)
     process.off('SIGTERM', onTerm)
     stdin.off('end', onEof)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
+    // Only now is stderr visible to the reader again.
+    if (exitReason !== undefined) stderr.write(exitReason)
     shutdown.abort(new Error('terminal product is closing'))
     await drainLocalTasks()
     await runtimeClosures.drain(runtimeRef.current)
@@ -656,6 +676,20 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (topology.length > 0) setAgentTopology(state => topology.reduce(reduceAgentTopologyHistory, state))
       const usageEvents = events.filter(event => event.kind === 'assistant-message' || event.kind === 'context-compacted')
       if (usageEvents.length > 0) setUsage(state => usageEvents.reduce((next, event) => accumulateUsage(next, event, rootSessionId), state))
+    }, undefined, error => {
+      // Publication runs plugin renderers, transcript reducers and a React
+      // render. Any of those can throw on one malformed event; none of them is
+      // worth the session. Report it where the reader is already looking and
+      // keep streaming — the runtime still has every original event.
+      const detail = error instanceof Error ? error.message : String(error)
+      setTranscript(state => appendSystemMessage(
+        state,
+        locale === 'zh-CN'
+          ? `本次输出有一段没能渲染，会话继续。/trace 可以查看原始事件。\n${detail}`
+          : `A piece of this reply could not be rendered; the session continues. /trace has the original events.\n${detail}`,
+        locale === 'zh-CN' ? '渲染失败' : 'render failed',
+        nextId('render-error'),
+      ))
     })
     eventBatchRef.current = batch
     try {
@@ -1583,8 +1617,16 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const transcriptLayout = useMemo(() => {
     const blocks = agentWindows?.transcript(transcript.blocks, externalSessions.current) ?? transcript.blocks
     // Keep the original transcript for history/details and for terminals where
-    // the sidebar is hidden. Only the wide chat presentation omits tool cards.
-    return transcriptLayoutCache.prepare(sidebarVisible ? blocks.filter(block => block.kind !== 'tool') : blocks, transcriptWidth, locale)
+    // the sidebar is hidden. Wide chat omits a tool card only once the call has
+    // succeeded, because the sidebar indexes it and its output is one keystroke
+    // away. A running call is what the reader is watching, and a failed one is
+    // the thing they must not have to go looking for — dropping every tool
+    // block regardless of state hid both, and silently defeated the terminal
+    // injection assertion that a renderer's output reaches the screen at all.
+    const shown = sidebarVisible
+      ? blocks.filter(block => block.kind !== 'tool' || block.state !== 'success')
+      : blocks
+    return transcriptLayoutCache.prepare(shown, transcriptWidth, locale)
   }, [transcriptLayoutCache, transcript.blocks, transcriptWidth, sidebarVisible, locale, agentWindows, agentWindowRevision])
   const visible = selectTranscriptPage(transcriptLayout, bodyRows, scrollAnchor)
   scrollNavigationRef.current = { layout: transcriptLayout, page: visible }
