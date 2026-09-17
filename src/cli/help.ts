@@ -36,6 +36,7 @@ export function cliHelp(locale: Locale): string {
       --json                         单次执行或 doctor 输出机器可读 JSON
       --debug                        兼容性与未知事件诊断
       --no-animation                 关闭开屏及状态动画
+      --no-subagent-windows          子 Agent 输出保留在当前窗口（Windows）
   -h, --help                         显示帮助
   -v, --version                      显示版本
 

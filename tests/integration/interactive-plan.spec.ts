@@ -46,15 +46,18 @@ it.each(['implement', 'restart-fails', 'superseded'] as const)('%s: preserves dr
     await until(() => runtime.interaction?.current?.kind === 'questions'); await delay(100)
     await key('\t'); await key('保留中文'); await key('\u001b')
     output.columns = 70; output.rows = 18; output.emit('resize'); await delay(100)
-    await key('\r'); await key('\r'); await key('\r')
+    // Enter answers in one keystroke now; the first only reopens the card Esc hid.
+    await key('\r'); await key('\r')
     await until(() => runtime.interaction?.current?.kind === 'plan'); await delay(100)
     expect(restart).not.toHaveBeenCalled(); expect(await readFile(file, 'utf8')).toBe('original')
     expect(JSON.stringify(requests)).toContain('保留中文')
-    await key('\r'); await key('\r'); await key('\r')
+    await key('\r')
     if (scenario !== 'implement') {
       if (scenario === 'superseded') {
         await until(() => runtime.interaction?.current?.kind === 'plan'); await delay(100)
-        await key('\u001b[B'); await key('\u001b[B'); await key('\r'); await key('\r'); await key('\r')
+        // A digit picks its option outright: '3' is 暂不实施 / Defer, no arrows
+        // and no confirm step. Arrowing still works; this is the shortcut.
+        await key('3')
         await until(() => requests.length === 4); await delay(150)
         expect(restart).not.toHaveBeenCalled()
       } else { await until(() => frames.includes('原计划和会话已保留')); expect(restart).toHaveBeenCalledTimes(1) }
@@ -71,6 +74,10 @@ it.each(['implement', 'restart-fails', 'superseded'] as const)('%s: preserves dr
     expect(codeRequest).toContain('保留中文')
     expect(codeRequest).toContain('Confirmed fixture plan')
     expect(frames).toContain('主·Agent')
+    // Options carry their number, and the hint says what the keys do rather
+    // than merely naming them.
+    expect(frames).toContain('1 ')
+    expect(frames).toContain('1-9 直接选')
     await key('/exit'); await key('\r'); expect((await product).exitCode).toBe(0)
     expect(input.isRaw).toBe(false)
   } finally {

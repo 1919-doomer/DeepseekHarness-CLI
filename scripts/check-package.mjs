@@ -41,6 +41,8 @@ if (report === undefined || !Array.isArray(report.files)) {
 
 const paths = new Set(report.files.map(file => String(file.path).replaceAll('\\', '/')))
 const required = [
+  'runtime/agent-window.mjs',
+  'runtime/agent-window-format.mjs',
   'package.json',
   'LICENSE',
   'DISCLOSURE',

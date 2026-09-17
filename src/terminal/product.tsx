@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TerminalEventBatch, coalesceTranscriptDeltas } from './event-batch.js'
 import { StatusBar, statusBarContentRows } from './status-bar.js'
-import { OverviewSidebar } from './overview.js'
+import { OverviewSidebar, ToolSidebarStats } from './overview.js'
+import { AgentWindows } from './agent-windows.js'
 import { startWithSplash } from './splash.js'
+import { installCrashGuard } from './crash-guard.js'
 import { SessionClock } from '../session/session-clock.js'
 import { InteractionCard, createInteractionDraft, type InteractionCardHandle } from './interaction-card.js'
 import type { InteractionRequest, InteractionAnswer } from '../upstream/interaction.js'
@@ -139,7 +141,7 @@ export async function runTerminalProduct(
   options: TerminalProductOptions = {},
 ): Promise<TerminalProductResult> {
   runtime.enableInteraction()
-  const { metadata, draft: startupDraft, instance: startupInstance } = await startWithSplash(runtime, options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, options.preferences?.animation, options.interactive)
+  const { metadata, draft: startupDraft, instance: startupInstance } = await startWithSplash(runtime, options.stdin ?? process.stdin, options.stdout ?? process.stdout, options.stderr ?? process.stderr, options.preferences?.animation, options.interactive, resolveLocale(options.preferences?.locale))
   // Held mutably so a configuration restart can swap it without tearing the UI
   // down. The new runtime is started before the old one closes, so a rejected
   // composition leaves the session working rather than stranded.
@@ -156,6 +158,7 @@ export async function runTerminalProduct(
   const stderr = options.stderr ?? process.stderr
   const alternate = options.useAlternateScreen ?? true
   let alternateEntered = false
+  let exitReason: string | undefined
   let instance: ReturnType<typeof render> | undefined = startupInstance
   let latest = { totalTurns: 0, sessionId: initialSessionId }
   let signalClosing = false
@@ -196,11 +199,26 @@ export async function runTerminalProduct(
   // Ink does not turn a closed injected/stdin stream into an application
   // result by itself. Treat terminal EOF as the same clean whole-runtime exit
   // as `/exit`; the protocol has no smaller session or plugin disposal scope.
-  const onEof = (): void => finish({
-    exitCode: 0,
-    interrupted: false,
-    totalTurns: latest.totalTurns,
-    sessionId: latest.sessionId,
+  const onEof = (): void => {
+    // Reported after the alternate screen is restored, below: anything written
+    // while it is still on goes into a buffer the terminal discards.
+    exitReason = resolveLocale(options.preferences?.locale) === 'zh-CN'
+      ? 'dshc: 标准输入已关闭，会话随之结束。\n'
+      : 'dshc: standard input closed, so the session ended with it.\n'
+    finish({
+      exitCode: 0,
+      interrupted: false,
+      totalTurns: latest.totalTurns,
+      sessionId: latest.sessionId,
+    })
+  }
+
+  // Installed before the alternate screen is entered and removed in the finally
+  // below, so it can never outlive the terminal state it knows how to restore.
+  const disposeCrashGuard = installCrashGuard({
+    terminal: () => ({ stdout, alternateEntered, stdin }),
+    stderr,
+    locale: resolveLocale(options.preferences?.locale),
   })
 
   try {
@@ -216,6 +234,7 @@ export async function runTerminalProduct(
     const app = (
       <TerminalProductApp
         startupDraft={startupDraft}
+        agentWindowsEnabled={process.platform === 'win32' && stdin === process.stdin && stdout === process.stdout && options.interactive !== false && !process.env.CI}
         preferences={options.preferences}
         profileOperation={options.profileOperation}
         runtimeRef={runtimeRef}
@@ -262,11 +281,14 @@ export async function runTerminalProduct(
     await exited
     return result
   } finally {
+    disposeCrashGuard()
     process.off('SIGINT', onInt)
     process.off('SIGTERM', onTerm)
     stdin.off('end', onEof)
     instance?.unmount()
     if (alternateEntered) stdout.write(ALT_SCREEN_OFF)
+    // Only now is stderr visible to the reader again.
+    if (exitReason !== undefined) stderr.write(exitReason)
     shutdown.abort(new Error('terminal product is closing'))
     await drainLocalTasks()
     await runtimeClosures.drain(runtimeRef.current)
@@ -275,6 +297,7 @@ export async function runTerminalProduct(
 
 interface AppProps {
   startupDraft?: string
+  agentWindowsEnabled?: boolean
   profileOperation?: TerminalProductOptions['profileOperation']
   preferences?: Partial<Preferences>
   /** Mutable so a configuration restart can swap the runtime under the UI. */
@@ -329,10 +352,20 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const cardRef = useRef<InteractionCardHandle>(null)
   const confirmedPlan = useRef<{ request: InteractionRequest & { kind: 'plan' }; runtime: HarnessRuntime } | undefined>(undefined)
   const handoffRef = useRef<() => Promise<void>>(async () => undefined)
-  const [sidebarPage, setSidebarPage] = useState<'overview' | 'tools'>('overview')
-  const sidebarPageRef = useRef<'overview' | 'tools'>('overview')
+  const [sidebarPage, setSidebarPage] = useState<'overview' | 'tools'>('tools')
+  const sidebarPageRef = useRef<'overview' | 'tools'>('tools')
   const [overviewOffset, setOverviewOffset] = useState(0)
   const [generation, setGeneration] = useState(1)
+  const agentWindows = useMemo(() => props.agentWindowsEnabled && preferences.subagentWindows !== false
+    ? new AgentWindows(sessionId, locale) : undefined, [sessionId, generation, props.agentWindowsEnabled, preferences.subagentWindows])
+  const [agentWindowRevision, setAgentWindowRevision] = useState(0)
+  const externalSessions = useRef(new Set<string>())
+  useEffect(() => {
+    const unsubscribe = agentWindows?.subscribe(() => { agentWindows.syncSeparated(externalSessions.current); setAgentWindowRevision(value => value + 1) })
+    const close = () => agentWindows?.close()
+    props.shutdownSignal.addEventListener('abort', close, { once: true })
+    return () => { unsubscribe?.(); props.shutdownSignal.removeEventListener('abort', close); close() }
+  }, [agentWindows, props.shutdownSignal])
   const [sessionTurns, setSessionTurns] = useState(0)
   const [totalTurns, setTotalTurns] = useState(0)
   // Which suggestion the slash menu has highlighted, and whether Escape has
@@ -508,6 +541,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   }, [exit, props, waitUntilRenderFlush])
 
   const interrupt = useCallback((): void => {
+    agentWindows?.close()
     confirmedPlan.current = undefined
     props.runtimeRef.current.interaction?.cancel()
     clock.stop()
@@ -592,7 +626,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           if (mountedRef.current) finish(130, true)
         }, 25)
       })
-  }, [finish, jumpToNewest, nextId, metadata.protocolVersion, props.restart, props.runtimeRef, props.trackRuntimeClose, preferences, queue])
+  }, [finish, jumpToNewest, nextId, metadata.protocolVersion, props.restart, props.runtimeRef, props.trackRuntimeClose, preferences, queue, agentWindows])
 
   const runHarnessPrompt = useCallback(async (
     prompt: string,
@@ -631,6 +665,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     let succeeded = false
     const batch = new TerminalEventBatch(events => {
       if (!mountedRef.current || props.shutdownSignal.aborted) return
+      for (const event of events) agentWindows?.observe(event)
       setTelemetry(telemetryMeter.snapshot())
       for (const kind of new Set(events.map(event => event.kind))) eventKindRevisions.current.set(kind, (eventKindRevisions.current.get(kind) ?? 0) + 1)
       const display = coalesceTranscriptDeltas(events, event => props.host.matchingRenderer(event) !== undefined)
@@ -641,6 +676,20 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (topology.length > 0) setAgentTopology(state => topology.reduce(reduceAgentTopologyHistory, state))
       const usageEvents = events.filter(event => event.kind === 'assistant-message' || event.kind === 'context-compacted')
       if (usageEvents.length > 0) setUsage(state => usageEvents.reduce((next, event) => accumulateUsage(next, event, rootSessionId), state))
+    }, undefined, error => {
+      // Publication runs plugin renderers, transcript reducers and a React
+      // render. Any of those can throw on one malformed event; none of them is
+      // worth the session. Report it where the reader is already looking and
+      // keep streaming — the runtime still has every original event.
+      const detail = error instanceof Error ? error.message : String(error)
+      setTranscript(state => appendSystemMessage(
+        state,
+        locale === 'zh-CN'
+          ? `本次输出有一段没能渲染，会话继续。/trace 可以查看原始事件。\n${detail}`
+          : `A piece of this reply could not be rendered; the session continues. /trace has the original events.\n${detail}`,
+        locale === 'zh-CN' ? '渲染失败' : 'render failed',
+        nextId('render-error'),
+      ))
     })
     eventBatchRef.current = batch
     try {
@@ -690,7 +739,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         })
       }
     }
-  }, [finish, nextId, props.debug, props.host, props.runtimeRef, props.shutdownSignal, props.trackRuntimeClose, sessionId, queue])
+  }, [finish, nextId, props.debug, props.host, props.runtimeRef, props.shutdownSignal, props.trackRuntimeClose, sessionId, queue, agentWindows])
 
   const retireRuntime = useCallback((previous: HarnessRuntime): void => {
     void props.trackRuntimeClose(previous).catch((error) => {
@@ -1115,7 +1164,35 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       if (['language', 'sidebar'].includes(parseTerminalCommand(raw)?.name ?? '')) { await runCommand(raw); return }
       try {
         if (raw.startsWith('/') && !raw.startsWith('//')) throw new Error('Only /queue and /language commands are available while a prompt is running.')
-        queue.add(sessionRef.current, raw.startsWith('//') ? raw.slice(1) : raw)
+        const text = raw.startsWith('//') ? raw.slice(1) : raw
+        // Steering joins the turn already running; queueing waits for the next
+        // one. Prefer steering when the runtime exposes it, and say which one
+        // happened — the difference is the whole point of typing now.
+        const bridge = props.runtimeRef.current.interaction
+        if (bridge?.canSteer === true) {
+          try {
+            await bridge.steer(sessionRef.current, text)
+            setTranscript(state => appendSystemMessage(
+              state,
+              locale === 'zh-CN'
+                ? '已插入当前这一轮。模型会先跑完手上这一步，然后在下一步读到它——不会丢掉已经生成的内容。'
+                : 'Added to the turn already running. The model finishes the step it is on, then reads this on the next one; nothing already generated is discarded.',
+              locale === 'zh-CN' ? '插话' : 'steered',
+              nextId('steer'),
+            ))
+            return
+          } catch (error) {
+            // Fall through to the queue, naming the downgrade rather than
+            // pretending the message went into this turn.
+            setTranscript(state => appendSystemMessage(
+              state,
+              `${pluginErrorMessage(error)}${locale === 'zh-CN' ? ' 已改为排队到下一轮。' : ' Queued for the next turn instead.'}`,
+              locale === 'zh-CN' ? '插话失败' : 'steering unavailable',
+              nextId('steer-failed'),
+            ))
+          }
+        }
+        queue.add(sessionRef.current, text)
         setQueueRevision(value => value + 1)
       } catch (error) {
         setEditor(raw, graphemeCount(raw))
@@ -1565,12 +1642,24 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   // than squeezing the transcript, per the narrow-terminal invariant.
   const sidebarVisible = showTools && size.columns >= TOOL_SIDEBAR_MIN_COLUMNS && currentView === undefined
   const transcriptWidth = Math.max(20, size.columns - (sidebarVisible ? TOOL_SIDEBAR_WIDTH : 0))
-  const transcriptLayout = useMemo(() => transcriptLayoutCache.prepare(transcript.blocks, transcriptWidth, locale),
-    [transcriptLayoutCache, transcript.blocks, transcriptWidth, locale])
+  const transcriptLayout = useMemo(() => {
+    const blocks = agentWindows?.transcript(transcript.blocks, externalSessions.current) ?? transcript.blocks
+    // Keep the original transcript for history/details and for terminals where
+    // the sidebar is hidden. Wide chat omits a tool card only once the call has
+    // succeeded, because the sidebar indexes it and its output is one keystroke
+    // away. A running call is what the reader is watching, and a failed one is
+    // the thing they must not have to go looking for — dropping every tool
+    // block regardless of state hid both, and silently defeated the terminal
+    // injection assertion that a renderer's output reaches the screen at all.
+    const shown = sidebarVisible
+      ? blocks.filter(block => block.kind !== 'tool' || block.state !== 'success')
+      : blocks
+    return transcriptLayoutCache.prepare(shown, transcriptWidth, locale)
+  }, [transcriptLayoutCache, transcript.blocks, transcriptWidth, sidebarVisible, locale, agentWindows, agentWindowRevision])
   const visible = selectTranscriptPage(transcriptLayout, bodyRows, scrollAnchor)
   scrollNavigationRef.current = { layout: transcriptLayout, page: visible }
   const activity = sidebarVisible
-    ? projectToolActivity(eventHistory.items, sessionId)
+    ? projectToolActivity(agentWindows ? eventHistory.items.filter(event => !agentWindows.separated('sessionId' in event ? event.sessionId : undefined) && !externalSessions.current.has('sessionId' in event ? event.sessionId ?? '' : '')) : eventHistory.items, sessionId)
     : undefined
   activityRowKeysRef.current = activity?.rows.map(row => row.key) ?? []
   const queuedCount = queue.list().length
@@ -1613,6 +1702,8 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             focused={toolFocus}
             selectedKey={selectedToolKey}
             locale={locale}
+            context={commandContext()}
+            clock={clock}
           />
         )}
       </Box>
@@ -1781,17 +1872,20 @@ function CommandMenu({ suggestions, view, selected, width, locale }: {
   )
 }
 
-function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en' }: {
+function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en', context, clock }: {
   activity: ToolActivityProjection
   rows: number
   droppedEvents: number
   focused: boolean
   selectedKey?: string
   locale?: Locale
+  context: TerminalCommandContext
+  clock: SessionClock
 }): React.ReactElement {
   const inner = TOOL_SIDEBAR_WIDTH - 3
-  // Reserve the header, the counter line, and the eviction note when present.
-  const notes = droppedEvents > 0 ? 3 : 2
+  // Keep the unfocused sidebar short; focus exposes the full retained list.
+  const notes = droppedEvents > 0 ? 4 : 3
+  const statsRows = Math.min(5, Math.max(0, rows - notes - 1))
   const selectedIndex = selectedKey === undefined
     ? -1
     : activity.rows.findIndex(row => row.key === selectedKey)
@@ -1799,8 +1893,8 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
   const heading = locale === 'zh-CN' ? `← 概览 / 工具${focused ? ` ${selectedIndex + 1}/${activity.rows.length}` : ''}` : focused
     ? `tools · focus ${selectedIndex < 0 ? '-' : selectedIndex + 1}/${activity.rows.length}`
     : 'tools'
-  const capacity = Math.max(1, rows - notes)
-  const start = selectedIndex < 0 ? Math.max(0, activity.rows.length - capacity) : Math.max(0, Math.min(selectedIndex, activity.rows.length - capacity))
+  const capacity = Math.max(1, Math.min(rows - notes - statsRows, focused ? Infinity : 6))
+  const start = !focused || selectedIndex < 0 ? Math.max(0, activity.rows.length - capacity) : Math.max(0, Math.min(selectedIndex, activity.rows.length - capacity))
   const visible = activity.rows.slice(start, start + capacity)
   return (
     <Box flexDirection="column" flexShrink={0} width={TOOL_SIDEBAR_WIDTH} borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} paddingX={1} overflow="hidden">
@@ -1810,21 +1904,24 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
       {visible.map(row => (
         <Box key={row.key} flexShrink={0}>
           <Text
-            color={activityColor(row.state)}
+            color={row.state === 'success' ? undefined : activityColor(row.state)}
+            dimColor={row.state === 'success' && row.key !== selectedKey}
             inverse={row.key === selectedKey}
             wrap="truncate"
-          >{formatActivityRow(row, inner)}</Text>
+          >{formatActivityRow(row, inner, true)}</Text>
         </Box>
       ))}
       <Box flexGrow={1} />
       <Box flexShrink={0}>
-        <Text dimColor wrap="truncate">{cropTerminalText(formatActivityCounts(activity.counts), inner)}</Text>
+        <Text dimColor wrap="truncate">{cropTerminalText(formatActivityCounts(activity.counts, locale), inner)}</Text>
       </Box>
       {droppedEvents > 0 && (
         <Box flexShrink={0}>
-          <Text dimColor wrap="truncate">{cropTerminalText(`${droppedEvents} older evicted`, inner)}</Text>
+          <Text dimColor wrap="truncate">{cropTerminalText(locale === 'zh-CN' ? '部分旧记录已裁剪 · /trace' : 'Older records trimmed · /trace', inner)}</Text>
         </Box>
       )}
+      {statsRows > 0 && <ToolSidebarStats context={context} clock={clock} rows={statsRows} />}
+      <Box flexShrink={0}><Text dimColor wrap="truncate">/status · /context</Text></Box>
     </Box>
   )
 }

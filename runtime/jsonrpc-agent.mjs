@@ -38,6 +38,7 @@ try {
 const patches = patchPaths.flatMap(path => loadOptionalPatches(NAME, path) ?? [])
 patches.push({ insert: [{ id: 'dshc-mode-policy', name: fileURLToPath(new URL('./mode-policy.mjs', import.meta.url)) }] })
 patches.push({ insert: [{ id: 'dshc-interaction', name: fileURLToPath(new URL('./interaction.mjs', import.meta.url)) }] })
+patches.push({ insert: [{ id: 'dshc-steering', name: fileURLToPath(new URL('./steering.mjs', import.meta.url)) }] })
 const ctx = await boot(
   NAME,
   configPath,

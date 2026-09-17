@@ -7,7 +7,7 @@ alpha.10 package does not contain these changes.
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: `0.1.0-alpha.12` GitHub prerelease, extending the M7 public-alpha baseline.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full bundled Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
+**Status: `0.1.0-alpha.13` local build; the last GitHub prerelease is alpha.12.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full bundled Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
 
 [简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 history/context/permissions](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
@@ -252,10 +252,14 @@ MIT licensed. This is an independent community project and is **not affiliated w
 
 ## alpha.12: interactive plans and terminal overview
 
-The one-line footer shows model, mode, session elapsed time and context use. `/sidebar overview` shows model/token/timing details; `/sidebar tools` shows calls. Tab focuses the sidebar, arrows navigate, and Esc returns to the editor. On narrow terminals use `/status` and `/context`.
+The one-line footer shows model, mode, session elapsed time and context use. The sidebar opens on tools by default, with no duplicate tool cards in wide chat. `/sidebar overview` shows model/token/timing details; `/sidebar tools` returns to calls. Tab focuses the sidebar, arrows navigate, Enter opens tool details, and Esc returns to the editor. Tool cards return to chat when the sidebar is hidden or the terminal is narrow; `/status` and `/context` provide model and context details.
 
 Use `/plan` to review the mode-switch confirmation or start with `--mode plan`. First-party clarification cards support choices and free text in every mode. Tab switches fields, arrows select, Enter confirms, Ctrl+B returns to the previous question, and Esc hides a draft until Enter reopens it. Skipping a question is never approval.
 
 Plan cards offer Implement, Revise and Defer. Explicit implementation starts a new coding session only after the matching planning task succeeds and reaches root idle. The confirmed plan and clarification evidence are handed off; queued prompts stay paused. This is not runtime/session resume.
 
-Use `--no-animation` or `"animation": false` in settings to disable the dshc startup wordmark and star animation. Cards and animation are interactive-terminal features; machine output and scripted input retain their interfaces. Bundled automatic compaction defaults to 80% capacity, subject to configuration overrides; Profile thresholds are not inferred. TPS is a completed root-request average including waiting/transport, not server decode speed.
+The centered warm-orange ASCII startup wordmark lights up from left to right once, with a small wordmark on narrow terminals. Runtime startup runs concurrently and enters chat as soon as ready; skipping preserves typed input. Use `--no-animation` or `"animation": false` in settings to disable the startup wordmark and star animation. Cards and animation are interactive-terminal features; machine output and scripted input retain their interfaces. Bundled automatic compaction defaults to 80% capacity, subject to configuration overrides; Profile thresholds are not inferred. TPS is a completed root-request average including waiting/transport, not server decode speed.
+
+### Windows subagent windows
+
+Interactive Windows sessions open a separate read-only PowerShell monitor for each subagent. The main transcript keeps delegation status; `/agents`, `/trace` and history retain inspection access. Closing a monitor does not cancel work. Failed/disconnected monitors fall back to inline output. Press Enter after completion to close; owner exit or session replacement stops old monitors. Use `dshc --no-subagent-windows` or `"subagentWindows": false` in settings for inline output. Other platforms, JSON, one-shot and CI do not open windows.

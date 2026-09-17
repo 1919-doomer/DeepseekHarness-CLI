@@ -1,4 +1,4 @@
-import { createServer, type Server, type ServerResponse } from 'node:http'
+import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 
 export interface Question { id: string; title: string; options: { label: string; description?: string; recommended?: boolean }[] }
@@ -19,6 +19,9 @@ export class InteractionBridge {
   private pending?: { request: InteractionRequest; response: ServerResponse; started: number }
   private waited = 0
   ready = false
+  /** Endpoint the runtime published for step-targeted injection, when mounted. */
+  private steering: { url: string; token: string } | undefined
+  get canSteer(): boolean { return this.steering !== undefined }
   get current(): InteractionRequest | undefined { return this.pending?.request }
   get waitingMs(): number { return this.waited + (this.pending ? performance.now() - this.pending.started : 0) }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -52,6 +55,12 @@ export class InteractionBridge {
           const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
           if (value['runtimeId'] !== this.id) { reject(409); return }
           if (req.url === '/ready') { this.ready = true; res.end('{}'); this.emit(); return }
+          if (req.url === '/steering') {
+            const steerUrl = value['steerUrl'], steerToken = value['steerToken']
+            if (typeof steerUrl !== 'string' || typeof steerToken !== 'string' || !steerUrl.startsWith('http://127.0.0.1:')) { reject(400); return }
+            this.steering = { url: steerUrl, token: steerToken }
+            res.end('{}'); this.emit(); return
+          }
           if (req.url !== '/request') { reject(404); return }
           const sessionId = value['sessionId'], callId = value['callId']
           if (typeof sessionId !== 'string' || !this.roots.has(sessionId) || typeof callId !== 'string' || callId.length > 256 || this.pending || this.seen.has(callId) || this.seen.size >= 1024) { reject(409); return }
@@ -80,10 +89,36 @@ export class InteractionBridge {
     this.clear()
     return true
   }
+  /**
+   * Put a message into the turn already running on `sessionId`.
+   *
+   * Lands at the next step boundary, never mid-step, and never cancels work in
+   * flight: whatever the model has already produced is kept. Rejects rather
+   * than silently downgrading to a next-turn queue, because the terminal has
+   * told the reader which of the two happened and must not be made to lie.
+   */
+  async steer(sessionId: string, text: string): Promise<void> {
+    const steering = this.steering
+    if (steering === undefined) throw new Error('This runtime does not expose steering; the message can only be queued for the next turn.')
+    await new Promise<void>((resolve, reject) => {
+      const req = httpRequest(`${steering.url}/steer`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${steering.token}`, 'content-type': 'application/json' },
+        signal: AbortSignal.timeout(5_000),
+      }, response => {
+        response.resume()
+        if (response.statusCode === 200) resolve()
+        else if (response.statusCode === 404) reject(new Error('That session is no longer running, so there is nothing to steer.'))
+        else reject(new Error(`Steering was refused (${response.statusCode}).`))
+      })
+      req.on('error', reject)
+      req.end(JSON.stringify({ runtimeId: this.id, sessionId, text }))
+    })
+  }
   cancel(): void { if (this.pending) { this.pending.response.destroy(); this.clear() } }
   private clear(): void { if (this.pending) this.waited += performance.now() - this.pending.started; this.pending = undefined; this.emit() }
   async close(): Promise<void> {
-    this.cancel(); this.roots.clear(); this.ready = false
+    this.cancel(); this.roots.clear(); this.ready = false; this.steering = undefined
     for (const finish of this.callWaiters.values()) finish()
     const server = this.server; this.server = undefined
     if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections() })
