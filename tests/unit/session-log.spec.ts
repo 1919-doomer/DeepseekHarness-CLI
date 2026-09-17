@@ -52,6 +52,29 @@ describe('session log decoding', () => {
     expect(read.lastEventType).toBe('assistant/chunk')
   })
 
+  it('does not call an aborted turn clean just because turn/end was written', () => {
+    // A runtime disposed out from under a running turn still writes turn/end.
+    // Reporting that as clean hides the exact class of failure this exists for.
+    const read = decodeSessionLog(framed(
+      line(1, 'step/end', { turn: 1, step: 24 }),
+      line(2, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } }),
+    ))
+    expect(read.endedCleanly).toBe(false)
+    expect(read.outcome).toBe('aborted (disposed)')
+  })
+
+  it('treats a completed turn as completed', () => {
+    const read = decodeSessionLog(framed(line(1, 'turn/end', { turn: 1, reason: { kind: 'completed' } })))
+    expect(read.endedCleanly).toBe(true)
+    expect(read.outcome).toBeUndefined()
+  })
+
+  it('degrades rather than inventing a verdict on an unfamiliar shape', () => {
+    const read = decodeSessionLog(framed(line(1, 'turn/end', { turn: 1, reason: 'a string upstream never sent before' })))
+    expect(read.endedCleanly).toBe(true)
+    expect(read.outcome).toBeUndefined()
+  })
+
   it('counts a half-written record instead of throwing on it', () => {
     const read = decodeSessionLog(Buffer.from(`${line(1, 'turn/end')}{"event":{"seq":2,`, 'utf8'))
     expect(read.truncated).toBe(1)

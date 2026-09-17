@@ -42,6 +42,8 @@ export interface SessionLogRead {
   /** Whether the log ends on a completed turn rather than stopping mid-flight. */
   endedCleanly: boolean
   lastEventType?: string
+  /** Why the final turn ended, when it was not simple completion. */
+  outcome?: string
 }
 
 /** Decode a whole log. Plain JSONL is accepted too, since compression is configurable. */
@@ -60,15 +62,35 @@ export function decodeSessionLog(raw: Buffer): SessionLogRead {
       truncated += 1
     }
   }
-  const lastEventType = events.at(-1)?.type
+  const last = events.at(-1)
+  const lastEventType = last?.type
+  const outcome = describeOutcome(last)
   return {
     events,
     truncated,
     // A turn that ended wrote `turn/end`. Stopping on anything else — a chunk,
     // a tool call — is the signature of a process that died rather than exited.
-    endedCleanly: lastEventType === undefined || TERMINAL_EVENTS.has(lastEventType),
+    // But `turn/end` alone is not success: a turn aborted because the runtime
+    // was disposed also writes one, and reporting that as clean hides exactly
+    // the class of failure this command exists to surface.
+    endedCleanly: lastEventType === undefined || (TERMINAL_EVENTS.has(lastEventType) && outcome === undefined),
     ...(lastEventType === undefined ? {} : { lastEventType }),
+    ...(outcome === undefined ? {} : { outcome }),
   }
+}
+
+/**
+ * Why a final `turn/end` ended, when it ended for a reason worth naming.
+ *
+ * Read defensively: the shape is upstream's, so an unexpected one degrades to
+ * `undefined` rather than inventing a verdict.
+ */
+function describeOutcome(event: SessionLogEvent | undefined): string | undefined {
+  if (event?.type !== 'turn/end') return undefined
+  const reason = (event.data as { reason?: { kind?: unknown; reason?: { kind?: unknown } } } | undefined)?.reason
+  if (typeof reason?.kind !== 'string' || reason.kind === 'completed') return undefined
+  const inner = reason.reason?.kind
+  return typeof inner === 'string' ? `${reason.kind} (${inner})` : reason.kind
 }
 
 const TERMINAL_EVENTS = new Set(['turn/end', 'session/end', 'session/closed'])
