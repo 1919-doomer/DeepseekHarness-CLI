@@ -27,6 +27,23 @@ export async function apply(ctx) {
     parameters: { type: 'object', additionalProperties: false, required: ['questions'], properties: { questions: { type: 'array', minItems: 1, maxItems: 3, items: question } } }, kind: 'questions' }]
   if (process.env.DSHC_WORK_MODE === 'plan') definitions.push({ name: 'present_plan', description: 'Present a complete plan for review. The user may revise, defer, or explicitly choose implementation. Remain read-only and end your turn after implementation is selected; the terminal performs the mode handoff.',
     parameters: { type: 'object', additionalProperties: false, required: ['title', 'text'], properties: { title: { type: 'string' }, text: { type: 'string' } } }, kind: 'plan' })
+  // Declared up front and never waited on: the terminal shows it beside the
+  // work while the work happens. A blocking call here would turn "say what you
+  // are about to do" into "stop and ask", which is a different feature.
+  if (process.env.DSHC_WORK_MODE !== 'plan') ctx.effect(() => ctx.tools.register({
+    name: 'outline_plan',
+    description: 'State the steps you are about to take, before taking them. Call once at the start of a task that will take more than one step. Two to six short steps, each a few words. Returns immediately; it does not ask the user anything.',
+    parameters: { type: 'object', additionalProperties: false, required: ['steps'], properties: {
+      steps: { type: 'array', minItems: 2, maxItems: 6, items: { type: 'string' } },
+    } },
+    output: { schema: { type: 'object', additionalProperties: true }, render: () => [{ type: 'text', text: 'Plan shown to the user.' }] },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('outline_plan requires a root agent')
+      await post('/plan', { runtimeId, steps: args.steps }, exec.signal)
+      return { ok: true }
+    },
+  }))
+
   for (const { kind, ...definition } of definitions) ctx.effect(() => ctx.tools.register({ ...definition,
     output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {

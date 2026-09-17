@@ -349,6 +349,9 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [sessionId, setSessionId] = useState(props.initialSessionId)
   const [clock] = useState(() => { const value = new SessionClock(); value.reset(props.initialSessionId); return value })
   const [interaction, setInteraction] = useState<InteractionRequest | undefined>()
+  // Steps the model committed to before starting. Shown beside the work rather
+  // than scrolling away with the rest of the transcript.
+  const [plan, setPlan] = useState<readonly string[] | undefined>()
   const interactionDraft = useMemo(() => interaction ? createInteractionDraft(interaction) : undefined, [interaction])
   const clarificationRef = useRef<unknown[]>([])
   const [interactionHidden, setInteractionHidden] = useState(false)
@@ -481,7 +484,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     const changed = (): void => {
       const request = bridge?.current
       if (request) { confirmedPlan.current = undefined; interactionHiddenRef.current = false; setInteractionHidden(false) }
-      setInteraction(request); clock.wait(request !== undefined)
+      setInteraction(request); setPlan(bridge?.plan); clock.wait(request !== undefined)
     }
     changed()
     return bridge?.subscribe(changed)
@@ -1708,6 +1711,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             locale={locale}
             context={commandContext()}
             clock={clock}
+            plan={plan}
           />
         )}
       </Box>
@@ -1876,7 +1880,7 @@ function CommandMenu({ suggestions, view, selected, width, locale }: {
   )
 }
 
-function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en', context, clock }: {
+function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en', context, clock, plan }: {
   activity: ToolActivityProjection
   rows: number
   droppedEvents: number
@@ -1885,11 +1889,15 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
   locale?: Locale
   context: TerminalCommandContext
   clock: SessionClock
+  plan?: readonly string[] | undefined
 }): React.ReactElement {
   const inner = TOOL_SIDEBAR_WIDTH - 3
   // Keep the unfocused sidebar short; focus exposes the full retained list.
   const notes = droppedEvents > 0 ? 4 : 3
-  const statsRows = Math.min(5, Math.max(0, rows - notes - 1))
+  // The plan takes at most a third of the column: it is context for the work,
+  // not a replacement for watching the work.
+  const planRows = plan === undefined ? 0 : Math.min(plan.length + 1, Math.max(0, Math.floor(rows / 3)))
+  const statsRows = Math.min(5, Math.max(0, rows - notes - planRows - 1))
   const selectedIndex = selectedKey === undefined
     ? -1
     : activity.rows.findIndex(row => row.key === selectedKey)
@@ -1897,7 +1905,7 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
   const heading = locale === 'zh-CN' ? `← 概览 / 工具${focused ? ` ${selectedIndex + 1}/${activity.rows.length}` : ''}` : focused
     ? `tools · focus ${selectedIndex < 0 ? '-' : selectedIndex + 1}/${activity.rows.length}`
     : 'tools'
-  const capacity = Math.max(1, Math.min(rows - notes - statsRows, focused ? Infinity : 6))
+  const capacity = Math.max(1, Math.min(rows - notes - statsRows - planRows, focused ? Infinity : 6))
   const start = !focused || selectedIndex < 0 ? Math.max(0, activity.rows.length - capacity) : Math.max(0, Math.min(selectedIndex, activity.rows.length - capacity))
   const visible = activity.rows.slice(start, start + capacity)
   return (
@@ -1905,6 +1913,14 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
       <Box flexShrink={0}>
         <Text bold={focused} color={focused ? 'cyan' : undefined} wrap="truncate">{cropTerminalText(heading, inner)}</Text>
       </Box>
+      {planRows > 0 && plan !== undefined && (
+        <Box flexDirection="column" flexShrink={0}>
+          <Text dimColor wrap="truncate">{locale === 'zh-CN' ? '计划' : 'plan'}</Text>
+          {plan.slice(0, planRows - 1).map((step, index) => (
+            <Text key={index} wrap="truncate">{cropTerminalText(`${index + 1} ${sanitizeTerminalText(step)}`, inner)}</Text>
+          ))}
+        </Box>
+      )}
       {visible.map(row => (
         <Box key={row.key} flexShrink={0}>
           <Text
