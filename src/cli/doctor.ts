@@ -304,6 +304,17 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   }
 
   networkFacts(childEnv, workspace, findings)
+
+  // Which build is actually running. A PowerShell profile function, a global
+  // npm install and a source checkout can all answer to `dshc`, and when they
+  // disagree every other diagnosis is built on the wrong code.
+  findings.push({
+    id: 'binary',
+    status: 'PASS',
+    category: 'environment',
+    summary: `Running dshc ${DSHC_VERSION} from ${safe(process.argv[1] ?? 'an unknown entry point')}.`,
+    detail: `node ${process.execPath}`,
+  })
   pluginRegistryFacts(readNetworkFacts(childEnv, workspace), findings)
 
   findings.push({

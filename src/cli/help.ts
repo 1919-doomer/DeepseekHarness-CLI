@@ -10,6 +10,7 @@ export function cliHelp(locale: Locale): string {
   dshc [选项] <提问>                  执行一次后退出
   dshc run [选项] <提问>              显式单次执行
   dshc doctor [选项]                  检查环境与运行时，不请求模型
+  dshc logs [会话] [--type 事件]      查看会话日志；标出异常中断的会话
   echo "提问" | dshc                  从标准输入读取一次提问
   dshc --interactive                  也支持管道中的逐行脚本
 
