@@ -34,7 +34,7 @@ export async function renderSessionLogs(options: LogsOptions): Promise<{ text: s
         modified: session.modified,
         bytes: session.bytes,
         events: read?.events.length ?? 0,
-        ended: read === undefined ? 'unreadable' : read.endedCleanly ? 'clean' : `CUT at ${read.lastEventType ?? 'nothing'}`,
+        ended: read === undefined ? 'unreadable' : read.endedCleanly ? 'clean' : read.outcome ?? `CUT at ${read.lastEventType ?? 'nothing'}`,
         truncated: read?.truncated ?? 0,
       }
     }))
@@ -71,7 +71,7 @@ export async function renderSessionLogs(options: LogsOptions): Promise<{ text: s
 
   const lines = [
     `${safe(session.id)}  ${safe(session.workspace)}`,
-    `${read.events.length} events · ended: ${read.endedCleanly ? 'clean' : `CUT at ${safe(read.lastEventType ?? 'nothing')}`}`,
+    `${read.events.length} events · ended: ${read.endedCleanly ? 'clean' : safe(read.outcome ?? `CUT at ${read.lastEventType ?? 'nothing'}`)}`,
     ...(read.truncated > 0 ? [`${read.truncated} unparseable line(s) — a write cut off mid-record`] : []),
     '',
   ]
