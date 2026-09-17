@@ -34,7 +34,7 @@ async function mountedRuntime(options: { agent?: { steer: (message: SteeredMessa
   }
 
   // `apply` builds its own server per call, so one module instance is enough.
-  const plugin = await import('../../runtime/steering.mjs') as { apply: (ctx: unknown) => Promise<void> }
+  const plugin = await import('../../runtime/steering.mjs')
   await plugin.apply(ctx)
   disposers.push(() => { for (const stop of effects) stop() })
   return { bridge, steered }
