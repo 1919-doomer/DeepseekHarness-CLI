@@ -85,6 +85,8 @@ export interface RuntimeSelection extends Partial<Preferences> {
   maxTokens?: number
   /** Composition file to launch with; absent keeps the current one. */
   runtimeConfig?: string
+  /** Steps already approved, carried into the session that implements them. */
+  approvedPlan?: readonly string[]
 }
 
 export interface RuntimeRestart {
@@ -781,7 +783,15 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     commandRunningRef.current = true; setCommandBusy(true)
     try {
       if (!props.restart) throw new Error('Runtime restart is unavailable')
-      const next = await props.restart({ ...preferences, mode: 'code' }, props.shutdownSignal)
+      const next = await props.restart({
+        ...preferences,
+        mode: 'code',
+        // The plan was just reviewed and approved through present_plan; asking
+        // the implementing session to declare one again would put the same
+        // question twice. outline_plan is not registered in plan mode, so this
+        // comes from the approved request rather than from the sidebar state.
+        approvedPlan: [approved.request.title],
+      }, props.shutdownSignal)
       if (props.shutdownSignal.aborted || approved.runtime !== props.runtimeRef.current || approved.request.sessionId !== sessionRef.current) { await props.trackRuntimeClose(next.runtime); return }
       const fresh = createSessionId()
       props.runtimeRef.current = next.runtime; sessionRef.current = fresh

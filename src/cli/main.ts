@@ -145,8 +145,10 @@ function createRuntime(
   options: CliOptions,
   composition: ResolvedComposition,
   moduleBasePath?: string,
+  env?: NodeJS.ProcessEnv,
 ): HarnessRuntime {
   return new HarnessRuntime({
+    ...(env === undefined ? {} : { env }),
     preferences: pickPreferences(options),
     preferenceSources: options.preferenceSources,
     workspace: options.workspace,
@@ -312,7 +314,12 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
             }
             validateModeOptions(nextOptions)
             const nextResolved = await resolveBackendComposition(nextOptions)
-            const next = createRuntime(nextOptions, nextResolved)
+            // A plan the person already approved carries into the code session
+            // it hands off to, so the gate does not demand it be restated.
+            const next = createRuntime(nextOptions, nextResolved, undefined,
+              selection.approvedPlan === undefined || selection.approvedPlan.length === 0
+                ? undefined
+                : { DSHC_APPROVED_PLAN: JSON.stringify(selection.approvedPlan.slice(0, 8)) })
             next.enableInteraction()
             try {
               const metadata = await startRuntimeWithAbort(next, signal)

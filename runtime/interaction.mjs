@@ -30,7 +30,9 @@ export async function apply(ctx) {
   // Declared up front and never waited on: the terminal shows it beside the
   // work while the work happens. A blocking call here would turn "say what you
   // are about to do" into "stop and ask", which is a different feature.
-  if (process.env.DSHC_WORK_MODE !== 'plan') ctx.effect(() => ctx.tools.register({
+  if (process.env.DSHC_WORK_MODE !== 'plan') {
+    planGate.enable()
+    ctx.effect(() => ctx.tools.register({
     name: 'outline_plan',
     description: 'State the steps you are about to take, before taking them. Call once at the start of a task that will take more than one step. Two to six short steps, each a few words. Returns immediately; it does not ask the user anything.',
     parameters: { type: 'object', additionalProperties: false, required: ['steps'], properties: {
@@ -40,9 +42,13 @@ export async function apply(ctx) {
     async execute(args, exec) {
       if (!exec.agent) throw new Error('outline_plan requires a root agent')
       await post('/plan', { runtimeId, steps: args.steps }, exec.signal)
+      // Only after the terminal has the plan: a declaration the person cannot
+      // see is not the thing the gate is asking for.
+      planGate.declare(exec.agent.id)
       return { ok: true }
     },
-  }))
+    }))
+  }
 
   for (const { kind, ...definition } of definitions) ctx.effect(() => ctx.tools.register({ ...definition,
     output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
@@ -53,3 +59,4 @@ export async function apply(ctx) {
   }))
 }
 import { request as httpRequest } from 'node:http'
+import { planGate } from './plan-gate.mjs'
