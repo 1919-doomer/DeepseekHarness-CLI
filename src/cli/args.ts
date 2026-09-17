@@ -75,6 +75,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       continue
     }
     if (arg === '--no-animation') { options.animation = false; index++; continue }
+    if (arg === '--no-subagent-windows') { options.subagentWindows = false; index++; continue }
     if (arg === '--interactive') {
       options.interactive = true
       index++
@@ -189,6 +190,7 @@ Options:
       --json                      Emit machine-readable one-shot/doctor output
       --debug                     Show compatibility and unknown-event diagnostics
       --no-animation              Disable startup and status animations
+      --no-subagent-windows       Keep Windows subagent output in this terminal
   -h, --help                      Show help
   -v, --version                   Show version
 

@@ -186,12 +186,12 @@ export function activityGlyph(state: ToolActivityState): string {
  * One call is one row, hard-cropped on a grapheme boundary. Rows never wrap, so
  * every layout question stays on the transcript side of the split.
  */
-export function formatActivityRow(row: ToolActivityRow, width: number): string {
+export function formatActivityRow(row: ToolActivityRow, width: number, compact = false): string {
   const indent = row.depth <= MAX_ACTIVITY_DEPTH
     ? '  '.repeat(row.depth)
     : `  +${row.depth} `
   const mark = row.orphaned ? '?' : activityGlyph(row.state)
-  const elapsed = row.elapsedMs === undefined ? '' : ` ${formatActivityElapsed(row.elapsedMs)}`
+  const elapsed = compact || row.elapsedMs === undefined ? '' : ` ${formatActivityElapsed(row.elapsedMs)}`
   return cropTerminalText(`${indent}${mark} ${row.label}${elapsed}`, Math.max(4, width))
 }
 
@@ -204,7 +204,13 @@ export function formatActivityElapsed(ms: number): string {
  * there are any, so the parts always reconcile with the total instead of
  * silently leaving some calls unaccounted for.
  */
-export function formatActivityCounts(counts: ToolActivityCounts): string {
+export function formatActivityCounts(counts: ToolActivityCounts, locale?: 'en' | 'zh-CN'): string {
+  if (locale !== undefined) {
+    const zh = locale === 'zh-CN'
+    return [`${counts.total} ${zh ? '次调用' : 'calls'}`,
+      ...(counts.running ? [`${counts.running} ${zh ? '进行中' : 'running'}`] : []),
+      ...(counts.error ? [`${counts.error} ${zh ? '失败' : 'failed'}`] : [])].join(' · ')
+  }
   const parts = [`${counts.total} calls`, `${counts.success} ok`, `${counts.error} failed`]
   if (counts.running > 0) parts.push(`${counts.running} running`)
   return parts.join(' · ')

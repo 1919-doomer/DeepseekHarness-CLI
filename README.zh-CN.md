@@ -2,7 +2,7 @@
 
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：`0.1.0-alpha.12` GitHub 预发布版本，在 M7 public alpha 基础上继续扩展。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。自带运行时的完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
+**当前状态：`0.1.0-alpha.13` 本地构建，尚未发布；最近的 GitHub 预发布版本为 alpha.12。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。自带运行时的完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
 
 [English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 历史/上下文/权限](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 
@@ -230,12 +230,20 @@ MIT License。本项目是独立社区项目，**不隶属于、不代表、也�
 
 ## alpha.12：交互式规划与终端概览
 
-底栏显示模型、模式、会话总时长和上下文占用。右侧默认是概览；输入 `/sidebar tools` 查看工具列表，`/sidebar overview` 返回概览。Tab 聚焦侧栏后，左右键切页、上下键滚动，Esc 返回输入。窄屏使用 `/status` 和 `/context` 查看详情。
+底栏显示模型、模式、会话总时长和上下文占用。右侧默认显示工具调用，聊天正文不重复展示工具卡片；输入 `/sidebar overview` 查看概览，`/sidebar tools` 返回工具列表。Tab 聚焦侧栏后，左右键切页、上下键选择，Enter 查看工具详情，Esc 返回输入。窄屏或关闭侧栏时，工具卡片回到正文；模型与上下文详情可通过 `/status` 和 `/context` 查看。
 
 使用 `/plan` 查看进入只读规划的确认提示，或启动时传入 `--mode plan`。Agent 可以在所有模式提出选择题；Tab 切换选项、补充输入与确认按钮，方向键选择，Enter 确认，Ctrl+B 返回上一题。Esc 收起问题并保留草稿，Enter 重新打开；“跳过本组问题”会明确告诉 Agent 尚未获得答案。
 
 计划卡片支持“开始实施 / 继续修改 / 暂不实施”。选择开始实施后，只有当前规划任务成功并进入空闲状态，才会创建新的编码会话并交接确认的计划。旧队列保持暂停；这不是恢复原 runtime。
 
-`--no-animation` 或设置文件中的 `"animation": false` 可关闭大型 dshc 字标开屏和星芒动画。仅交互终端启用动画与提问卡片，JSON 和脚本输入的接口保持不变。
+工具侧栏下方保留上下文、累计输入/输出 Token、TPS 请求均速、缓存命中、本轮耗时及 `/status · /context` 提示；终端高度不足时缩减统计行数，完整数据仍可从概览或命令查看。
+
+开屏使用居中的暖橙色 ASCII 字标，高光从左向右点亮一轮后静止，窄屏自动切换为小字标。动画与 runtime 同时启动，准备完成立即进入聊天；按键跳过会保留输入。`--no-animation` 或设置文件中的 `"animation": false` 可关闭开屏和星芒动画。仅交互终端启用动画与提问卡片，JSON 和脚本输入的接口保持不变。
 
 自带 runtime 已配置自动压缩，默认阈值为上下文容量的 80%；自定义配置和 Profile 可能不同。`/context` 与概览区分配置默认值和实际压缩事件。TPS 是最近完成的根会话请求均速，包含等待及传输；系统、历史、工具各自的 Token 数未公开时显示未知。
+
+### Windows 子 Agent 独立窗口
+
+交互终端默认把每个子 Agent 的工具操作和输出送到独立 PowerShell 窗口。主窗口保留委派状态；`/agents`、`/trace` 和历史仍可查看完整信息。监视窗口只读，关闭它不会取消任务；启动失败或连接中断会恢复主窗口显示。任务完成后按 Enter 关闭监视窗口，主会话退出或切换后旧窗口停止更新。
+
+使用 `dshc --no-subagent-windows` 或在设置文件中配置 `"subagentWindows": false` 可恢复单窗口。非 Windows、JSON、one-shot 和 CI 不自动开窗。

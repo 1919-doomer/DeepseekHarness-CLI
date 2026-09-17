@@ -104,6 +104,11 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       preferences: { locale: 'en', animation: true }, interactive: true, useAlternateScreen: false })
     try {
       await waitFor(() => input.isRaw)
+      await waitFor(() => readOutput().includes('Starting · any key to skip'))
+      output.columns = 30; output.rows = 12; output.emit('resize')
+      await delay(80)
+      expect(readOutput()).toContain('dshc')
+      output.columns = 96; output.rows = 28; output.emit('resize')
       input.write('启动草稿😀'); await delay(50); unlock()
       await waitFor(() => readOutput().includes('deepseek-harness-sdk-runtime/0.0.1')); await delay(80)
       input.write('\r'); await waitForTurn(readOutput, 1)
@@ -470,13 +475,20 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       await submitLine(input, 'drive one turn')
       await waitForTurn(readOutput, 1)
 
-      // The sidebar is on by default and projects the same activity the
-      // transcript shows, one row per call with its outcome.
-      await submitLine(input, '/sidebar tools')
+      // Tools are visible by default; full tool bodies stay out of wide chat.
       await waitFor(() => readOutput().includes('calls'), 5_000, 'sidebar counters')
       const wide = readOutput()
-      expect(wide).toMatch(/\d+ calls · \d+ ok · \d+ failed/)
+      expect(wide).toMatch(/\d+ calls/)
       expect(wide).toContain('child-read')
+      for (const label of ['Context:', 'Total in', 'TPS request average:', 'Cache hit:', 'Turn elapsed:', '/status · /context']) {
+        expect(wide).toContain(label)
+      }
+      expect(wide).not.toContain('README content')
+      expect(wide).not.toContain('child result')
+
+      await submitLine(input, '/sidebar overview')
+      await waitFor(() => readOutput().includes('Provider:'), 5_000, 'overview available')
+      await submitLine(input, '/sidebar tools')
 
       // Typing redraws the frame on every keystroke, so only the newest frame
       // says whether the sidebar is currently shown.
@@ -486,7 +498,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       // sidebar appears in the output they produce.
       await submitLine(input, '/tools')
       await delay(250)
-      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
+      const hidden = await renderedAfterTick(input, readOutput)
+      expect(hidden).not.toContain('calls')
+      expect(hidden).toContain('child result')
 
       await submitLine(input, '/tools')
       await delay(250)
@@ -497,7 +511,9 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       output.columns = 70
       output.emit('resize')
       await delay(250)
-      expect(await renderedAfterTick(input, readOutput)).not.toContain('calls')
+      const narrow = await renderedAfterTick(input, readOutput)
+      expect(narrow).not.toContain('calls')
+      expect(narrow).toContain('child result')
 
       await submitLine(input, '/exit')
       await product

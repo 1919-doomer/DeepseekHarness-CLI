@@ -4,6 +4,16 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
+## 0.1.0-alpha.13 — 2026-09-14
+
+Local build; not yet published to GitHub or npm.
+
+- Refine the centered startup wordmark with a single warm-orange highlight sweep, responsive sizing and preserved input when skipped.
+- Restore tool calls to the default right sidebar, omit duplicate cards in wide chat, and retain inline cards when the sidebar is hidden or the terminal is narrow.
+- Simplify overview statistics and tool activity rows while keeping full details available.
+- Show Windows subagent activity in separate read-only PowerShell windows with colored borders, formatted tool output and inline fallback when a window cannot connect.
+- Add `--no-subagent-windows` and preserve full event history when child output is shown separately.
+
 ## 0.1.0-alpha.12 — 2026-09-13
 
 GitHub prerelease; alpha.11 remained local and was not published. This release does not update the npm dist-tags.
