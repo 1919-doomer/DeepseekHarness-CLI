@@ -3,7 +3,7 @@ import { validatePreferences, type Preferences, type ResolvedPreferences } from 
 
 export interface CliOptions extends Partial<Preferences> {
   preferenceSources?: ResolvedPreferences['sources']
-  command: 'auto' | 'run' | 'doctor'
+  command: 'auto' | 'run' | 'doctor' | 'logs'
   prompt?: string
   workspace?: string
   provider?: string
@@ -13,6 +13,8 @@ export interface CliOptions extends Partial<Preferences> {
   activityTimeoutMs?: number
   requestTimeoutMs?: number
   runtimeConfig?: string
+  /** `logs --type <event/type>` filter. */
+  eventType?: string
   dev: boolean
   interactive: boolean
   json: boolean
@@ -43,7 +45,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
   if (argv[index] === '--' && !(argv[index + 1] ?? '-').startsWith('-')) index++
 
   const subcommand = argv[index]
-  if (subcommand === 'run' || subcommand === 'doctor') {
+  if (subcommand === 'run' || subcommand === 'doctor' || subcommand === 'logs') {
     options.command = subcommand
     index++
   }
@@ -54,6 +56,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       '--locale': 'locale', '--reply-language': 'replyLanguage', '--mode': 'mode', '--style': 'style',
       '--runtime': 'runtime', '--dsh-profile': 'dshProfile', '--reasoning-effort': 'reasoningEffort',
     }
+    if (arg === '--type') { options.eventType = requireValue(argv, ++index, arg); index++; continue }
     const preference = arg === undefined ? undefined : preferenceFlags[arg]
     if (preference !== undefined) {
       Object.assign(options, validatePreferences({ [preference]: requireValue(argv, ++index, arg!) }))

@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 /**
  * Last-resort terminal restoration and crash reporting.
  *
@@ -73,6 +76,13 @@ export function describeCrash(reason: unknown, locale: 'en' | 'zh-CN' = 'en'): s
   ].join('\n')
 }
 
+export interface CrashReportTarget {
+  /** Directory the report is written into. */
+  directory: string
+  /** Injected for tests; production writes to disk. */
+  write?: (path: string, contents: string) => void
+}
+
 export interface CrashGuardOptions {
   /** Read at crash time, because `alternateEntered` changes during startup. */
   terminal: () => CrashTerminal
@@ -80,6 +90,28 @@ export interface CrashGuardOptions {
   locale?: 'en' | 'zh-CN'
   /** Injected for tests. Production always ends the process. */
   exit?: (code: number) => void
+  /** Where to leave a durable copy, since a closed terminal keeps nothing. */
+  report?: CrashReportTarget
+}
+
+/**
+ * Write the report somewhere it survives the terminal.
+ *
+ * A crash report only on screen is lost the moment the window is closed, which
+ * is exactly when someone decides to go looking for it. Returns the path so the
+ * on-screen message can name it, or `undefined` when nothing could be written —
+ * failing to save a crash report must never replace the crash.
+ */
+export function saveCrashReport(target: CrashReportTarget, contents: string, now = new Date()): string | undefined {
+  const stamp = now.toISOString().replace(/[:.]/g, '-')
+  const path = join(target.directory, `dshc-crash-${stamp}.log`)
+  try {
+    mkdirSync(target.directory, { recursive: true })
+    ;(target.write ?? ((at, body) => { writeFileSync(at, body, { mode: 0o600 }) }))(path, contents)
+    return path
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -96,7 +128,14 @@ export function installCrashGuard(options: CrashGuardOptions): () => void {
     handled = true
     try {
       restoreTerminalForCrash(options.terminal())
-      options.stderr.write(describeCrash(reason, options.locale ?? 'en'))
+      const report = describeCrash(reason, options.locale ?? 'en')
+      const saved = options.report === undefined ? undefined : saveCrashReport(options.report, report)
+      options.stderr.write(report)
+      if (saved !== undefined) {
+        options.stderr.write(options.locale === 'zh-CN'
+          ? `已保存一份到 ${saved}\n`
+          : `A copy was saved to ${saved}\n`)
+      }
     } catch { /* reporting failed; exiting is still correct */ }
     (options.exit ?? process.exit.bind(process))(1)
   }

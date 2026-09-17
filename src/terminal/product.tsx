@@ -5,6 +5,7 @@ import { OverviewSidebar, ToolSidebarStats } from './overview.js'
 import { AgentWindows } from './agent-windows.js'
 import { startWithSplash } from './splash.js'
 import { installCrashGuard } from './crash-guard.js'
+import { defaultSessionRoot } from '../upstream/session-log.js'
 import { SessionClock } from '../session/session-clock.js'
 import { InteractionCard, createInteractionDraft, type InteractionCardHandle } from './interaction-card.js'
 import type { InteractionRequest, InteractionAnswer } from '../upstream/interaction.js'
@@ -219,6 +220,9 @@ export async function runTerminalProduct(
     terminal: () => ({ stdout, alternateEntered, stdin }),
     stderr,
     locale: resolveLocale(options.preferences?.locale),
+    // Beside the session logs, because that is where someone already looks
+    // when they want to know what happened.
+    report: { directory: defaultSessionRoot(process.env) },
   })
 
   try {

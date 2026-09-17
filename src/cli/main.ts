@@ -24,6 +24,8 @@ import { HistoryWorkbench } from '../plugins/history.js'
 import { parseCliArgs, type CliOptions } from './args.js'
 import { cliHelp } from './help.js'
 import { collectDoctorReport, doctorExitCode, renderDoctorHuman, shellTempRootFacts, type DoctorFinding } from './doctor.js'
+import { renderSessionLogs } from './logs.js'
+import { defaultSessionRoot } from '../upstream/session-log.js'
 import { runInteractiveLoop } from './interactive.js'
 import { DEV_MODE_WARNING } from '../workbench/contract.js'
 import { pickPreferences, preferencePaths, resolvePreferences, savePreferences } from '../preferences.js'
@@ -54,6 +56,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0
   }
   if (options.command === 'doctor') return runDoctorCommand(options)
+  if (options.command === 'logs') return runLogsCommand(options)
 
   if (shouldRunInteractive(options)) return runInteractiveMode(options)
 
@@ -179,6 +182,23 @@ async function startRuntimeWithAbort(
     return metadata
   } finally {
     signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+async function runLogsCommand(options: CliOptions): Promise<number> {
+  try {
+    const { text, exitCode } = await renderSessionLogs({
+      root: defaultSessionRoot(process.env),
+      // The positional selects a session; without one this lists recent ones.
+      selector: options.prompt,
+      eventTypeFilter: options.eventType,
+      json: options.json,
+    })
+    process.stdout.write(text)
+    return exitCode
+  } catch (error) {
+    writeError(error)
+    return 1
   }
 }
 
