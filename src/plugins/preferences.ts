@@ -11,8 +11,9 @@ export function preferencesPlugin(): TerminalPluginSpec {
       return { kind: 'sidebar', page: args[0] as 'overview' | 'tools' | undefined }
     } }, { name: 'plan', summary: 'Enter read-only interactive planning', usage: '/plan [--yes]', execute(context, args) {
       if (args.some(arg => arg !== '--yes')) throw new Error('usage: /plan [--yes]')
-      if (!args.includes('--yes')) return { kind: 'message', title: 'plan', text: restartPreview(context.locale ?? 'en', 'mode', 'plan') }
-      return { kind: 'restart-runtime', selection: { mode: 'plan' }, summary: 'plan' }
+      // No confirmation needed: switching in place keeps the conversation.
+      // --yes only matters as consent to a restart if in-place switching fails.
+      return { kind: 'switch-mode', mode: 'plan', allowRestart: args.includes('--yes') }
     } }, { name: 'profile', summary: 'Select bundled runtime or an official SDK Profile', usage: '/profile <bundled|name> [--yes]',
       execute(context: TerminalCommandContext, args: readonly string[]): TerminalCommandOutcome {
         const values = args.filter(arg => arg !== '--yes')
@@ -37,6 +38,9 @@ export function preferencesPlugin(): TerminalPluginSpec {
         if (values.length !== 1) throw new Error(`usage: /${name} <value>`)
         const patch = validatePreferences({ [field]: values[0] })
         if (field === 'locale' || field === 'replyLanguage') return { kind: 'preferences', patch }
+        if (field === 'mode' && patch.mode !== undefined) {
+          return { kind: 'switch-mode', mode: patch.mode, allowRestart: args.includes('--yes') }
+        }
         if (!args.includes('--yes')) return { kind: 'message', title: name, text: restartPreview(locale, name, values[0]!) }
         return { kind: 'restart-runtime', selection: patch, summary: `${name}: ${values[0]}` }
       },

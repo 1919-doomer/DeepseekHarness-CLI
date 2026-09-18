@@ -134,7 +134,7 @@ export class InteractionBridge {
    * cannot do it, so the caller can fall back to a restart it has asked about
    * rather than silently losing the session.
    */
-  async setMode(mode: string): Promise<boolean> {
+  async setMode(mode: string, options: { seedPlanFor?: string } = {}): Promise<boolean> {
     const steering = this.steering
     if (steering === undefined) throw new Error('This runtime cannot switch modes in place; switching requires a restart and a new session.')
     return await new Promise<boolean>((resolve, reject) => {
@@ -152,7 +152,7 @@ export class InteractionBridge {
         })
       })
       req.on('error', reject)
-      req.end(JSON.stringify({ runtimeId: this.id, mode }))
+      req.end(JSON.stringify({ runtimeId: this.id, mode, ...(options.seedPlanFor === undefined ? {} : { seedPlanFor: options.seedPlanFor }) }))
     })
   }
   cancel(): void { if (this.pending) { this.pending.response.destroy(); this.clear() } }

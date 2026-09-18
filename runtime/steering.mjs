@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { modeState, WORK_MODES } from './mode-state.mjs'
+import { planGate } from './plan-gate.mjs'
 
 /**
  * Steering: put a message into the running turn rather than the next one.
@@ -55,6 +56,12 @@ export async function apply(ctx) {
           // It is now a value the live policy reads; see mode-state.mjs.
           if (typeof body.mode !== 'string' || !WORK_MODES.includes(body.mode)) { reject(400); return }
           const changed = modeState.set(body.mode)
+          // A plan approved in plan mode covers the turn that implements it, so
+          // switching to code for a handoff must not demand it be restated. The
+          // seed survives exactly one turn start, then the gate is back to normal.
+          if (typeof body.seedPlanFor === 'string' && body.seedPlanFor.length > 0 && body.seedPlanFor.length <= 256) {
+            planGate.seed(body.seedPlanFor)
+          }
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ changed, mode: modeState.get() }))
           return

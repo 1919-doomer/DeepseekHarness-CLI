@@ -1,7 +1,7 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import type { SessionUsage } from '../session/usage.js'
 import type { HarnessRuntimeMetadata } from '../upstream/runtime.js'
-import type { Preferences } from '../preferences.js'
+import type { Preferences, WorkMode } from '../preferences.js'
 import type { Locale } from '../i18n.js'
 import type { ModelTelemetry } from '../session/model-telemetry.js'
 import type { SessionTiming, CompactionStats } from '../session/session-clock.js'
@@ -37,6 +37,12 @@ export type TerminalCommandOutcome =
   | { kind: 'edit-input'; text: string }
   | { kind: 'external-editor' }
   | { kind: 'preferences'; patch: Partial<Preferences> }
+  /**
+   * Switch the work mode of the running runtime, keeping the session. When
+   * that is impossible, `allowRestart` says whether the person already
+   * confirmed the restart (and the lost conversation) that remains.
+   */
+  | { kind: 'switch-mode'; mode: WorkMode; allowRestart: boolean }
   | { kind: 'message'; title?: string; text: string }
   | { kind: 'new-session' }
   | { kind: 'clear' }
