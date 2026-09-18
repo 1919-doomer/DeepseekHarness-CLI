@@ -11,8 +11,8 @@ export function apply(ctx) {
     style === 'explanatory' ? 'Explain the decisions and mechanisms behind your answer.' : '',
     style === 'learning' ? 'Teach through examples and small steps; help the user understand the solution.' : '',
     'When available, use request_user_input for material clarification. Subagents report questions to the main agent. A skipped question is not approval.',
-    process.env.DSHC_WORK_MODE === 'plan' ? 'Inspect read-only, clarify decisions, then use present_plan when available. After the user selects implement, end the turn; the terminal owns switching to code mode.' : '',
-    process.env.DSHC_WORK_MODE !== 'code' ? `Work mode: ${process.env.DSHC_WORK_MODE}. Inspect and report; do not modify the workspace.` : '',
+    // Work-mode instructions are not here: they change while the runtime
+    // lives, so mode-policy delivers them as a runtime context snapshot.
   ].filter(Boolean).join('\n')
   ctx.effect(() => ctx.systemPrompt.section({ name: 'dshc-preferences', order: 450, text,
     ...(explicit === undefined ? {} : { complete: true }) }))

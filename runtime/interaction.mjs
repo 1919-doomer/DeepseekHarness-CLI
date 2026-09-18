@@ -23,16 +23,24 @@ export async function apply(ctx) {
       type: 'object', additionalProperties: false, required: ['label'], properties: { label: { type: 'string' }, description: { type: 'string' }, recommended: { type: 'boolean' } },
     } },
   } }
-  const definitions = [{ name: 'request_user_input', description: 'Ask the user 1–3 clarification questions with options and optional free text. Only the main agent may ask; subagents report questions to the main agent. This waits for an explicit answer and does not grant tool permissions.',
-    parameters: { type: 'object', additionalProperties: false, required: ['questions'], properties: { questions: { type: 'array', minItems: 1, maxItems: 3, items: question } } }, kind: 'questions' }]
-  if (process.env.DSHC_WORK_MODE === 'plan') definitions.push({ name: 'present_plan', description: 'Present a complete plan for review. The user may revise, defer, or explicitly choose implementation. Remain read-only and end your turn after implementation is selected; the terminal performs the mode handoff.',
+  const interactionTool = ({ kind, ...definition }) => ({ ...definition,
+    output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('Interaction requires a root agent')
+      return await post('/request', { runtimeId, sessionId: exec.agent.session.id, callId: exec.callId, content: { ...args, kind } }, exec.signal)
+    },
+  })
+
+  ctx.effect(() => ctx.tools.register(interactionTool({ name: 'request_user_input', description: 'Ask the user 1–3 clarification questions with options and optional free text. Only the main agent may ask; subagents report questions to the main agent. This waits for an explicit answer and does not grant tool permissions.',
+    parameters: { type: 'object', additionalProperties: false, required: ['questions'], properties: { questions: { type: 'array', minItems: 1, maxItems: 3, items: question } } }, kind: 'questions' })))
+
+  const presentPlan = interactionTool({ name: 'present_plan', description: 'Present a complete plan for review. The user may revise, defer, or explicitly choose implementation. Remain read-only and end your turn after implementation is selected; the terminal performs the mode handoff.',
     parameters: { type: 'object', additionalProperties: false, required: ['title', 'text'], properties: { title: { type: 'string' }, text: { type: 'string' } } }, kind: 'plan' })
+
   // Declared up front and never waited on: the terminal shows it beside the
   // work while the work happens. A blocking call here would turn "say what you
   // are about to do" into "stop and ask", which is a different feature.
-  if (process.env.DSHC_WORK_MODE !== 'plan') {
-    planGate.enable()
-    ctx.effect(() => ctx.tools.register({
+  const outlinePlan = {
     name: 'outline_plan',
     description: 'State the steps you are about to take, before taking them. Call once at the start of a task that will take more than one step. Two to six short steps, each a few words. Returns immediately; it does not ask the user anything.',
     parameters: { type: 'object', additionalProperties: false, required: ['steps'], properties: {
@@ -47,16 +55,30 @@ export async function apply(ctx) {
       planGate.declare(exec.agent.id)
       return { ok: true }
     },
-    }))
   }
 
-  for (const { kind, ...definition } of definitions) ctx.effect(() => ctx.tools.register({ ...definition,
-    output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-    async execute(args, exec) {
-      if (!exec.agent) throw new Error('Interaction requires a root agent')
-      return await post('/request', { runtimeId, sessionId: exec.agent.session.id, callId: exec.callId, content: { ...args, kind } }, exec.signal)
-    },
-  }))
+  // Which mode-specific tool exists follows the live mode, so a switch changes
+  // what the model can call without a new process. present_plan belongs to
+  // plan mode; outline_plan belongs to code mode, where the gate needs it.
+  let presentPlanDisposer
+  let outlinePlanDisposer
+  const syncModeTools = (mode) => {
+    if (mode === 'plan' && presentPlanDisposer === undefined) presentPlanDisposer = ctx.tools.register(presentPlan)
+    if (mode !== 'plan' && presentPlanDisposer !== undefined) { presentPlanDisposer(); presentPlanDisposer = undefined }
+    if (mode === 'code' && outlinePlanDisposer === undefined) { outlinePlanDisposer = ctx.tools.register(outlinePlan); planGate.enable() }
+    if (mode !== 'code' && outlinePlanDisposer !== undefined) { outlinePlanDisposer(); outlinePlanDisposer = undefined; planGate.disable() }
+  }
+  syncModeTools(modeState.get())
+  ctx.effect(() => {
+    const unsubscribe = modeState.subscribe(mode => syncModeTools(mode))
+    return () => {
+      unsubscribe()
+      presentPlanDisposer?.(); presentPlanDisposer = undefined
+      outlinePlanDisposer?.(); outlinePlanDisposer = undefined
+      planGate.disable()
+    }
+  })
 }
 import { request as httpRequest } from 'node:http'
 import { planGate } from './plan-gate.mjs'
+import { modeState } from './mode-state.mjs'

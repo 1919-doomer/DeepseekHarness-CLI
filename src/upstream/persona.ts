@@ -83,10 +83,10 @@ function preferencePersona(preferences: Partial<Preferences> = {}): string[] {
   const lines = [preferences.replyLanguage && preferences.replyLanguage !== 'auto'
     ? `- Reply in ${preferences.replyLanguage}.` : '- Reply in the language of the user\'s task.']
   lines.push('- When request_user_input is available, use it for material clarification with choices and free text. A skipped question is not approval. Subagents report questions to the main agent.')
-  if (preferences.mode === 'plan') lines.push('- Planning task: inspect read-only, clarify material decisions with request_user_input when available, then present a decision-complete implementation and verification plan with present_plan when available. Do not modify files. After an implement answer, end the turn; the terminal owns switching to code mode. Without present_plan, report the plan as text and wait for explicit instructions.')
-  if (preferences.mode === undefined || preferences.mode === 'code') lines.push('- Before starting a task that takes more than one step, call outline_plan once with two to six short steps, then carry them out. It returns immediately and asks nothing; it exists so the person can see where you are going while you go. Do not call it for a single-step answer, and do not narrate the plan in prose as well.')
-  if (preferences.mode === 'review') lines.push('- Review task: report actionable findings with evidence and file locations. Do not modify files.')
-  if (preferences.mode === 'research') lines.push('- Research task: gather primary evidence, cite sources, and distinguish facts from inference. Do not modify files.')
+  // Work-mode rules are not baked in here. A mode can now change while the
+  // runtime lives, and text frozen into the launch persona would contradict
+  // the live mode after the first switch. runtime/mode-policy.mjs delivers
+  // them as a runtime context snapshot that follows the current mode.
   if (preferences.style === 'explanatory') lines.push('- Explain important implementation choices and their tradeoffs while completing the task.')
   if (preferences.style === 'learning') lines.push('- Teach collaboratively: explain the reasoning and invite the user to solve small exercises. Do not silently leave required implementation incomplete.')
   return lines
