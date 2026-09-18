@@ -3,6 +3,7 @@ import { telemetryDetails } from '../session/model-telemetry.js'
 import { duration } from '../session/session-clock.js'
 import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
 import { findToolActivityDetail, formatActivityElapsed } from '../terminal/tool-activity.js'
+import { formatRiskTags, localRiskContext } from '../review/risk.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { terminalBlockId } from '../terminal/transcript.js'
 import {
@@ -454,7 +455,7 @@ function renderToolDetail(context: TerminalViewContext): string {
   const key = context.selectedToolKey
   if (key === undefined) return t('noToolSelected')
 
-  const detail = findToolActivityDetail(context.events, context.session.sessionId, key)
+  const detail = findToolActivityDetail(context.events, context.session.sessionId, key, localRiskContext(context.runtime.workspace))
   if (detail === undefined) {
     return t('toolEvicted')
   }
@@ -462,6 +463,7 @@ function renderToolDetail(context: TerminalViewContext): string {
   const { row } = detail
   const lines = [
     `${row.label}`,
+    ...(row.risks === undefined ? [] : [`risk: ${formatRiskTags(row.risks, context.locale ?? 'en')} (hints from the literal arguments; no tag is not a safety verdict)`]),
     `outcome: ${row.state}${row.state === 'running' ? ' (no result observed yet)' : ''}`,
     `session: ${sanitizeTerminalText(row.sessionId)}${row.orphaned ? ' (parent chain not observed)' : ''}`,
     `call: ${sanitizeTerminalText(row.callId)}`,

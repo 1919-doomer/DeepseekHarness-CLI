@@ -53,6 +53,7 @@ import {
   type TerminalTranscriptState,
 } from './transcript.js'
 import { sanitizeTerminalText } from './sanitize.js'
+import { localRiskContext, needsAttention } from '../review/risk.js'
 import { RuntimeCloseTracker } from './runtime-ownership.js'
 import {
   formatActivityCounts,
@@ -405,6 +406,11 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const [firstPartyViewRevision, setFirstPartyViewRevision] = useState(0)
   const eventKindRevisions = useRef(new Map<NormalizedEvent['kind'], number>())
   const [metadata, setMetadata] = useState(props.metadata)
+  // Read by the event batch, which is created once per run and must not
+  // capture a stale locale.
+  const presentationRef = useRef<{ workspace: string; locale?: Locale }>({ workspace: props.metadata.workspace })
+  presentationRef.current = { workspace: metadata.workspace, locale }
+  const riskContext = useMemo(() => localRiskContext(metadata.workspace), [metadata.workspace])
   const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
   // An anchored row keeps the reading position when a reply grows below it.
@@ -679,7 +685,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
       for (const kind of new Set(events.map(event => event.kind))) eventKindRevisions.current.set(kind, (eventKindRevisions.current.get(kind) ?? 0) + 1)
       const display = coalesceTranscriptDeltas(events, event => props.host.matchingRenderer(event) !== undefined)
       setTranscript(state => display.reduce((next, event) => reduceTerminalEvent(
-        next, event, props.host, activityId, rootSessionId, props.debug), state))
+        next, event, props.host, activityId, rootSessionId, props.debug, presentationRef.current), state))
       setEventHistory(state => appendTerminalEventBatch(state, events))
       const topology = events.filter(event => event.kind === 'subagent-started' || event.kind === 'subagent-finished')
       if (topology.length > 0) setAgentTopology(state => topology.reduce(reduceAgentTopologyHistory, state))
@@ -1751,7 +1757,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const visible = selectTranscriptPage(transcriptLayout, bodyRows, scrollAnchor)
   scrollNavigationRef.current = { layout: transcriptLayout, page: visible }
   const activity = sidebarVisible
-    ? projectToolActivity(agentWindows ? eventHistory.items.filter(event => !agentWindows.separated('sessionId' in event ? event.sessionId : undefined) && !externalSessions.current.has('sessionId' in event ? event.sessionId ?? '' : '')) : eventHistory.items, sessionId)
+    ? projectToolActivity(agentWindows ? eventHistory.items.filter(event => !agentWindows.separated('sessionId' in event ? event.sessionId : undefined) && !externalSessions.current.has('sessionId' in event ? event.sessionId ?? '' : '')) : eventHistory.items, sessionId, riskContext)
     : undefined
   activityRowKeysRef.current = activity?.rows.map(row => row.key) ?? []
   const queuedCount = queue.list().length
@@ -2006,16 +2012,22 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
           ))}
         </Box>
       )}
-      {visible.map(row => (
+      {visible.map(row => {
+        // A call that needs a look stays readable after it succeeds instead
+        // of dimming into the list; a failure keeps its own colour. Where the
+        // work happens (outside, network) is shown but not highlighted.
+        const flagged = row.risks !== undefined && needsAttention(row.risks) && row.state !== 'error'
+        return (
         <Box key={row.key} flexShrink={0}>
           <Text
-            color={row.state === 'success' ? undefined : activityColor(row.state)}
-            dimColor={row.state === 'success' && row.key !== selectedKey}
+            color={flagged ? 'yellow' : row.state === 'success' ? undefined : activityColor(row.state)}
+            dimColor={!flagged && row.state === 'success' && row.key !== selectedKey}
             inverse={row.key === selectedKey}
             wrap="truncate"
-          >{formatActivityRow(row, inner, true)}</Text>
+          >{formatActivityRow(row, inner, true, locale)}</Text>
         </Box>
-      ))}
+        )
+      })}
       <Box flexGrow={1} />
       <Box flexShrink={0}>
         <Text dimColor wrap="truncate">{cropTerminalText(formatActivityCounts(activity.counts, locale), inner)}</Text>

@@ -195,6 +195,44 @@ configurable-provider directory internally, but protocol `0.0.1` does not
 surface it, which is why `/plugins` correctly labels the inventory
 partial/unavailable today.
 
+## Risk hints
+
+Every tool call is also read by a deterministic classifier
+(`src/review/risk.ts`) that looks only at the literal arguments the model sent.
+It never calls a model, touches the filesystem or blocks anything, so it is
+free and instant. Seven tags exist:
+
+| Tag | zh-CN | Raised by, for example |
+|---|---|---|
+| `delete` | 删除 | `Remove-Item`, `rm`, `git clean`, `git reset --hard`, `git checkout -- <path>` |
+| `history` | 改历史 | `push --force`, `rebase`, `commit --amend`, `branch -D`, deleting a remote ref |
+| `outward` | 对外 | `git push`, `npm publish`, `gh pr merge`, a writing `gh api` call |
+| `outside` | 越界 | a path, `workdir`, `~`, `$env:TEMP` or `..` that resolves outside the workspace |
+| `secret` | 凭据 | `.env`, `.ssh`, `auth.json`, `*.pem`, `$env:*_KEY`, dumping the environment |
+| `system` | 系统 | registry, execution policy, services, global installs, shell profiles, fetch-and-execute, a sandbox escalation request |
+| `network` | 联网 | `curl`, `iwr`, package installs, `git clone/fetch/pull`, `gh` |
+
+Tags lead the transcript card title, prefix the sidebar row, appear in the tool
+detail panel, and are printed in plain `dshc run` output. A sidebar row carrying
+`delete`, `history`, `outward`, `secret` or `system` stays yellow instead of
+dimming when it succeeds. `outside` and `network` on their own are shown but not
+highlighted: they say where the work happens, which is often what was asked for.
+
+Quoted text and here-strings are treated as data, so a search pattern such as
+`-Pattern 'kill|shutdown'` or a Python program piped to stdin is not read as
+commands. `bash -c "..."`, `pwsh -Command "..."` and `Invoke-Expression '...'`
+are unwrapped and read; `-EncodedCommand` cannot be, and is tagged `system`.
+Reading global state (`npm ls -g`, `git config --global --list`), removing an
+environment variable, and an environment listing narrowed to harmless names
+(`Get-ChildItem env: | Where-Object Name -like 'DSH_*'`) carry no tag.
+
+The limits are part of the contract. The classifier reads command text, so a
+script that deletes things, an alias it does not know, or a command built to
+hide what it does carries no tag. **A tag is a reason to look; no tag is not a
+safety verdict.** Ordinary work is kept untagged on purpose (`git status`,
+`pnpm test`, searching for the word `Remove-Item`), because a tag on everything
+is a tag on nothing.
+
 ## Staging
 
 Each stage lands on its own and leaves the product working.

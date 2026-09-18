@@ -17,6 +17,8 @@ export interface InteractiveLoopOptions {
   debug?: boolean
   initialSessionId?: string
   installSignals?: boolean
+  /** Where paths resolve for risk hints on tool calls. */
+  workspace?: string
 }
 
 export interface InteractiveLoopResult {
@@ -41,6 +43,7 @@ export async function runInteractiveLoop(
     output,
     debugUnknownEvents: options.debug,
     rootSessionId: state.sessionId,
+    workspace: options.workspace,
   })
 
   let phase: InteractivePhase = 'starting'

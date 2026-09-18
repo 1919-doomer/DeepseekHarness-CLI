@@ -2,6 +2,8 @@ import { describeToolCall } from '../plugins/coding.js'
 import { toolCallDurations, toolProjectionKey, type NormalizedEvent } from '../session/projection.js'
 import { sanitizeTerminalText } from './sanitize.js'
 import { cropTerminalText } from './text-metrics.js'
+import { classifyToolCall, formatRiskTags, type RiskContext, type RiskTag } from '../review/risk.js'
+import type { Locale } from '../i18n.js'
 
 /** Indent past this depth is reported numerically instead of growing forever. */
 export const MAX_ACTIVITY_DEPTH = 3
@@ -21,6 +23,8 @@ export interface ToolActivityRow {
   /** True when the parent chain to the root could not be observed. */
   orphaned: boolean
   elapsedMs?: number
+  /** Deterministic hints read from the literal arguments; empty when none apply. */
+  risks?: readonly RiskTag[]
 }
 
 export interface ToolActivityCounts {
@@ -51,6 +55,7 @@ export interface ToolActivityProjection {
 export function projectToolActivity(
   events: readonly NormalizedEvent[],
   rootSessionId: string,
+  risk: RiskContext = {},
 ): ToolActivityProjection {
   const parents = new Map<string, string>()
   for (const event of events) {
@@ -65,6 +70,7 @@ export function projectToolActivity(
     if (event.kind === 'tool-call') {
       const key = toolProjectionKey(event.sessionId, event.callId)
       const placement = placeSession(event.sessionId, rootSessionId, parents)
+      const risks = classifyToolCall(event.name, event.arguments, risk)
       const row: ToolActivityRow = {
         key,
         sessionId: event.sessionId,
@@ -73,6 +79,7 @@ export function projectToolActivity(
         label: describeToolCall(event.name, event.arguments) ?? sanitizeTerminalText(event.name),
         depth: placement.depth,
         orphaned: placement.orphaned,
+        ...(risks.length === 0 ? {} : { risks }),
       }
       if (!byKey.has(key)) order.push(key)
       byKey.set(key, row)
@@ -135,8 +142,9 @@ export function findToolActivityDetail(
   events: readonly NormalizedEvent[],
   rootSessionId: string,
   key: string,
+  risk: RiskContext = {},
 ): ToolActivityDetail | undefined {
-  const row = projectToolActivity(events, rootSessionId).rows.find(candidate => candidate.key === key)
+  const row = projectToolActivity(events, rootSessionId, risk).rows.find(candidate => candidate.key === key)
   if (row === undefined) return undefined
 
   const detail: ToolActivityDetail = { row }
@@ -186,13 +194,14 @@ export function activityGlyph(state: ToolActivityState): string {
  * One call is one row, hard-cropped on a grapheme boundary. Rows never wrap, so
  * every layout question stays on the transcript side of the split.
  */
-export function formatActivityRow(row: ToolActivityRow, width: number, compact = false): string {
+export function formatActivityRow(row: ToolActivityRow, width: number, compact = false, locale: Locale = 'en'): string {
   const indent = row.depth <= MAX_ACTIVITY_DEPTH
     ? '  '.repeat(row.depth)
     : `  +${row.depth} `
   const mark = row.orphaned ? '?' : activityGlyph(row.state)
   const elapsed = compact || row.elapsedMs === undefined ? '' : ` ${formatActivityElapsed(row.elapsedMs)}`
-  return cropTerminalText(`${indent}${mark} ${row.label}${elapsed}`, Math.max(4, width))
+  const risk = formatRiskTags(row.risks ?? [], locale)
+  return cropTerminalText(`${indent}${mark} ${risk === '' ? '' : `${risk} `}${row.label}${elapsed}`, Math.max(4, width))
 }
 
 export function formatActivityElapsed(ms: number): string {

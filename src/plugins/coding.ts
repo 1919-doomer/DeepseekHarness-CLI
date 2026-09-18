@@ -1,6 +1,7 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { terminalBlockId } from '../terminal/transcript.js'
+import { classifyToolCall, formatRiskTags, localRiskContext } from '../review/risk.js'
 import {
   TERMINAL_PLUGIN_API_VERSION,
   type TerminalPluginSpec,
@@ -60,13 +61,14 @@ function codingToolMutations(event: NormalizedEvent, context: TerminalRenderCont
   if (args === undefined) return []
   const presentation = presentCodingCall(event.name, args)
   if (presentation === undefined) return []
+  const risk = formatRiskTags(classifyToolCall(event.name, event.arguments, localRiskContext(context.workspace)), context.locale)
 
   return [{
     kind: 'append',
     block: {
       id: terminalBlockId('tool', context.activityId, event.sessionId, event.callId),
       kind: 'tool',
-      title: scopedTitle(presentation.title, event.sessionId, context.rootSessionId),
+      title: scopedTitle(risk === '' ? presentation.title : `${risk} ${presentation.title}`, event.sessionId, context.rootSessionId),
       text: presentation.text,
       state: 'running',
       foldable: true,
