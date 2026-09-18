@@ -2,6 +2,8 @@ import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { modeState, WORK_MODES } from './mode-state.mjs'
+import { planGate } from './plan-gate.mjs'
 
 /**
  * Steering: put a message into the running turn rather than the next one.
@@ -19,6 +21,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
  *
  * Steering lands at the next step boundary, never mid-step. Nothing here
  * cancels work in flight; tokens already produced are kept.
+ *
+ * The same authenticated channel carries mode switches (`/mode`), which is the
+ * other thing that used to need a new process.
  */
 export const name = 'dshc-steering'
 export const inject = ['agents']
@@ -37,7 +42,7 @@ export async function apply(ctx) {
     // Same posture as the interaction bridge: loopback only, POST only, bearer
     // token, and no browser-originated request is ever served.
     if (req.method !== 'POST' || req.headers.authorization !== `Bearer ${steerToken}` || req.headers.origin) { reject(403); return }
-    if (req.url !== '/steer') { reject(404); return }
+    if (req.url !== '/steer' && req.url !== '/mode') { reject(404); return }
     let size = 0
     const chunks = []
     req.on('data', chunk => { size += chunk.length; if (size > 64 * 1024) req.destroy(); else chunks.push(chunk) })
@@ -46,6 +51,21 @@ export async function apply(ctx) {
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         if (body.runtimeId !== runtimeId) { reject(409); return }
+        if (req.url === '/mode') {
+          // Switching modes used to mean a new process and so a new session.
+          // It is now a value the live policy reads; see mode-state.mjs.
+          if (typeof body.mode !== 'string' || !WORK_MODES.includes(body.mode)) { reject(400); return }
+          const changed = modeState.set(body.mode)
+          // A plan approved in plan mode covers the turn that implements it, so
+          // switching to code for a handoff must not demand it be restated. The
+          // seed survives exactly one turn start, then the gate is back to normal.
+          if (typeof body.seedPlanFor === 'string' && body.seedPlanFor.length > 0 && body.seedPlanFor.length <= 256) {
+            planGate.seed(body.seedPlanFor)
+          }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ changed, mode: modeState.get() }))
+          return
+        }
         const sessionId = body.sessionId
         const text = body.text
         if (typeof sessionId !== 'string' || typeof text !== 'string' || text.length === 0 || text.length > MAX_STEER_CHARS) { reject(400); return }

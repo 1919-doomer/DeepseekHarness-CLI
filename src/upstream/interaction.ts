@@ -125,6 +125,36 @@ export class InteractionBridge {
       req.end(JSON.stringify({ runtimeId: this.id, sessionId, text }))
     })
   }
+  /**
+   * Switch the live runtime's work mode without restarting it.
+   *
+   * Restarting was the only way before, and protocol 0.0.1 has no session
+   * resume, so every mode switch threw the conversation away. The mode is now
+   * a value the runtime's policy reads at call time. Rejects when the runtime
+   * cannot do it, so the caller can fall back to a restart it has asked about
+   * rather than silently losing the session.
+   */
+  async setMode(mode: string, options: { seedPlanFor?: string } = {}): Promise<boolean> {
+    const steering = this.steering
+    if (steering === undefined) throw new Error('This runtime cannot switch modes in place; switching requires a restart and a new session.')
+    return await new Promise<boolean>((resolve, reject) => {
+      const req = httpRequest(`${steering.url}/mode`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${steering.token}`, 'content-type': 'application/json' },
+        signal: AbortSignal.timeout(5_000),
+      }, response => {
+        let data = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk: string) => { if (data.length < 4096) data += chunk })
+        response.on('end', () => {
+          if (response.statusCode !== 200) { reject(new Error(`Mode switch was refused (${response.statusCode}).`)); return }
+          try { resolve((JSON.parse(data) as { changed?: unknown }).changed === true) } catch { resolve(true) }
+        })
+      })
+      req.on('error', reject)
+      req.end(JSON.stringify({ runtimeId: this.id, mode, ...(options.seedPlanFor === undefined ? {} : { seedPlanFor: options.seedPlanFor }) }))
+    })
+  }
   cancel(): void { if (this.pending) { this.pending.response.destroy(); this.clear() } }
   private clear(): void { if (this.pending) this.waited += performance.now() - this.pending.started; this.pending = undefined; this.emit() }
   async close(): Promise<void> {

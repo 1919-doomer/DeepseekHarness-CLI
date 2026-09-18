@@ -13,7 +13,7 @@ import { buildPlanHandoff } from '../history/plan-handoff.js'
 import { ModelTelemetryMeter, type ModelTelemetry } from '../session/model-telemetry.js'
 import { commandArgumentChoices } from './command-choices.js'
 import { TranscriptLayoutCache, TranscriptRows, selectTranscriptPage, transcriptAnchor, type TranscriptAnchor, type TranscriptLayout, type TranscriptPage } from './transcript-viewport.js'
-import { DEFAULT_PREFERENCES, pickPreferences, preferencePaths, savePreferences, type Preferences } from '../preferences.js'
+import { DEFAULT_PREFERENCES, pickPreferences, preferencePaths, savePreferences, type Preferences, type WorkMode } from '../preferences.js'
 import { resolveLocale, translate, uiLabel, type Locale } from '../i18n.js'
 import { PromptQueue } from './prompt-queue.js'
 import { useSnapshotState } from './snapshot-store.js'
@@ -781,6 +781,25 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     if (!approved || approved.runtime !== props.runtimeRef.current || approved.request.sessionId !== sessionRef.current || props.shutdownSignal.aborted) return
     queue.pause()
     commandRunningRef.current = true; setCommandBusy(true)
+    const label = `${locale === 'zh-CN' ? '实施已确认计划，来源会话' : 'Implement confirmed plan from'} ${approved.request.sessionId}\n${approved.request.title}`
+    // Same session when the runtime can switch in place: the model that wrote
+    // the plan keeps everything it read and was told while writing it. A new
+    // session only remains as the fallback, because protocol 0.0.1 cannot
+    // carry a conversation across a restart.
+    const bridge = props.runtimeRef.current.interaction
+    if (bridge?.canSteer === true) {
+      try {
+        await bridge.setMode('code', { seedPlanFor: sessionRef.current })
+        setPreferences(value => ({ ...value, mode: 'code' }))
+        setMetadata(value => ({ ...value, requestedPreferences: { ...value.requestedPreferences, mode: 'code' } }))
+        const prompt = buildPlanHandoff(approved.request.sessionId, approved.request.title, approved.request.text, clarificationRef.current)
+        commandRunningRef.current = false; setCommandBusy(false)
+        await runHarnessPrompt(prompt, label)
+        return
+      } catch {
+        // Fall back to the restart below, which says what is being lost.
+      }
+    }
     try {
       if (!props.restart) throw new Error('Runtime restart is unavailable')
       const next = await props.restart({
@@ -820,11 +839,67 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     await task
   }
 
+  /**
+   * Switch modes without a new process, and therefore without losing the
+   * conversation. Returns false only when the caller should fall back to a
+   * restart the person has explicitly confirmed with --yes.
+   */
+  const switchModeInPlace = useCallback(async (
+    mode: WorkMode,
+    allowRestart: boolean,
+    signal?: AbortSignal,
+  ): Promise<boolean> => {
+    const zh = locale === 'zh-CN'
+    const label = zh ? { code: '编码', plan: '规划', review: '审阅', research: '研究' }[mode] : mode
+    const bridge = props.runtimeRef.current.interaction
+    let failure: string | undefined
+    if (bridge?.canSteer === true) {
+      try {
+        const changed = await bridge.setMode(mode)
+        if (isAborted(signal)) return true
+        setPreferences(value => ({ ...value, mode }))
+        // The runtime really is in the new mode now. Recording it keeps /status
+        // from listing the mode as waiting for a restart it no longer needs.
+        setMetadata(value => ({ ...value, requestedPreferences: { ...value.requestedPreferences, mode } }))
+        setTranscript(state => appendSystemMessage(
+          state,
+          changed
+            ? (zh ? `已切换到${label}模式。这是同一个会话，之前的对话都还在。` : `Switched to ${label} mode. Same session; the conversation so far is kept.`)
+            : (zh ? `已经是${label}模式。` : `Already in ${label} mode.`),
+          zh ? '模式' : 'mode',
+          nextId('mode'),
+        ))
+        return true
+      } catch (error) {
+        failure = pluginErrorMessage(error)
+      }
+    }
+    if (allowRestart) return false
+    setTranscript(state => appendSystemMessage(
+      state,
+      [
+        ...(failure === undefined ? [] : [failure]),
+        zh
+          ? `这个运行时不能就地切换模式。/mode ${mode} --yes 会重启运行时并开启新会话，当前对话不会带过去。`
+          : `This runtime cannot switch modes in place. /mode ${mode} --yes restarts it and starts a new session; this conversation will not carry over.`,
+      ].join('\n'),
+      zh ? '模式' : 'mode',
+      nextId('mode'),
+    ))
+    return true
+  }, [locale, nextId, props.runtimeRef])
+
   const applyOutcome = useCallback(async (
     outcome: TerminalCommandOutcome,
     signal?: AbortSignal,
   ): Promise<void> => {
     if (isAborted(signal)) return
+    if (outcome.kind === 'switch-mode') {
+      if (await switchModeInPlace(outcome.mode, outcome.allowRestart, signal)) return
+      // In-place switching failed and the person already consented to a
+      // restart: take the existing restart path, which says what is lost.
+      outcome = { kind: 'restart-runtime', selection: { mode: outcome.mode }, summary: `mode: ${outcome.mode}` }
+    }
     switch (outcome.kind) {
       case 'sidebar': {
         const next = outcome.page ?? (sidebarPageRef.current === 'overview' ? 'tools' : 'overview')
@@ -1112,7 +1187,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         finish(0, false)
         return
     }
-  }, [finish, jumpToNewest, nextId, props.host, metadata.protocolVersion, retireRuntime, runHarnessPrompt, selectView, sessionId, preferences, locale, queue])
+  }, [finish, jumpToNewest, nextId, props.host, metadata.protocolVersion, retireRuntime, runHarnessPrompt, selectView, sessionId, preferences, locale, queue, switchModeInPlace])
 
   const runCommand = useCallback(async (raw: string): Promise<boolean> => {
     const parsed = parseTerminalCommand(raw)

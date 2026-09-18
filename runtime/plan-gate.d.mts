@@ -19,6 +19,7 @@ export declare function decideToolCall(query: PlanGateQuery): PlanGateDecision
 
 export declare class PlanGate {
   enable(): void
+  disable(): void
   readonly available: boolean
   declare(agentId: string): void
   reset(agentId: string): void

@@ -3,3 +3,7 @@
       name: ./profile-policy.mjs
     - id: dshc-interaction
       name: ./interaction.mjs
+    # Steering and live mode switching. Missing from this backend until now, so
+    # typing mid-turn silently fell back to queueing here.
+    - id: dshc-steering
+      name: ./steering.mjs

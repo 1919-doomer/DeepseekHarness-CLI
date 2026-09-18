@@ -50,6 +50,8 @@ export class PlanGate {
 
   /** The interaction plugin calls this once it has registered `outline_plan`. */
   enable() { this.#available = true }
+  /** Code mode was left, so outline_plan is gone and the gate has nothing to satisfy it with. */
+  disable() { this.#available = false }
   get available() { return this.#available }
 
   /** Called when `outline_plan` runs: this agent may now change things. */

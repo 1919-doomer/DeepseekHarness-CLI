@@ -64,6 +64,12 @@ it.each(['implement', 'restart-fails', 'superseded'] as const)('%s: preserves dr
     await until(() => runtime.interaction?.current?.kind === 'plan'); await delay(100)
     expect(restart).not.toHaveBeenCalled(); expect(await readFile(file, 'utf8')).toBe('original')
     expect(JSON.stringify(requests)).toContain('保留中文')
+    if (scenario === 'restart-fails') {
+      // The handoff now switches modes in place. The restart below is only
+      // the fallback, so in-place switching has to fail for this scenario to
+      // reach it and keep that path covered.
+      runtime.interaction!.setMode = async () => { throw new Error('fixture: in-place switch unavailable') }
+    }
     await key('\r')
     if (scenario !== 'implement') {
       if (scenario === 'superseded') {
@@ -81,8 +87,14 @@ it.each(['implement', 'restart-fails', 'superseded'] as const)('%s: preserves dr
     try { await until(async () => await readFile(file, 'utf8') === 'implemented') }
     catch { throw new Error(`Handoff stalled: restarts=${restart.mock.calls.length}, requests=${requests.length}\n${frames.slice(-1200)}`) }
     await until(() => requests.length === 6); await delay(150)
-    expect(restart).toHaveBeenCalledTimes(1)
+    // Implementing an approved plan no longer restarts: the runtime switched
+    // modes in place, so this is the same session that wrote the plan.
+    expect(restart).not.toHaveBeenCalled()
     const codeRequest = JSON.stringify(requests[3])
+    // The proof that the conversation survived: the implementing request still
+    // carries what the person said in the very first planning turn. A new
+    // session could not contain it.
+    expect(codeRequest).toContain('Plan this change')
     expect(codeRequest).toContain('plan-ui-source')
     expect(codeRequest).toContain('保留中文')
     expect(codeRequest).toContain('Confirmed fixture plan')
