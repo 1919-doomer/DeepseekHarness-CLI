@@ -40,6 +40,54 @@ async function mountedRuntime(options: { agent?: { steer: (message: SteeredMessa
   return { bridge, steered }
 }
 
+/** Post to the bridge the way the runtime plugin does. */
+async function postToBridge(path: string, body: unknown): Promise<number> {
+  const response = await fetch(`${process.env.DSHC_INTERACTION_URL}${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${process.env.DSHC_INTERACTION_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return response.status
+}
+
+describe('the plan the model declares before working', () => {
+  it('is stored for the terminal to show', async () => {
+    const { bridge } = await mountedRuntime()
+    expect(bridge.plan).toBeUndefined()
+    expect(await postToBridge('/plan', { runtimeId: bridge.id, steps: ['read the file', 'change it', 'run the test'] })).toBe(200)
+    expect(bridge.plan).toEqual(['read the file', 'change it', 'run the test'])
+  })
+
+  it('bounds what goes on screen, because these are model-authored strings', async () => {
+    const { bridge } = await mountedRuntime()
+    expect(await postToBridge('/plan', { runtimeId: bridge.id, steps: Array.from({ length: 20 }, (_, i) => `step ${i}`) })).toBe(400)
+    expect(await postToBridge('/plan', { runtimeId: bridge.id, steps: 'not an array' })).toBe(400)
+    expect(await postToBridge('/plan', { runtimeId: bridge.id, steps: [] })).toBe(400)
+    expect(bridge.plan).toBeUndefined()
+
+    expect(await postToBridge('/plan', { runtimeId: bridge.id, steps: ['x'.repeat(500), 'short'] })).toBe(200)
+    expect(bridge.plan?.[0]).toHaveLength(200)
+  })
+
+  it('is dropped when a new prompt starts, so a stale plan never sits beside new work', async () => {
+    const { bridge } = await mountedRuntime()
+    await postToBridge('/plan', { runtimeId: bridge.id, steps: ['a', 'b'] })
+    expect(bridge.plan).toHaveLength(2)
+    bridge.begin('another-session')
+    expect(bridge.plan).toBeUndefined()
+  })
+
+  it('refuses a caller without the bridge token', async () => {
+    const { bridge } = await mountedRuntime()
+    const response = await fetch(`${process.env.DSHC_INTERACTION_URL}/plan`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeId: bridge.id, steps: ['a', 'b'] }),
+    })
+    expect(response.status).toBe(403)
+    expect(bridge.plan).toBeUndefined()
+  })
+})
+
 describe('steering into a running turn', () => {
   it('registers its endpoint, so the terminal knows the capability exists', async () => {
     const before = new InteractionBridge()

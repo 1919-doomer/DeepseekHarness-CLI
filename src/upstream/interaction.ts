@@ -21,12 +21,14 @@ export class InteractionBridge {
   ready = false
   /** Endpoint the runtime published for step-targeted injection, when mounted. */
   private steering: { url: string; token: string } | undefined
+  /** Steps the model committed to before starting work, when it declared any. */
+  plan: readonly string[] | undefined
   get canSteer(): boolean { return this.steering !== undefined }
   get current(): InteractionRequest | undefined { return this.pending?.request }
   get waitingMs(): number { return this.waited + (this.pending ? performance.now() - this.pending.started : 0) }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private emit(): void { for (const listener of this.listeners) listener() }
-  begin(sessionId: string): void { if (!this.roots.size) { this.seen.clear(); this.calls.clear() }; this.roots.add(sessionId) }
+  begin(sessionId: string): void { if (!this.roots.size) { this.seen.clear(); this.calls.clear() }; this.roots.add(sessionId); this.plan = undefined; this.emit() }
   expectCall(sessionId: string, callId: string, name: string): void {
     if (!this.roots.has(sessionId) || !['request_user_input', 'present_plan'].includes(name) || this.calls.size >= 1024) return
     const key = `${sessionId}:${callId}`; this.calls.set(key, name); this.callWaiters.get(key)?.()
@@ -55,6 +57,14 @@ export class InteractionBridge {
           const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
           if (value['runtimeId'] !== this.id) { reject(409); return }
           if (req.url === '/ready') { this.ready = true; res.end('{}'); this.emit(); return }
+          if (req.url === '/plan') {
+            const steps = value['steps']
+            if (!Array.isArray(steps) || steps.length === 0 || steps.length > 8 || steps.some(step => typeof step !== 'string')) { reject(400); return }
+            // Bounded here rather than trusted: this text is model output and
+            // goes straight onto the screen.
+            this.plan = steps.slice(0, 8).map(step => String(step).slice(0, 200))
+            res.end('{}'); this.emit(); return
+          }
           if (req.url === '/steering') {
             const steerUrl = value['steerUrl'], steerToken = value['steerToken']
             if (typeof steerUrl !== 'string' || typeof steerToken !== 'string' || !steerUrl.startsWith('http://127.0.0.1:')) { reject(400); return }
@@ -118,7 +128,7 @@ export class InteractionBridge {
   cancel(): void { if (this.pending) { this.pending.response.destroy(); this.clear() } }
   private clear(): void { if (this.pending) this.waited += performance.now() - this.pending.started; this.pending = undefined; this.emit() }
   async close(): Promise<void> {
-    this.cancel(); this.roots.clear(); this.ready = false; this.steering = undefined
+    this.cancel(); this.roots.clear(); this.ready = false; this.steering = undefined; this.plan = undefined
     for (const finish of this.callWaiters.values()) finish()
     const server = this.server; this.server = undefined
     if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections() })
