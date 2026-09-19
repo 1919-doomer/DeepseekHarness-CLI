@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { installSignalHandlers } from '../lifecycle/signals.js'
 import { PlainRenderer } from '../terminal/plain-renderer.js'
 import { runTerminalProduct } from '../terminal/product.js'
@@ -445,6 +446,7 @@ async function runInteractiveMode(cliOptions: CliOptions): Promise<number> {
       const result = await runInteractiveLoop(runtime, {
         initialSessionId: options.sessionId,
         debug: options.debug,
+        workspace: resolve(options.workspace ?? process.cwd()),
       })
       exitCode = result.exitCode
     }
@@ -497,6 +499,7 @@ async function runOneShot(cliOptions: CliOptions, prompt: string): Promise<numbe
   const renderer = options.json ? undefined : new PlainRenderer({
     debugUnknownEvents: options.debug,
     rootSessionId: options.sessionId,
+    workspace: resolve(options.workspace ?? process.cwd()),
   })
   const signals = installSignalHandlers(runtime, {
     onSignal: (signal) => {

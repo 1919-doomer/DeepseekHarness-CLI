@@ -1,6 +1,7 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import type { TerminalPluginHost } from '../plugins/host.js'
 import type { TranscriptBlock, TranscriptMutation } from '../plugins/api.js'
+import type { Locale } from '../i18n.js'
 import {
   MAX_RETAINED_TRANSCRIPT_BLOCKS,
   MAX_RETAINED_TRANSCRIPT_FIELD_CHARS,
@@ -71,8 +72,9 @@ export function reduceTerminalEvent(
   activityId: string,
   rootSessionId: string,
   debug = false,
+  presentation: { workspace?: string; locale?: Locale } = {},
 ): TerminalTranscriptState {
-  const context = { debug, activityId, rootSessionId }
+  const context = { debug, activityId, rootSessionId, ...presentation }
   let mutations: readonly TranscriptMutation[]
   try {
     const renderer = host.matchingRenderer(event)

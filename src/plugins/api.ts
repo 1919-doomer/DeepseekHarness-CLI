@@ -121,6 +121,10 @@ export interface TerminalRenderContext {
   debug: boolean
   activityId: string
   rootSessionId: string
+  /** Local presentation only: where paths resolve for risk hints. Optional for API-v1 callers. */
+  workspace?: string
+  /** Local presentation only: the language for labels. Optional for API-v1 callers. */
+  locale?: Locale
 }
 
 export interface TerminalEventRendererSpec {

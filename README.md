@@ -67,6 +67,7 @@ Current capabilities:
 - a token usage readout in the status line and `/status`, in absolute numbers: upstream reports no context window on this transport, so dshc reports no percentage;
 - first-party terminal plugin API v1 with deterministic command, renderer, view and status registries;
 - specialized coding-tool/subagent presentation plus a safe generic event fallback;
+- deterministic risk hints on tool calls (delete, history rewrite, outward, outside the workspace, secrets, system, network) in the transcript, sidebar and plain output — hints from the literal arguments, never a block and never a safety verdict; see [tool activity](docs/TOOL-ACTIVITY-UI.md#risk-hints);
 - bounded activity/trace/transcript/topology diagnostic retention with explicit eviction disclosure;
 - terminal ESC/CSI/OSC/C1/bidi sanitization, secret-redacted diagnostics and exception-safe alternate-screen cleanup;
 - `dshc doctor` compatibility/startup preflight that performs `initialize` only and never issues a model prompt;

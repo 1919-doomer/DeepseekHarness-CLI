@@ -1,5 +1,6 @@
 import type { NormalizedEvent } from '../session/projection.js'
 import { sanitizeTerminalText } from './sanitize.js'
+import { classifyToolCall, formatRiskTags, localRiskContext, type RiskContext } from '../review/risk.js'
 
 export interface TextSink {
   write(text: string): unknown
@@ -9,6 +10,8 @@ export interface PlainRendererOptions {
   output?: TextSink
   debugUnknownEvents?: boolean
   rootSessionId?: string
+  /** Where paths resolve for risk hints; without it nothing is judged outside. */
+  workspace?: string
 }
 
 export class PlainRenderer {
@@ -17,8 +20,10 @@ export class PlainRenderer {
   private rootSessionId: string | undefined
   private assistantLineSessionId: string | undefined
   private readonly streamedAssistantText = new Map<string, string>()
+  private readonly risk: RiskContext
 
   constructor(options: PlainRendererOptions = {}) {
+    this.risk = localRiskContext(options.workspace)
     this.output = options.output ?? process.stdout
     this.debugUnknownEvents = options.debugUnknownEvents ?? false
     this.rootSessionId = options.rootSessionId
@@ -43,12 +48,14 @@ export class PlainRenderer {
         this.renderCommittedAssistant(event.sessionId, event.text)
         return
 
-      case 'tool-call':
+      case 'tool-call': {
         this.closeAssistantLine()
+        const risk = formatRiskTags(classifyToolCall(event.name, event.arguments, this.risk))
         this.output.write(
-          `${this.scopedLabel('tool', event.sessionId)}> ${sanitizeTerminalText(event.name)} (${sanitizeTerminalText(event.callId)}) ${sanitizeTerminalText(event.arguments)}\n`,
+          `${this.scopedLabel('tool', event.sessionId)}> ${sanitizeTerminalText(event.name)} (${sanitizeTerminalText(event.callId)}) ${risk === '' ? '' : `${risk} `}${sanitizeTerminalText(event.arguments)}\n`,
         )
         return
+      }
 
       case 'tool-result':
         this.closeAssistantLine()
