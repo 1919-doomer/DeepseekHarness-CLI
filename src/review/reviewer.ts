@@ -172,11 +172,16 @@ export type ReviewOutcome =
   /** A turn's review was dropped because a newer turn finished before it could start. */
   | { kind: 'skipped'; evidence: TurnEvidence }
 
+export type ReviewRunner = (prompt: string) => Promise<{ text: string; turnError?: string }>
+
 export interface ReviewerHost {
-  /** Mark the session read-only in the runtime. Must reject when that is impossible. */
-  register(sessionId: string): Promise<void>
-  /** Run the review prompt in that session; resolves with its final message. */
-  run(prompt: string, sessionId: string): Promise<{ text: string; turnError?: string }>
+  /**
+   * Register the session read-only in a runtime, and return a runner bound to
+   * that same runtime. One step on purpose: registering in one runtime and
+   * running in another (a restart in between) would create the session
+   * somewhere it was never narrowed. Must reject when registration fails.
+   */
+  open(sessionId: string): Promise<ReviewRunner>
   locale(): Locale
   outcome(outcome: ReviewOutcome): void
   status(status: ReviewStatus): void
@@ -217,8 +222,8 @@ export class OperationReviewer {
     const sessionId = createReviewSessionId()
     this.host.status({ state: 'running', operations: countOf(evidence), waiting: this.waiting !== undefined })
     try {
-      await this.host.register(sessionId)
-      const result = await this.host.run(buildReviewPrompt(evidence, this.host.locale()), sessionId)
+      const run = await this.host.open(sessionId)
+      const result = await run(buildReviewPrompt(evidence, this.host.locale()))
       if (this.disposed) return
       if (result.text.trim() === '') throw new Error(result.turnError ?? 'the review session ended without a reply')
       const report = parseReview(result.text)

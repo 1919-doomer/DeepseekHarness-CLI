@@ -91,7 +91,9 @@ export function collectTurnEvidence(input: TurnEvidenceInput): TurnEvidence | un
   let looking = 0
 
   for (const event of input.events) {
-    if (event.kind === 'user-message' && event.sessionId === input.sessionId) {
+    // Only what a person said. A runtime-context snapshot arrives in the same
+    // role and must not be presented as something they added.
+    if (event.kind === 'user-message' && event.sessionId === input.sessionId && (event.source === undefined || event.source === 'user')) {
       if (requests.length < MAX_REQUESTS) requests.push(crop(event.text, REQUEST_CHARS))
       continue
     }

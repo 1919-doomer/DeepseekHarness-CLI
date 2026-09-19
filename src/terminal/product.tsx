@@ -519,14 +519,17 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const reviewerRef = useRef<OperationReviewer | undefined>(undefined)
   if (reviewerRef.current === undefined) {
     reviewerRef.current = new OperationReviewer({
-      register: async sessionId => {
-        const bridge = props.runtimeRef.current.interaction
+      open: async sessionId => {
+        // Captured once: the runtime that narrows the session is the one that
+        // runs it, even if a restart replaces the current runtime meanwhile.
+        const runtime = props.runtimeRef.current
+        const bridge = runtime.interaction
         if (bridge === undefined) throw new Error('this runtime has no private channel')
         await bridge.registerReviewer(sessionId)
-      },
-      run: async (prompt, sessionId) => {
-        const result = await props.runtimeRef.current.run(prompt, { sessionId, interactive: false })
-        return { text: result.finalResponse, ...(result.projection.lastTurnError === undefined ? {} : { turnError: result.projection.lastTurnError }) }
+        return async prompt => {
+          const result = await runtime.run(prompt, { sessionId, interactive: false })
+          return { text: result.finalResponse, ...(result.projection.lastTurnError === undefined ? {} : { turnError: result.projection.lastTurnError }) }
+        }
       },
       locale: () => presentationRef.current.locale ?? 'en',
       status: status => { if (mountedRef.current) setReviewStatus(status) },

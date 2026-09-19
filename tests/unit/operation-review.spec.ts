@@ -101,6 +101,16 @@ describe('collecting a turn', () => {
     expect(evidence.finalMessage).toBe('Done, tests pass.')
   })
 
+  it('does not present a runtime-context snapshot as something the person said', () => {
+    const snapshot: NormalizedEvent = { sequence: sequence++, kind: 'user-message', sessionId: 'root', text: 'Current runtime context. This snapshot supersedes earlier ones.', source: 'plugin' }
+    const evidence = collectTurnEvidence({ sessionId: 'root', prompt: 'p', events: [
+      { ...user('Write the note'), source: 'user' } as NormalizedEvent,
+      snapshot,
+      call('write', { file_path: 'a', content: 'b' }, 'c1'), result('c1', 'ok'),
+    ] })!
+    expect(evidence.requests).toEqual(['Write the note'])
+  })
+
   it('falls back to the prompt when no user message was observed', () => {
     const evidence = collectTurnEvidence({ sessionId: 'root', prompt: 'the prompt', events: [call('write', { file_path: 'a', content: 'b' }, 'c1')] })!
     expect(evidence.requests).toEqual(['the prompt'])
@@ -186,8 +196,12 @@ describe('scheduling reviews', () => {
     const registered: string[] = []
     const runs: { sessionId: string; release: (text: string) => void }[] = []
     const reviewer = new OperationReviewer({
-      register: overrides.register ?? (async id => { registered.push(id) }),
-      run: overrides.run ?? ((_prompt, sessionId) => new Promise(resolve => { runs.push({ sessionId, release: text => resolve({ text }) }) })),
+      open: async sessionId => {
+        await (overrides.register ?? (async id => { registered.push(id) }))(sessionId)
+        return prompt => overrides.run !== undefined
+          ? overrides.run(prompt, sessionId)
+          : new Promise(resolve => { runs.push({ sessionId, release: text => resolve({ text }) }) })
+      },
       locale: () => 'en',
       outcome: outcome => { outcomes.push(outcome) },
       status: status => { statuses.push(status) },
