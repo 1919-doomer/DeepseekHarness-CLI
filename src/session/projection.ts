@@ -42,7 +42,12 @@ export interface ToolResultMetadata {
 
 export type NormalizedEvent = UpstreamEventEnvelope & (
   | { sequence: number; kind: 'session-status'; sessionId: string; status: 'running' | 'idle' }
-  | { sequence: number; kind: 'user-message'; sessionId: string; text: string }
+  /**
+   * `source` is upstream's `source.kind`: `user` for what a person typed or
+   * steered in, `plugin` for a runtime-context snapshot delivered in the same
+   * role. Absent when upstream did not say.
+   */
+  | { sequence: number; kind: 'user-message'; sessionId: string; text: string; source?: string }
   | { sequence: number; kind: 'assistant-delta'; sessionId: string; text: string }
   | { sequence: number; kind: 'assistant-message'; sessionId: string; text: string; usage?: TokenUsage }
   | { sequence: number; kind: 'tool-call'; sessionId: string; callId: string; name: string; arguments: string }
@@ -325,7 +330,8 @@ function classifyNotification(notification: HarnessNotification, sequence: numbe
   const data = recordField(rawEvent, 'data')
 
   if (type === 'user/message') {
-    return { sequence, kind: 'user-message', sessionId, text: extractContentText(data?.content) }
+    const source = stringField(recordField(data, 'source'), 'kind')
+    return { sequence, kind: 'user-message', sessionId, text: extractContentText(data?.content), ...(source === undefined ? {} : { source }) }
   }
 
   if (type === 'assistant/chunk') {

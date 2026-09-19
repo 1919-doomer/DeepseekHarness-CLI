@@ -8,6 +8,7 @@
 // launch. No tool exposes a mode switch to the model.
 import { planGate } from './plan-gate.mjs'
 import { modeState } from './mode-state.mjs'
+import { REVIEW_TOOLS, reviewState } from './review-state.mjs'
 
 export const name = 'dshc-mode-policy'
 export const inject = ['tools', 'agents']
@@ -51,12 +52,29 @@ export function modeContextText(mode, interactionAvailable) {
   }
 }
 
+/**
+ * Why a reviewer may not make this call, or `undefined` when it may. A
+ * reviewer is read-only in every mode, so this is decided before the mode is.
+ */
+export function reviewerDenial(agentId, toolName) {
+  if (!reviewState.has(agentId) || REVIEW_TOOLS.includes(toolName)) return undefined
+  return `dshc operation reviewer is read-only; ${toolName} is not available to it`
+}
+
 export function apply(ctx) {
   const interactionAvailable = Boolean(process.env.DSHC_INTERACTION_URL)
   /** Live agents and the exact disposer for the mode restriction on each. */
   const restrictions = new Map()
 
   const restrictFor = (agent, mode, atCreation) => {
+    // A reviewer is narrowed once, at creation, and never follows a mode switch.
+    if (reviewState.has(agent.id)) {
+      if (!atCreation) return
+      const names = REVIEW_TOOLS.filter(toolName => agent.ctx.tools.get(toolName) !== undefined)
+      if (names.length === 0) throw new Error('dshc operation reviewer requires read, glob or grep')
+      restrictions.set(agent.id, { agent, lift: agent.ctx.tools.restrict({ allow: names }) })
+      return
+    }
     const previous = restrictions.get(agent.id)
     try { previous?.lift?.() } catch { /* the scope is already gone */ }
     const allowed = allowedToolsFor(mode, interactionAvailable)
@@ -82,6 +100,9 @@ export function apply(ctx) {
   // covers scoped registrations and nested executions too; restriction alone
   // masks inherited schemas but cannot fence new local tools.
   ctx.effect(() => ctx.tools.guard(execution => {
+    const reviewer = reviewerDenial(execution.agent?.id, execution.name)
+    if (reviewer !== undefined) return reviewer
+    if (reviewState.has(execution.agent?.id)) return undefined
     const mode = modeState.get()
     const allowed = allowedToolsFor(mode, interactionAvailable)
     if (allowed !== undefined) {
@@ -135,7 +156,8 @@ function installPlanGateLifecycle(ctx) {
   let seeded = approved === undefined || approved.length === 0
 
   ctx.on('agent/created', ({ agent }) => {
-    if (seeded) return
+    // A reviewer is never the session a plan was approved for.
+    if (seeded || reviewState.has(agent.id)) return
     seeded = true
     planGate.seed(agent.id)
   })

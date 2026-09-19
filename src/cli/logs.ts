@@ -1,5 +1,6 @@
 import { listSessionLogs, readSessionLog, type SessionLogEvent } from '../upstream/session-log.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { isReviewSessionId } from '../review/session.js'
 
 /**
  * Read the session logs from the terminal that wrote them.
@@ -30,6 +31,7 @@ export async function renderSessionLogs(options: LogsOptions): Promise<{ text: s
       const read = await readSessionLog(session.path).catch(() => undefined)
       return {
         id: session.id,
+        review: isReviewSessionId(session.id),
         workspace: session.workspace,
         modified: session.modified,
         bytes: session.bytes,
@@ -42,7 +44,7 @@ export async function renderSessionLogs(options: LogsOptions): Promise<{ text: s
 
     const lines = [`Session logs under ${safe(options.root)}`, '']
     for (const row of rows) {
-      lines.push(`${row.modified.toISOString().slice(0, 19).replace('T', ' ')}  ${safe(row.id)}`)
+      lines.push(`${row.modified.toISOString().slice(0, 19).replace('T', ' ')}  ${safe(row.id)}${row.review ? '  (operation review)' : ''}`)
       lines.push(`    ${row.events} events · ${row.bytes} bytes · ${safe(row.workspace)}`)
       // The whole reason this command exists.
       lines.push(`    ended: ${safe(row.ended)}${row.truncated > 0 ? ` · ${row.truncated} unparseable line(s)` : ''}`)

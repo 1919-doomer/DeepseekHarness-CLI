@@ -23,6 +23,16 @@ function sessionEvent(
 }
 
 describe('session projection', () => {
+  it('keeps who a user-role message came from, so a context snapshot is not taken for the person', () => {
+    expect(normalizeNotification(sessionEvent('user/message', {
+      content: [{ type: 'text', text: 'Write the note' }], source: { kind: 'user' },
+    }))).toMatchObject({ kind: 'user-message', text: 'Write the note', source: 'user' })
+    expect(normalizeNotification(sessionEvent('user/message', {
+      content: [{ type: 'text', text: 'Current runtime context.' }], source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' },
+    }))).toMatchObject({ kind: 'user-message', source: 'plugin' })
+    expect(normalizeNotification(sessionEvent('user/message', { content: [{ type: 'text', text: 'x' }] }))).not.toHaveProperty('source')
+  })
+
   it('projects public request capacity and approval audit events without parsing prose', () => {
     expect(normalizeNotification(sessionEvent('request/context', {
       provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072,

@@ -6,7 +6,17 @@ import type { HarnessRuntimeMetadata } from '../upstream/runtime.js'
 export function preferencesPlugin(): TerminalPluginSpec {
   const fields = { language: 'locale', 'reply-language': 'replyLanguage', mode: 'mode', style: 'style', effort: 'reasoningEffort' } as const
   return { id: 'dshc.preferences', version: '1.0.0', apiVersion: TERMINAL_PLUGIN_API_VERSION,
-    commands: [{ name: 'sidebar', summary: 'Switch overview and tools sidebar', usage: '/sidebar [overview|tools]', execute(_context, args) {
+    commands: [{ name: 'audit', summary: 'Review each turn that changed something', usage: '/audit [on|off]', execute(context, args) {
+      if (args.length > 1 || (args[0] !== undefined && !['on', 'off'].includes(args[0]))) throw new Error('usage: /audit [on|off]')
+      const zh = (context.locale ?? resolveLocale()) === 'zh-CN'
+      if (args[0] === undefined) {
+        const on = (context.preferences?.operationReview ?? DEFAULT_PREFERENCES.operationReview) !== false
+        return { kind: 'message', title: 'audit', text: zh
+          ? `操作审查：${on ? '开' : '关'}。每个有改动的回合结束后，用一个只能读文件的独立会话，把做了什么和你要求的、它计划的、它声称的对照一遍。每次审查多一次模型调用，模型和强度与主会话相同。/audit on|off 切换。`
+          : `Operation review: ${on ? 'on' : 'off'}. After each turn that changed something, a separate read-only session compares what was done with what was asked, planned and claimed. Each review is one more model call, on the same model and effort as the session. /audit on|off switches it.` }
+      }
+      return { kind: 'preferences', patch: { operationReview: args[0] === 'on' } }
+    } }, { name: 'sidebar', summary: 'Switch overview and tools sidebar', usage: '/sidebar [overview|tools]', execute(_context, args) {
       if (args.length > 1 || (args[0] !== undefined && !['overview', 'tools'].includes(args[0]))) throw new Error('usage: /sidebar [overview|tools]')
       return { kind: 'sidebar', page: args[0] as 'overview' | 'tools' | undefined }
     } }, { name: 'plan', summary: 'Enter read-only interactive planning', usage: '/plan [--yes]', execute(context, args) {

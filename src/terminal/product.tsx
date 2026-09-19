@@ -54,6 +54,8 @@ import {
 } from './transcript.js'
 import { sanitizeTerminalText } from './sanitize.js'
 import { localRiskContext, needsAttention } from '../review/risk.js'
+import { collectTurnEvidence } from '../review/evidence.js'
+import { OperationReviewer, describeReview, type ReviewStatus } from '../review/reviewer.js'
 import { RuntimeCloseTracker } from './runtime-ownership.js'
 import {
   formatActivityCounts,
@@ -508,6 +510,77 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
 
   const nextId = useCallback((prefix: string): string => `${prefix}-${++idRef.current}`, [])
 
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>({ state: 'idle' })
+  const operationReviewOn = preferences.operationReview !== false
+  const operationReviewRef = useRef(operationReviewOn)
+  operationReviewRef.current = operationReviewOn
+  /** The runtime the reader was already told cannot host a review, so it is said once. */
+  const reviewUnavailableRef = useRef<HarnessRuntime | undefined>(undefined)
+  const reviewerRef = useRef<OperationReviewer | undefined>(undefined)
+  if (reviewerRef.current === undefined) {
+    reviewerRef.current = new OperationReviewer({
+      open: async sessionId => {
+        // Captured once: the runtime that narrows the session is the one that
+        // runs it, even if a restart replaces the current runtime meanwhile.
+        const runtime = props.runtimeRef.current
+        const bridge = runtime.interaction
+        if (bridge === undefined) throw new Error('this runtime has no private channel')
+        await bridge.registerReviewer(sessionId)
+        return async prompt => {
+          const result = await runtime.run(prompt, { sessionId, interactive: false })
+          return { text: result.finalResponse, ...(result.projection.lastTurnError === undefined ? {} : { turnError: result.projection.lastTurnError }) }
+        }
+      },
+      locale: () => presentationRef.current.locale ?? 'en',
+      status: status => { if (mountedRef.current) setReviewStatus(status) },
+      outcome: outcome => {
+        if (!mountedRef.current) return
+        const reviewLocale = presentationRef.current.locale ?? 'en'
+        const zh = reviewLocale === 'zh-CN'
+        if (outcome.kind === 'report') {
+          const { title, text } = describeReview(outcome.report, outcome.evidence, outcome.elapsedMs, reviewLocale)
+          setTranscript(state => appendSystemMessage(state, text, title, nextId('review')))
+          return
+        }
+        const request = (outcome.evidence.requests[0] ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+        const text = outcome.kind === 'failed'
+          ? (zh ? `「${request}」这一轮的审查没能完成：${outcome.reason}` : `The review of "${request}" did not finish: ${outcome.reason}`)
+          : (zh ? `「${request}」这一轮没有审查：它还在排队时，又有一轮结束了，只保留最新的一轮。` : `"${request}" was not reviewed: another turn finished while it waited, and only the newest is kept.`)
+        setTranscript(state => appendSystemMessage(state, text, zh ? '操作审查' : 'operation review', nextId('review')))
+      },
+    })
+  }
+  useEffect(() => () => { reviewerRef.current?.dispose() }, [])
+
+  /** Hand a finished turn to the reviewer, when it changed something and review is on. */
+  const submitReviewRef = useRef((_sessionId: string, _prompt: string, _result: Awaited<ReturnType<HarnessRuntime['run']>>): void => undefined)
+  submitReviewRef.current = (turnSessionId, turnPrompt, result) => {
+    if (!operationReviewRef.current) return
+    const evidence = collectTurnEvidence({
+      sessionId: turnSessionId,
+      prompt: turnPrompt,
+      events: result.events,
+      finalMessage: result.finalResponse,
+      ...(result.projection.lastTurnError === undefined ? {} : { turnError: result.projection.lastTurnError }),
+      droppedEvents: result.droppedEventCount,
+      risk: localRiskContext(presentationRef.current.workspace),
+    })
+    if (evidence === undefined) return
+    const runtime = props.runtimeRef.current
+    // Without the private channel the review session could not be made
+    // read-only, and an unrestricted reviewer is not one to start.
+    if (runtime.interaction?.canSteer !== true) {
+      if (reviewUnavailableRef.current === runtime) return
+      reviewUnavailableRef.current = runtime
+      setTranscript(state => appendSystemMessage(state, locale === 'zh-CN'
+        ? '这个运行时没有私有通道，没法把审查会话限制成只读，所以不做操作审查。'
+        : 'This runtime has no private channel, so a review session could not be made read-only; operation review is skipped.',
+        locale === 'zh-CN' ? '操作审查不可用' : 'operation review unavailable', nextId('review')))
+      return
+    }
+    reviewerRef.current?.submit(evidence)
+  }
+
   const commandContext = useCallback((): TerminalCommandContext => ({
     sessionTiming: clock.snapshot(), compaction: clock.compaction,
     locale,
@@ -734,6 +807,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           nextId('turn-error'),
         ))
       }
+      submitReviewRef.current(rootSessionId, prompt, result)
     } catch (error) {
       queue.pause()
       if (interruptingRef.current || batch.closed) return
@@ -948,6 +1022,14 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
         if (isAborted(signal)) return
         const next = { ...preferences, ...outcome.patch }
         setPreferences(next)
+        if (outcome.patch.operationReview !== undefined) {
+          if (!outcome.patch.operationReview) setReviewStatus({ state: 'idle' })
+          setTranscript(state => appendSystemMessage(state, locale === 'zh-CN'
+            ? (outcome.patch.operationReview ? '操作审查已开启：从下一轮起，有改动的回合结束后会用只读会话核对一遍。' : '操作审查已关闭。')
+            : (outcome.patch.operationReview ? 'Operation review is on: from the next turn, each turn that changed something is checked by a read-only session.' : 'Operation review is off.'),
+            translate(locale, 'settings'), nextId('preferences')))
+          return
+        }
         setTranscript(state => appendSystemMessage(state,
           outcome.patch.locale === undefined ? translate(locale, 'pending')
             : translate(resolveLocale(next.locale), 'languageChanged', { locale: resolveLocale(next.locale) }),
@@ -1803,6 +1885,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
             context={commandContext()}
             clock={clock}
             plan={plan}
+            review={operationReviewOn ? reviewStatus : undefined}
           />
         )}
       </Box>
@@ -1971,7 +2054,7 @@ function CommandMenu({ suggestions, view, selected, width, locale }: {
   )
 }
 
-function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en', context, clock, plan }: {
+function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedKey, locale = 'en', context, clock, plan, review }: {
   activity: ToolActivityProjection
   rows: number
   droppedEvents: number
@@ -1981,8 +2064,10 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
   context: TerminalCommandContext
   clock: SessionClock
   plan?: readonly string[] | undefined
+  review?: ReviewStatus | undefined
 }): React.ReactElement {
   const inner = TOOL_SIDEBAR_WIDTH - 3
+  const reviewLine = review === undefined ? undefined : describeReviewStatus(review, locale)
   // Keep the unfocused sidebar short; focus exposes the full retained list.
   const notes = droppedEvents > 0 ? 4 : 3
   // The plan takes at most a third of the column: it is context for the work,
@@ -1996,7 +2081,7 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
   const heading = locale === 'zh-CN' ? `← 概览 / 工具${focused ? ` ${selectedIndex + 1}/${activity.rows.length}` : ''}` : focused
     ? `tools · focus ${selectedIndex < 0 ? '-' : selectedIndex + 1}/${activity.rows.length}`
     : 'tools'
-  const capacity = Math.max(1, Math.min(rows - notes - statsRows - planRows, focused ? Infinity : 6))
+  const capacity = Math.max(1, Math.min(rows - notes - statsRows - planRows - (reviewLine === undefined ? 0 : 1), focused ? Infinity : 6))
   const start = !focused || selectedIndex < 0 ? Math.max(0, activity.rows.length - capacity) : Math.max(0, Math.min(selectedIndex, activity.rows.length - capacity))
   const visible = activity.rows.slice(start, start + capacity)
   return (
@@ -2010,6 +2095,11 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
           {plan.slice(0, planRows - 1).map((step, index) => (
             <Text key={index} wrap="truncate">{cropTerminalText(`${index + 1} ${sanitizeTerminalText(step)}`, inner)}</Text>
           ))}
+        </Box>
+      )}
+      {reviewLine !== undefined && (
+        <Box flexShrink={0}>
+          <Text color={reviewLine.color} wrap="truncate">{cropTerminalText(reviewLine.text, inner)}</Text>
         </Box>
       )}
       {visible.map(row => {
@@ -2041,6 +2131,20 @@ function ToolActivitySidebar({ activity, rows, droppedEvents, focused, selectedK
       <Box flexShrink={0}><Text dimColor wrap="truncate">/status · /context</Text></Box>
     </Box>
   )
+}
+
+/** One sidebar line for the latest review; nothing while none has run. */
+function describeReviewStatus(status: ReviewStatus, locale: Locale): { text: string; color: string } | undefined {
+  const zh = locale === 'zh-CN'
+  switch (status.state) {
+    case 'idle': return undefined
+    case 'running': return { text: zh ? `审查中… ${status.operations} 个操作${status.waiting ? ' · 1 轮排队' : ''}` : `reviewing ${status.operations} ops…${status.waiting ? ' · 1 waiting' : ''}`, color: 'cyan' }
+    case 'failed': return { text: zh ? '审查未完成' : 'review did not finish', color: 'red' }
+    case 'done':
+      if (status.verdict === 'clean') return { text: zh ? '审查 · 无问题' : 'review · clean', color: 'green' }
+      if (status.verdict === 'unparsed') return { text: zh ? '审查 · 见对话' : 'review · see transcript', color: 'yellow' }
+      return { text: zh ? `审查 · ${Math.max(1, status.findings)} 条提醒` : `review · ${Math.max(1, status.findings)} concern(s)`, color: 'yellow' }
+  }
 }
 
 function activityColor(state: ToolActivityState): string | undefined {

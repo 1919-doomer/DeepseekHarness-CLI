@@ -80,6 +80,12 @@ export interface RunActivityOptions {
   onEvent?: (event: NormalizedEvent, notification: HarnessNotification) => void
   onNotification?: (notification: HarnessNotification) => void
   activityTimeoutMs?: number
+  /**
+   * False for a session no person is watching, such as an operation review.
+   * It is then kept out of the interaction bridge entirely: it cannot raise a
+   * question, and starting it does not clear the plan another session shows.
+   */
+  interactive?: boolean
 }
 
 export interface RunActivityResult {
@@ -185,9 +191,10 @@ export class HarnessRuntime {
     this.activeSessions.add(sessionId)
     let promptAttempted = false
     let idleObserved = false
+    const bridge = options.interactive === false ? undefined : this.interaction
     try {
       await this.start()
-      this.interaction?.begin(sessionId)
+      bridge?.begin(sessionId)
       const client = this.client
       if (client === undefined) throw new DshcRuntimeError('Harness runtime did not initialize a client.', 'runtime')
 
@@ -202,10 +209,10 @@ export class HarnessRuntime {
         const messageId = await client.prompt(sessionId, [{ type: 'text', text: input }])
         let receiptObserved = false
         let deadline = Date.now() + activityTimeoutMs
-        let waitBaseline = this.interaction?.waitingMs ?? 0
+        let waitBaseline = bridge?.waitingMs ?? 0
 
         while (true) {
-          const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs, this.interaction, waitBaseline)
+          const notification = await nextBeforeDeadline(subscription.next(), deadline, activityTimeoutMs, bridge, waitBaseline)
           if (!receiptObserved) {
             if (!isInboxReceipt(notification, sessionId, messageId)) continue
             receiptObserved = true
@@ -213,7 +220,7 @@ export class HarnessRuntime {
             // the durable receipt is bounded by the same value, then the activity
             // receives a fresh full window once ownership is proven.
             deadline = Date.now() + activityTimeoutMs
-            waitBaseline = this.interaction?.waitingMs ?? 0
+            waitBaseline = bridge?.waitingMs ?? 0
           }
 
           const rootIdle = notification.method === 'session.status'
@@ -226,7 +233,7 @@ export class HarnessRuntime {
           // local memory budgets can never backpressure or truncate Harness truth.
           options.onNotification?.(notification)
           const event = projector.ingest(notification)
-          if (event.kind === 'tool-call') this.interaction?.expectCall(event.sessionId, event.callId, event.name)
+          if (event.kind === 'tool-call') bridge?.expectCall(event.sessionId, event.callId, event.name)
           meter.observe(event)
           options.onEvent?.(event, notification)
 
@@ -253,7 +260,7 @@ export class HarnessRuntime {
           projection: projector.state,
         }
       } finally {
-        this.interaction?.end(sessionId)
+        bridge?.end(sessionId)
         subscription.close()
       }
     } catch (error) {

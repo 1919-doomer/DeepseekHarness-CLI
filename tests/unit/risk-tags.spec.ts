@@ -129,6 +129,14 @@ describe('shell commands', () => {
     expect(tagsOf(...shell('ls ~'), { workspace: 'E:\\DSHUse' })).toEqual(['outside'])
   })
 
+  it('treats another spelling of the workspace as inside', () => {
+    // An 8.3 short name and the long name are one directory on Windows.
+    const context = { workspace: 'C:\\Users\\LIAOSI~1\\w', workspaceAliases: ['C:\\Users\\Liaosiyuan\\w'], home: 'C:\\Users\\Liaosiyuan' }
+    expect(tagsOf('write', JSON.stringify({ file_path: 'C:\\Users\\Liaosiyuan\\w\\a.txt', content: 'x' }), context)).toEqual([])
+    expect(tagsOf('write', JSON.stringify({ file_path: 'C:\\Users\\LIAOSI~1\\w\\a.txt', content: 'x' }), context)).toEqual([])
+    expect(tagsOf('write', JSON.stringify({ file_path: 'C:\\Users\\Liaosiyuan\\other.txt', content: 'x' }), context)).toEqual(['outside'])
+  })
+
   it('judges nothing outside without a workspace', () => {
     expect(tagsOf(...shell('Copy-Item a D:\\b'), {})).toEqual([])
   })

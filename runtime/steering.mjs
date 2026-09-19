@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { modeState, WORK_MODES } from './mode-state.mjs'
 import { planGate } from './plan-gate.mjs'
+import { reviewState } from './review-state.mjs'
 
 /**
  * Steering: put a message into the running turn rather than the next one.
@@ -23,7 +24,8 @@ import { planGate } from './plan-gate.mjs'
  * cancels work in flight; tokens already produced are kept.
  *
  * The same authenticated channel carries mode switches (`/mode`), which is the
- * other thing that used to need a new process.
+ * other thing that used to need a new process, and reviewer registration
+ * (`/reviewer`), which narrows a session to read-only before it exists.
  */
 export const name = 'dshc-steering'
 export const inject = ['agents']
@@ -42,7 +44,7 @@ export async function apply(ctx) {
     // Same posture as the interaction bridge: loopback only, POST only, bearer
     // token, and no browser-originated request is ever served.
     if (req.method !== 'POST' || req.headers.authorization !== `Bearer ${steerToken}` || req.headers.origin) { reject(403); return }
-    if (req.url !== '/steer' && req.url !== '/mode') { reject(404); return }
+    if (req.url !== '/steer' && req.url !== '/mode' && req.url !== '/reviewer') { reject(404); return }
     let size = 0
     const chunks = []
     req.on('data', chunk => { size += chunk.length; if (size > 64 * 1024) req.destroy(); else chunks.push(chunk) })
@@ -64,6 +66,15 @@ export async function apply(ctx) {
           }
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ changed, mode: modeState.get() }))
+          return
+        }
+        if (req.url === '/reviewer') {
+          // Narrowing happens at agent creation. A session that already has an
+          // agent was created without it, so refuse rather than pretend.
+          if (typeof body.sessionId !== 'string' || ctx.agents.get(body.sessionId)) { reject(409); return }
+          if (!reviewState.register(body.sessionId)) { reject(400); return }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end('{}')
           return
         }
         const sessionId = body.sessionId
