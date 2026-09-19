@@ -13,6 +13,8 @@ export type RuntimeBackend = 'bundled' | 'dsh-profile'
 export interface Preferences {
   animation?: boolean
   subagentWindows?: boolean
+  /** Review each turn that changed something in a separate read-only session. */
+  operationReview?: boolean
   locale: LocaleSetting
   replyLanguage: string
   mode: WorkMode
@@ -26,7 +28,7 @@ export interface Preferences {
   externalEditor?: string[]
 }
 export const DEFAULT_PREFERENCES: Readonly<Preferences> = Object.freeze({
-  locale: 'auto', replyLanguage: 'auto', mode: 'code', style: 'default', runtime: 'bundled', dshProfile: 'sdk', animation: true, subagentWindows: true,
+  locale: 'auto', replyLanguage: 'auto', mode: 'code', style: 'default', runtime: 'bundled', dshProfile: 'sdk', animation: true, subagentWindows: true, operationReview: true,
 })
 export interface ResolvedPreferences {
   values: Preferences
@@ -36,7 +38,7 @@ export interface ResolvedPreferences {
 }
 export function pickPreferences(value: Partial<Preferences>): Partial<Preferences> {
   return validatePreferences(Object.fromEntries(
-    ['locale', 'replyLanguage', 'mode', 'style', 'runtime', 'dshProfile', 'reasoningEffort', 'externalEditor', 'keybindings', 'animation', 'subagentWindows']
+    ['locale', 'replyLanguage', 'mode', 'style', 'runtime', 'dshProfile', 'reasoningEffort', 'externalEditor', 'keybindings', 'animation', 'subagentWindows', 'operationReview']
       .flatMap(key => {
         const item = value[key as keyof Preferences]
         return item === undefined ? [] : [[key, item]]
@@ -78,7 +80,7 @@ export function validatePreferences(value: unknown): Partial<Preferences> {
     if (key in enums) {
       const allowed: readonly string[] = enums[key as keyof typeof enums]
       if (typeof value !== 'string' || !allowed.includes(value)) throw new Error(`Invalid ${key}; expected ${allowed.join(', ')}`)
-    } else if (key === 'animation' || key === 'subagentWindows') {
+    } else if (key === 'animation' || key === 'subagentWindows' || key === 'operationReview') {
       if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`)
     } else if (key === 'replyLanguage') {
       if (typeof value !== 'string' || !/^(auto|[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$/.test(value)) throw new Error('Invalid replyLanguage')

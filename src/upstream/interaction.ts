@@ -155,6 +155,30 @@ export class InteractionBridge {
       req.end(JSON.stringify({ runtimeId: this.id, mode, ...(options.seedPlanFor === undefined ? {} : { seedPlanFor: options.seedPlanFor }) }))
     })
   }
+  /**
+   * Mark a session that does not exist yet as an operation reviewer, so the
+   * runtime creates it read-only. Must precede the session's first prompt: the
+   * runtime refuses a session that already has an agent, because narrowing only
+   * happens at creation. Rejects when the runtime has no private channel, so a
+   * reviewer is never started without the restriction.
+   */
+  async registerReviewer(sessionId: string): Promise<void> {
+    const steering = this.steering
+    if (steering === undefined) throw new Error('This runtime has no private channel, so a review session could not be made read-only.')
+    await new Promise<void>((resolve, reject) => {
+      const req = httpRequest(`${steering.url}/reviewer`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${steering.token}`, 'content-type': 'application/json' },
+        signal: AbortSignal.timeout(5_000),
+      }, response => {
+        response.resume()
+        if (response.statusCode === 200) resolve()
+        else reject(new Error(`Reviewer registration was refused (${response.statusCode}).`))
+      })
+      req.on('error', reject)
+      req.end(JSON.stringify({ runtimeId: this.id, sessionId }))
+    })
+  }
   cancel(): void { if (this.pending) { this.pending.response.destroy(); this.clear() } }
   private clear(): void { if (this.pending) this.waited += performance.now() - this.pending.started; this.pending = undefined; this.emit() }
   async close(): Promise<void> {

@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { posix, win32 } from 'node:path'
 import type { Locale } from '../i18n.js'
@@ -18,13 +19,23 @@ export type RiskTag = typeof RISK_TAGS[number]
 export interface RiskContext {
   /** Absolute workspace path. Without it nothing is judged to be outside. */
   workspace?: string
+  /**
+   * Other spellings of the same directory. On Windows `C:\Users\LIAOSI~1` and
+   * `C:\Users\Liaosiyuan` are one place, and a model may use either.
+   */
+  workspaceAliases?: readonly string[]
   /** Home directory for `~` and profile variables; without it they count as outside. */
   home?: string
 }
 
-/** The context for calls observed on this machine: its workspace and home. */
+/** The context for calls observed on this machine: its workspace, that workspace's real path, and home. */
 export function localRiskContext(workspace: string | undefined): RiskContext {
-  return workspace === undefined ? { home: homedir() } : { workspace, home: homedir() }
+  if (workspace === undefined) return { home: homedir() }
+  let real: string | undefined
+  try { real = realpathSync.native(workspace) } catch { /* gone or unreadable: keep the spelling we have */ }
+  return real === undefined || real === workspace
+    ? { workspace, home: homedir() }
+    : { workspace, workspaceAliases: [real], home: homedir() }
 }
 
 const LABELS: Record<Locale, Record<RiskTag, string>> = {
@@ -410,6 +421,10 @@ function resolveIn(workspace: string | undefined, path: string): string | undefi
 function isOutside(path: string, context: RiskContext, base = context.workspace): boolean {
   const workspace = context.workspace
   if (workspace === undefined) return false
+  // Inside under any spelling of the workspace is inside.
+  for (const alias of context.workspaceAliases ?? []) {
+    if (!isOutside(path, { ...context, workspace: alias, workspaceAliases: [] }, base === workspace ? alias : base)) return false
+  }
   const home = /^(~|\$home|\$env:userprofile|%userprofile%)(?=$|[\\/])/i.exec(path)
   // An unknown home is judged outside rather than guessed at.
   if (home !== null && context.home === undefined) return true
@@ -452,6 +467,129 @@ function commandLeavesWorkspace(command: string, context: CommandContext): boole
     if (outside(path!)) return true
   }
   return false
+}
+
+// --- read-only commands ----------------------------------------------------
+
+/**
+ * Commands that only look. Deliberately short: anything not listed counts as
+ * possibly changing something, because this decides whether a turn is worth
+ * reviewing and a missed change costs more than a spare review.
+ */
+const READ_ONLY_HEADS = new Set([
+  'ls', 'dir', 'gci', 'get-childitem', 'cat', 'type', 'gc', 'get-content', 'head', 'tail', 'less', 'more',
+  'rg', 'grep', 'egrep', 'fgrep', 'select-string', 'sls', 'findstr', 'jq', 'wc', 'cut', 'awk', 'diff', 'cmp', 'compare-object',
+  'echo', 'write-output', 'write-host', 'write-verbose', 'write-information', 'printf',
+  'pwd', 'get-location', 'gl', 'cd', 'set-location', 'sl', 'chdir', 'push-location', 'pushd', 'pop-location', 'popd',
+  'test-path', 'resolve-path', 'rvpa', 'get-item', 'gi', 'get-itemproperty', 'gp', 'get-itempropertyvalue',
+  'get-command', 'gcm', 'where', 'which', 'whoami', 'hostname', 'uname', 'get-date', 'date', 'get-random', 'start-sleep', 'sleep',
+  'measure-object', 'measure', 'select-object', 'select', 'sort-object', 'sort', 'group-object', 'group', 'get-member', 'gm',
+  'format-table', 'ft', 'format-list', 'fl', 'format-wide', 'fw', 'out-string', 'out-null', 'out-host',
+  'where-object', '?', 'foreach-object', '%', 'convertto-json', 'convertfrom-json', 'convertto-csv', 'convertfrom-csv', 'test-json',
+  'join-path', 'split-path', 'basename', 'dirname', 'realpath', 'readlink', 'stat', 'file', 'du', 'df', 'tree',
+  'get-process', 'ps', 'get-service', 'get-module', 'get-help', 'help', 'man', 'get-filehash', 'get-acl', 'get-psdrive',
+  'get-volume', 'get-computerinfo', 'get-host', 'get-variable', 'gv', 'get-alias', 'get-culture', 'get-executionpolicy',
+  'env', 'printenv', 'clear', 'cls', 'true', 'false',
+])
+/**
+ * PowerShell's approved verbs that by convention never change state. `Out-File`
+ * and `Write-*` to files are not here: only the stream writers are.
+ */
+const READ_ONLY_VERBS = /^(get|test|measure|select|sort|format|convertto|convertfrom|compare|group|resolve|split|join|find)-|^write-(output|host|verbose|debug|warning|information|progress|error)$/
+/** Control-flow words: the commands inside them are judged as their own segments. */
+const NEUTRAL_WORDS = new Set(['if', 'elseif', 'else', 'foreach', 'for', 'while', 'do', 'try', 'catch', 'finally', 'switch', 'return', 'break', 'continue', 'param', 'begin', 'process', 'end', 'throw', 'function', 'in', 'exit'])
+const VERSIONED = new Set(['node', 'npm', 'pnpm', 'yarn', 'bun', 'deno', 'python', 'python3', 'py', 'pip', 'pip3', 'uv', 'go', 'cargo', 'rustc', 'dotnet', 'java', 'javac', 'tsc', 'gh', 'pwsh', 'powershell', 'docker', 'code'])
+const VERSION_FLAGS = new Set(['--version', '-v', '-version', 'version'])
+const GIT_READS = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'cat-file', 'blame', 'describe', 'shortlog', 'grep', 'merge-base', 'name-rev', 'for-each-ref', 'show-ref', 'check-ignore', 'count-objects', 'version', 'help', 'whatchanged', 'rev-list', 'var'])
+/** A redirect whose target is a real file writes that file; `2>&1` and `> $null` do not. */
+const REDIRECT = /(?:[0-9*])?>{1,2}\s*(&[0-9]|\$null\b|\/dev\/null\b|nul\b|[^\s|;&)]+)/gi
+/** .NET and object methods that change things: `[IO.File]::WriteAllText(`, `(Get-Item x).Delete(`. */
+const CHANGING_METHOD = /[.:](delete|write|create|move|copy|append|remove|kill|start|save|encrypt|decrypt|set)\w*\s*\(/i
+
+/**
+ * True only when every command in the text is one that looks without
+ * changing: listings, reads, searches, `git status`, version queries. Unknown
+ * commands, redirects into files and state-changing method calls all make it
+ * false. Used to skip reviewing turns that only explored.
+ */
+export function isReadOnlyCommand(command: string): boolean {
+  const masked = maskQuotes(command)
+  for (const [, target] of masked.text.matchAll(REDIRECT)) {
+    if (!/^(&[0-9]|\$null|\/dev\/null|nul)$/i.test(target!)) return false
+  }
+  if (CHANGING_METHOD.test(masked.text)) return false
+  return masked.text.toLowerCase().split(SEPARATORS).every(segment => segmentReadOnly(words(segment)))
+}
+
+function segmentReadOnly(tokens: readonly string[]): boolean {
+  // Redirects were already judged over the whole command; what is left of
+  // `2>&1` after splitting on `&` is not an argument.
+  let rest = tokens.filter(word => word.length > 0 && !/^[0-9*]?>{1,2}/.test(word))
+  for (let guard = 0; guard < 4; guard++) {
+    while (rest.length > 0 && (NEUTRAL_WORDS.has(rest[0]!) || /^[a-z_][a-z0-9_]*=/.test(rest[0]!))) rest = rest.slice(1)
+    const first = rest[0]
+    if (first === undefined) return true
+    if (first.startsWith('$') || first.startsWith('[')) {
+      // `$x = <command>`: what is assigned decides. A bare expression
+      // (`$PSVersionTable.PSVersion`, `[Environment]::OSVersion`) only reads.
+      const glued = first.indexOf('=')
+      if (glued >= 0) { rest = [first.slice(glued + 1), ...rest.slice(1)].filter(word => word.length > 0); continue }
+      if (rest[1] === '=' || rest[1] === '+=') { rest = rest.slice(2); continue }
+      if (rest[1]?.startsWith('=') === true) { rest = [rest[1].slice(1), ...rest.slice(2)].filter(word => word.length > 0); continue }
+      return true
+    }
+    // A literal, a number, an array, a member access (`.Count`) or an operator
+    // continuation (`-join`, `, $x`, `+ 1`) is an expression, not a command. A
+    // script path (`./build.ps1`) is a command.
+    if (first.startsWith('\uE000') || /^\d[\d.,]*$/.test(first)) return true
+    if (/^[^a-z0-9]/.test(first) && !/^\.{1,2}[\\/]/.test(first)) return true
+    break
+  }
+
+  const head = commandName(rest[0]!)
+  const args = rest.slice(1)
+  const positional = args.filter(word => !word.startsWith('-'))
+  if (head === 'git') return gitReadOnly(args)
+  if (head === 'gh') {
+    const [group, verb] = positional
+    if (group === 'api') return !args.some(word => ['-x', '--method', '-f', '--field', '--raw-field', '--input'].includes(word) || word.startsWith('--method='))
+    return ['view', 'list', 'status', 'checks', 'diff'].includes(verb ?? '')
+  }
+  if (head === 'find') return !args.some(word => ['-delete', '-exec', '-execdir', '-ok', '-fprint'].includes(word))
+  if (head === 'sed') return !args.some(word => word.startsWith('-i') || word === '--in-place')
+  if (head === 'tar') return args.some(word => word === '--list' || (/^-?[a-z]*t[a-z]*$/.test(word) && !/[xcru]/.test(word)))
+  if (JS_PACKAGE_MANAGERS.has(head)) {
+    const sub = positional[0]
+    if (['ls', 'list', 'view', 'info', 'root', 'outdated', 'why', 'bin', 'prefix'].includes(sub ?? '')) return true
+    if (sub === 'config' && positional[1] === 'get') return true
+  }
+  if (VERSIONED.has(head)) return args.length > 0 && args.every(word => VERSION_FLAGS.has(word))
+  return READ_ONLY_HEADS.has(head) || READ_ONLY_VERBS.test(head)
+}
+
+function gitReadOnly(args: readonly string[]): boolean {
+  let index = 0
+  while (index < args.length && args[index]!.startsWith('-')) {
+    if (VERSION_FLAGS.has(args[index]!)) return true
+    index += ['-c', '--git-dir', '--work-tree', '--namespace'].includes(args[index]!) ? 2 : 1
+  }
+  const sub = args[index]
+  const rest = args.slice(index + 1)
+  const positional = rest.filter(word => !word.startsWith('-'))
+  const has = (...flags: string[]): boolean => rest.some(word => flags.includes(word))
+  if (sub === undefined || GIT_READS.has(sub)) return true
+  switch (sub) {
+    case 'branch': return positional.length === 0 && !has('-d', '--delete', '-m', '--move', '-c', '--copy', '-f', '--force', '-u', '--set-upstream-to', '--unset-upstream', '--edit-description')
+    case 'remote': return positional.length === 0 || ['show', 'get-url'].includes(positional[0]!)
+    case 'tag': return positional.length === 0 || has('-l', '--list')
+    case 'stash': return ['list', 'show'].includes(positional[0] ?? '')
+    case 'worktree': return positional[0] === 'list'
+    case 'reflog': return positional.length === 0 || positional[0] === 'show'
+    case 'apply': return has('--check', '--stat', '--numstat', '--summary')
+    case 'clean': return rest.some(word => word === '--dry-run' || /^-[a-z]*n[a-z]*$/.test(word))
+    case 'config': return has('--get', '--get-all', '--get-regexp', '--list', '-l') || (positional.length <= 1 && !has('--unset', '--unset-all', '--add', '--replace-all', '--edit', '-e', '--remove-section', '--rename-section'))
+    default: return false
+  }
 }
 
 // --- helpers ---------------------------------------------------------------

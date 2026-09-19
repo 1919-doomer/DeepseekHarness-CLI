@@ -3,6 +3,7 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence, { type JsonlCompression } from '@deepseek-ai/dsh-session-persistence-jsonl'
 import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { isAbsolute, relative, resolve } from 'node:path'
+import { isReviewSessionId } from '../review/session.js'
 import {
   diagnosticHistorySummary,
   historySearchText,
@@ -43,7 +44,9 @@ export class JsonlHistoryReader implements HistoryReader {
 
     return this.withBackend(async (backend) => {
       const snapshots = await backend.listSnapshots(signal)
-      const { inScope, candidates } = selectHistorySnapshots(snapshots, workspace, allWorkspaces, limit)
+      // Operation reviews are sessions nobody talked in; they are not history.
+      const conversations = snapshots.filter(snapshot => !isReviewSessionId(String(snapshot.header.id)))
+      const { inScope, candidates } = selectHistorySnapshots(conversations, workspace, allWorkspaces, limit)
       const diagnostics: string[] = []
       const inspected = await mapLimit(candidates, INSPECTION_CONCURRENCY, async (snapshot) => {
         let detail: HistorySessionDetail
@@ -79,7 +82,7 @@ export class JsonlHistoryReader implements HistoryReader {
         root: this.root,
         workspace,
         allWorkspaces,
-        totalSnapshots: snapshots.length,
+        totalSnapshots: conversations.length,
         matchingSnapshots: inScope.length,
         inspectedSnapshots: candidates.length,
         omittedSnapshots: Math.max(0, inScope.length - candidates.length),
