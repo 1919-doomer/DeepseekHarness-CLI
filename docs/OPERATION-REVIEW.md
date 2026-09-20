@@ -36,7 +36,7 @@ reviewed; that is about half of the turns that used any tool.
 The reviewer gets an evidence block collected from the turn's own events: the
 request and anything added while it ran, the declared plan, every operation with
 its outcome, an excerpt of the arguments and output for calls that changed
-something (long output keeps its head and tail), the ⚠ risk hints, and the
+something (long output keeps its head and tail), the bracketed risk hints, and the
 closing summary. Everything is bounded; what was left out is stated.
 
 It runs as its own session in the same runtime, with a fresh `review-<hex>` id

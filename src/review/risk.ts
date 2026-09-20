@@ -58,9 +58,9 @@ export function needsAttention(tags: readonly RiskTag[]): boolean {
   return tags.some(tag => ATTENTION.has(tag))
 }
 
-/** `⚠删除·越界`, or the empty string when there is nothing to flag. */
+/** `[删除·越界]`, or the empty string when there is nothing to flag. */
 export function formatRiskTags(tags: readonly RiskTag[], locale: Locale = 'en'): string {
-  return tags.length === 0 ? '' : `⚠${tags.map(tag => riskTagLabel(tag, locale)).join('·')}`
+  return tags.length === 0 ? '' : `[${tags.map(tag => riskTagLabel(tag, locale)).join('·')}]`
 }
 
 export function classifyToolCall(name: string, argumentsJson: string, context: RiskContext = {}): readonly RiskTag[] {

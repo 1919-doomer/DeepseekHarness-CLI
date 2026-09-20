@@ -3,6 +3,7 @@ import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { HistoryMessage, HistorySessionDetail } from './types.js'
 
 export const MAX_HISTORY_EVIDENCE_CHARS = 64 * 1024
+export const MAX_COMPACT_HISTORY_CHARS = 12_000
 
 export interface HistoryAskSelection {
   detail: HistorySessionDetail
@@ -12,6 +13,8 @@ export interface HistoryAskSelection {
   truncated: boolean
   omittedMessageCount: number
   secretWarning: boolean
+  compact?: boolean
+  originalChars?: number
 }
 
 export type HistoryHandoffPurpose = 'ask' | 'continue'
@@ -21,6 +24,7 @@ export function selectHistoryEvidence(
   seqs: readonly number[] | undefined,
   question: string,
   purpose: HistoryHandoffPurpose = 'ask',
+  compact = false,
 ): HistoryAskSelection {
   if (question.trim().length === 0) {
     throw new Error(`/history ${purpose} requires ${purpose === 'ask' ? 'a question' : 'a next instruction'} after --`)
@@ -33,8 +37,37 @@ export function selectHistoryEvidence(
     if (missing.length > 0) throw new Error(`history sequences are unavailable or not message events: ${missing.join(', ')}`)
   }
 
+  if (compact) {
+    // Preserve the earliest retained request plus recent instructions/answers;
+    // noisy tool output must not push the final user request out of the handoff.
+    const keep = new Set<HistoryMessage>()
+    const firstUser = selected.find(message => message.role === 'user')
+    if (firstUser) keep.add(firstUser)
+    const recent = [...selected].reverse()
+    for (const message of recent.filter(message => message.role === 'user').slice(0, 4)) keep.add(message)
+    for (const message of recent.filter(message => message.role === 'assistant').slice(0, 4)) keep.add(message)
+    for (const message of recent.filter(message => message.role === 'tool').slice(0, 3)) keep.add(message)
+    for (const message of recent) { if (keep.size >= 12) break; keep.add(message) }
+    const limit = Math.floor(MAX_COMPACT_HISTORY_CHARS / keep.size)
+    const messages = selected.filter(message => keep.has(message)).map(message => {
+      if (message.text.length <= limit) return { ...message }
+      const marker = '\n[... middle omitted from local history excerpt ...]\n'
+      const half = Math.floor((limit - marker.length) / 2)
+      const head = message.text.slice(0, half).replace(/[\uD800-\uDBFF]$/, '')
+      const tail = message.text.slice(-half).replace(/^[\uDC00-\uDFFF]/, '')
+      return { ...message, text: head + marker + tail,
+        truncatedChars: message.truncatedChars + message.text.length - head.length - tail.length }
+    })
+    const omittedMessageCount = (seqs === undefined ? detail.droppedMessageCount : 0) + selected.length - messages.length
+    return { detail, question, messages, compact: true,
+      originalChars: selected.reduce((sum, message) => sum + message.text.length, 0),
+      estimatedTokens: Math.ceil((messages.reduce((sum, message) => sum + message.text.length, 0) + question.length) / 4),
+      omittedMessageCount, truncated: omittedMessageCount > 0 || messages.some(message => message.truncatedChars > 0),
+      secretWarning: messages.some(message => mayContainSecret(message.text)) }
+  }
+
   let budget = MAX_HISTORY_EVIDENCE_CHARS
-  const omittedMessageCount = seqs === undefined ? detail.droppedMessageCount : 0
+  let omittedMessageCount = seqs === undefined ? detail.droppedMessageCount : 0
   let truncated = omittedMessageCount > 0
   const bounded: HistoryMessage[] = []
   for (const message of selected) {
@@ -44,9 +77,10 @@ export function selectHistoryEvidence(
     }
     const text = message.text.length <= budget ? message.text : message.text.slice(0, budget)
     if (text.length < message.text.length || message.truncatedChars > 0) truncated = true
-    bounded.push({ ...message, text })
+    bounded.push({ ...message, text, truncatedChars: message.truncatedChars + message.text.length - text.length })
     budget -= text.length
   }
+  omittedMessageCount += selected.length - bounded.length
   const characterCount = bounded.reduce((total, message) => total + message.text.length, 0) + question.length
   return {
     detail,
@@ -109,6 +143,9 @@ export function fingerprintHistoryAskSelection(
       text: message.text,
     })),
     omittedMessageCount: selection.omittedMessageCount,
+    compact: selection.compact === true,
+    originalChars: selection.originalChars,
+    truncatedChars: selection.messages.map(message => message.truncatedChars),
   }
   return createHash('sha256').update(JSON.stringify(promptBearingValue)).digest('hex')
 }
@@ -130,25 +167,33 @@ export function renderHistoryAskReview(
       : []),
     `source session: ${sanitizeTerminalText(selection.detail.summary.id)}`,
     `selected messages: ${selection.messages.length}`,
+    ...(selection.compact ? [
+      'Local compact excerpts (not a model-written summary). First retained request and recent messages take priority.',
+      `retained text: ${selection.messages.reduce((sum, message) => sum + message.text.length, 0)} / ${selection.originalChars} characters`,
+    ] : []),
     `estimated prompt tokens: ~${selection.estimatedTokens.toLocaleString('en-US')} (character estimate, not provider metering)`,
     ...(selection.omittedMessageCount === 0
       ? []
-      : [`warning: ${selection.omittedMessageCount} older messages were omitted by the bounded history projection; "all" is not the complete source session`]),
+      : [`warning: ${selection.omittedMessageCount} messages were omitted by local history limits; "all" is not the complete source session`]),
     ...(selection.truncated && selection.omittedMessageCount === 0 ? ['warning: local evidence limits truncated this selection'] : []),
     ...(selection.secretWarning ? ['warning: selected evidence resembles credentials or private keys; review before sending'] : []),
     '',
     ...lines,
+    ...(selection.compact ? ['', 'Exact excerpts to be sent:', ...historySources(selection).map(sanitizeTerminalText)] : []),
   ].join('\n')
 }
 
 function historySources(selection: HistoryAskSelection): string[] {
-  return selection.messages.map(message => {
-    const label = historyCitation(message)
-    return [
-      `${label} role=${message.role} time=${safeIso(message.time)}`,
-      `evidence-json=${JSON.stringify({ text: message.text })}`,
-    ].join('\n')
-  })
+  return [
+    `history-selection-json=${JSON.stringify({ compact: selection.compact === true, omittedMessages: selection.omittedMessageCount, truncated: selection.truncated })}`,
+    ...selection.messages.map(message => {
+      const label = historyCitation(message)
+      return [
+        `${label} role=${message.role} time=${safeIso(message.time)}`,
+        `evidence-json=${JSON.stringify({ text: message.text, omittedChars: message.truncatedChars })}`,
+      ].join('\n')
+    }),
+  ]
 }
 
 export function parseHistorySeqs(raw: string | undefined): number[] | undefined {

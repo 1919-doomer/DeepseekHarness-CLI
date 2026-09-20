@@ -49,6 +49,7 @@ import {
   appendSystemMessage,
   appendUserPrompt,
   initialTerminalTranscript,
+  visibleTranscriptBlocks,
   reduceTerminalEvent,
   type TerminalTranscriptState,
 } from './transcript.js'
@@ -60,7 +61,7 @@ import { RuntimeCloseTracker } from './runtime-ownership.js'
 import {
   formatActivityCounts,
   formatActivityRow,
-  projectToolActivity,
+  ToolActivityCache,
   type ToolActivityProjection,
   type ToolActivityState,
 } from './tool-activity.js'
@@ -413,6 +414,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const presentationRef = useRef<{ workspace: string; locale?: Locale }>({ workspace: props.metadata.workspace })
   presentationRef.current = { workspace: metadata.workspace, locale }
   const riskContext = useMemo(() => localRiskContext(metadata.workspace), [metadata.workspace])
+  const toolActivityCache = useMemo(() => new ToolActivityCache(), [])
   const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
   // An anchored row keeps the reading position when a reply grows below it.
@@ -1524,7 +1526,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
           return
         }
         if (keyInput.toLowerCase() === 'c') {
-          const command = props.history.continuationCommand()
+          const command = props.history.continuationCommand(locale)
           if (command !== undefined) {
             selectView(undefined)
             setEditor(command, graphemeCount(command))
@@ -1831,15 +1833,13 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
     // the thing they must not have to go looking for — dropping every tool
     // block regardless of state hid both, and silently defeated the terminal
     // injection assertion that a renderer's output reaches the screen at all.
-    const shown = sidebarVisible
-      ? blocks.filter(block => block.kind !== 'tool' || block.state !== 'success')
-      : blocks
+    const shown = visibleTranscriptBlocks(blocks, sidebarVisible)
     return transcriptLayoutCache.prepare(shown, transcriptWidth, locale)
   }, [transcriptLayoutCache, transcript.blocks, transcriptWidth, sidebarVisible, locale, agentWindows, agentWindowRevision])
   const visible = selectTranscriptPage(transcriptLayout, bodyRows, scrollAnchor)
   scrollNavigationRef.current = { layout: transcriptLayout, page: visible }
   const activity = sidebarVisible
-    ? projectToolActivity(agentWindows ? eventHistory.items.filter(event => !agentWindows.separated('sessionId' in event ? event.sessionId : undefined) && !externalSessions.current.has('sessionId' in event ? event.sessionId ?? '' : '')) : eventHistory.items, sessionId, riskContext)
+    ? toolActivityCache.prepare(agentWindows ? eventHistory.items.filter(event => !agentWindows.separated('sessionId' in event ? event.sessionId : undefined) && !externalSessions.current.has('sessionId' in event ? event.sessionId ?? '' : '')) : eventHistory.items, sessionId, riskContext)
     : undefined
   activityRowKeysRef.current = activity?.rows.map(row => row.key) ?? []
   const queuedCount = queue.list().length
@@ -1921,7 +1921,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
               <Text dimColor wrap="truncate">{fileChoices.length > 0 ? translate(locale, 'fileHint') : toolFocus
                 ? sidebarPage === 'overview' ? locale === 'zh-CN' ? '↑↓ 滚动概览 · ←→ 切换工具 · Tab / Esc 返回' : '↑↓ scroll overview · ←→ tools · Tab / Esc return' : translate(locale, 'toolFocusHint')
                 : phase === 'running'
-                  ? `${translate(locale, 'busyHint')} · ${translate(locale, 'queued', { count: queuedCount })}`
+                  ? `${translate(locale, props.runtimeRef.current.interaction?.canSteer === true ? 'steerHint' : 'busyHint')} · ${translate(locale, 'queued', { count: queuedCount })}`
                   : commandBusy ? translate(locale, 'localBusy')
                     // The arrows and Tab mean something different while the
                     // menu is open, so the line says which meaning is live

@@ -176,8 +176,8 @@ describe('file tools', () => {
 
 describe('formatting', () => {
   it('names each tag once, in a fixed order, in the person\'s language', () => {
-    expect(formatRiskTags(['delete', 'outside'], 'zh-CN')).toBe('⚠删除·越界')
-    expect(formatRiskTags(['history', 'outward', 'network'], 'en')).toBe('⚠history·outward·network')
+    expect(formatRiskTags(['delete', 'outside'], 'zh-CN')).toBe('[删除·越界]')
+    expect(formatRiskTags(['history', 'outward', 'network'], 'en')).toBe('[history·outward·network]')
     expect(formatRiskTags([], 'zh-CN')).toBe('')
   })
 })
@@ -197,7 +197,7 @@ describe('where the tags appear', () => {
     state = reduceTerminalEvent(state, call('pwsh', { command: 'git status', description: 'Show status' }, 'c2'),
       host, 'a', 'root', false, { workspace: 'E:\\DSHUse', locale: 'zh-CN' })
     expect(state.blocks.find(block => block.id === terminalBlockId('tool', 'a', 'root', 'c1'))?.title)
-      .toBe('⚠删除·越界 pwsh · Delete old build')
+      .toBe('[删除·越界] pwsh · Delete old build')
     expect(state.blocks.find(block => block.id === terminalBlockId('tool', 'a', 'root', 'c2'))?.title)
       .toBe('pwsh · Show status')
   })
@@ -210,7 +210,7 @@ describe('where the tags appear', () => {
     ], 'root', windows)
     expect(rows[0]!.risks).toEqual(['history', 'outward', 'network'])
     expect(rows[1]!.risks).toBeUndefined()
-    expect(formatActivityRow(rows[0]!, 80, true, 'zh-CN')).toBe('▸ ⚠改历史·对外·联网 pwsh · Force push')
+    expect(formatActivityRow(rows[0]!, 80, true, 'zh-CN')).toBe('▸ [改历史·对外·联网] pwsh · Force push')
     expect(formatActivityRow(rows[1]!, 80, true, 'zh-CN')).toBe('▸ read · src/app.ts')
   })
 
@@ -219,6 +219,6 @@ describe('where the tags appear', () => {
     let written = ''
     const renderer = new PlainRenderer({ output: { write: (text: string) => { written += text } }, rootSessionId: 'root', workspace: 'E:\\DSHUse' })
     renderer.render(call('write', { file_path: 'C:\\Windows\\x.txt', content: 'x' }))
-    expect(written).toContain('⚠outside {')
+    expect(written).toContain('[outside] {')
   })
 })

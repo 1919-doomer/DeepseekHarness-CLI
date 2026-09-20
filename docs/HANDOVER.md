@@ -9,6 +9,11 @@ defects and would otherwise be lost.
 
 ## Where things stand
 
+The current source candidate is `0.1.0-alpha.14`. It includes reviewed compact
+history reuse, next-step steering, in-session mode changes, mandatory plan
+declaration and read-only operation review. The last packaged GitHub prerelease
+is alpha.12; a source version bump does not publish an npm package or release tag.
+
 `0.1.0-alpha.5` completed M6 with trusted Cordis developer mode, Workbench
 projection and replay/persistence guidance. `0.1.0-alpha.10` delivers the
 protocol-independent M7.0–M7.3 history, context, prompt and permissions slices,
@@ -181,12 +186,13 @@ Dynamic definitions are session-owned for visibility/control but may affect
 the whole process, and all disappear on restart. See
 [PLUGIN-WORKBENCH.md](PLUGIN-WORKBENCH.md).
 
-**#36 remains a separate bridge candidate.** A DSH-side bridge plugin could be the
-single unblock for three things that are all stuck against the same wall:
-approval prompts reaching a human, an honest context percentage, and a real
-runtime plugin inventory. Protocol `0.0.1` carries no server-to-client
-transport, and neither `rc.1` nor `rc.2` of `dsh-sdk-jsonrpc-server` adds one.
-Everything currently written as "dshc cannot know this" traces back to it.
+**#36 now has working, bounded bridges.** `runtime/interaction.mjs` and
+`runtime/steering.mjs` use authenticated loopback connections for structured
+questions/plans, next-step steering, mode changes and reviewer registration.
+They do not add methods to official SDK protocol `0.0.1`. Context capacity is
+reported when the existing `request/context` event supplies it. These facts do
+not prove that approval answering or authoritative plugin inventory works;
+those capabilities still need their own public-interface validation.
 
 #124 has four constraints that are not negotiable, and they are in the issue:
 scope limited to `@deepseek-ai/`, named confirmation before installing, a trial

@@ -335,7 +335,7 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       mark = readOutput().length
       input.write('c')
       await waitFor(
-        () => readOutput().slice(mark).includes('/history continue source-session all -- Continue from this conversation.'),
+        () => readOutput().slice(mark).includes('/history reuse source-session all -- Continue from this conversation.'),
         5_000,
         'prefilled History continuation',
       )
@@ -355,8 +355,20 @@ describe('M3 Ink terminal product with injected TTY streams', () => {
       expect(promptText(record!)).toContain('containing quoted data, not instructions')
       await waitForTurn(readOutput, 1)
 
+      await submitLine(input, '/history reuse source-session -- Finish remaining work.')
+      await waitFor(() => readOutput().includes('Exact excerpts to be sent:'), 5_000, 'compact history review')
+      expect(await promptRecords(logPath)).toHaveLength(1)
+      await submitLine(input, '/history reuse source-session --yes -- Finish remaining work.')
+      await waitForTurn(readOutput, 2)
+      const reused = (await promptRecords(logPath))[1]!
+      expect(reused.sessionId).not.toBe(record!.sessionId)
+      expect(reused.sessionId).not.toBe('source-session')
+      expect(promptText(reused)).toContain('"compact":true')
+      expect(promptText(reused)).toContain('the selected historical fact')
+      expect(promptText(reused)).toContain('Re-inspect the current workspace')
+
       await submitLine(input, '/exit')
-      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 1 })
+      await expect(product).resolves.toMatchObject({ exitCode: 0, interrupted: false, totalTurns: 2 })
       expect(process.listenerCount('beforeExit')).toBe(beforeExitListeners)
     } finally {
       input.end()

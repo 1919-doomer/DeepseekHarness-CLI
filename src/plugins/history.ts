@@ -31,6 +31,8 @@ const HISTORY_USAGE = [
   '/history open <session-id> [--cross-workspace]',
   '/history ask <session-id> [all|seqs] [--cross-workspace] [--yes] -- <question>',
   '/history continue <session-id> [all|seqs] [--cross-workspace] [--yes] -- <next instruction>',
+  '/history reuse <session-id> [all|seqs] [--cross-workspace] [--yes] -- <next instruction>',
+  'reuse sends reviewed compact excerpts; ask/continue also accept --compact.',
 ].join('\n')
 
 type HistoryCatalogState = {
@@ -141,7 +143,7 @@ export class HistoryWorkbench {
     return true
   }
 
-  continuationCommand(): string | undefined {
+  continuationCommand(locale: Locale = 'en'): string | undefined {
     const selected = this.state.kind === 'detail'
       ? { id: this.state.detail.summary.id, crossWorkspace: this.state.crossWorkspace }
       : this.state.kind === 'catalog'
@@ -151,7 +153,7 @@ export class HistoryWorkbench {
           }
         : undefined
     if (selected?.id === undefined || /\s/.test(selected.id)) return undefined
-    return `/history continue ${selected.id} all${selected.crossWorkspace ? ' --cross-workspace' : ''} -- Continue from this conversation.`
+    return `/history reuse ${selected.id} all${selected.crossWorkspace ? ' --cross-workspace' : ''} -- ${locale === 'zh-CN' ? '根据选定历史继续工作，先检查当前工作区和未完成事项。' : 'Continue from this conversation.'}`
   }
 
   render(locale: Locale = 'en'): string {
@@ -194,6 +196,13 @@ export class HistoryWorkbench {
       return { kind: 'view', viewId: 'history' }
     }
     if (mode === 'ask' || mode === 'continue') return this.handoff(workspace, args.slice(1), mode, signal)
+    if (mode === 'reuse') {
+      const forwarded = args.slice(1)
+      const separator = forwarded.indexOf('--')
+      if (separator < 0) throw new Error('/history reuse requires -- before the next instruction')
+      forwarded.splice(separator, 0, '--compact')
+      return this.handoff(workspace, forwarded, 'continue', signal)
+    }
 
     const allWorkspaces = mode === 'all'
     const text = mode === 'find' ? args.slice(1).join(' ').trim() : undefined
@@ -220,11 +229,12 @@ export class HistoryWorkbench {
     if (sessionId === undefined) throw new Error(`${command} requires a session id`)
     const confirmed = selector.includes('--yes')
     const crossWorkspace = selector.includes('--cross-workspace')
-    const selectionArgs = selector.slice(1).filter(value => value !== '--yes' && value !== '--cross-workspace')
+    const compact = selector.includes('--compact')
+    const selectionArgs = selector.slice(1).filter(value => !['--yes', '--cross-workspace', '--compact'].includes(value))
     if (selectionArgs.length > 1) throw new Error(`${command} accepts at most one sequence list`)
     const detail = await this.reader.inspect(sessionId, signal)
     assertHistoryScope(detail, workspace, crossWorkspace)
-    const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question, purpose)
+    const selection = selectHistoryEvidence(detail, parseHistorySeqs(selectionArgs[0]), question, purpose, compact)
     const review = renderHistoryAskReview(selection, purpose)
     const fingerprint = fingerprintHistoryAskSelection(selection, purpose)
     if (!confirmed) {
@@ -236,7 +246,7 @@ export class HistoryWorkbench {
           review,
           `review fingerprint: ${fingerprint.slice(0, 16)}`,
           '',
-          `Nothing was sent. Re-run the same ${command} command with --yes before -- after reviewing the source list.`,
+          `Nothing was sent. After review, confirm with:\n${command} ${selector.filter(value => value !== '--yes').map(quoteHistoryCommandArg).join(' ')} --yes -- ${quoteHistoryCommandArg(question)}`,
         ].join('\n'),
       }
     }
@@ -252,10 +262,18 @@ export class HistoryWorkbench {
       kind: 'submit-prompt',
       prompt: purpose === 'ask' ? buildHistoryAskPrompt(selection) : buildHistoryContinuePrompt(selection),
       displayText: `${title} · ${selection.messages.length} selected source${selection.messages.length === 1 ? '' : 's'}\n${question}`,
-      sourceSummary: `${selection.messages.length} messages from ${sessionId}`,
+      sourceSummary: `${selection.messages.length} ${compact ? 'compact excerpts' : 'messages'} from ${sessionId}; ${selection.omittedMessageCount} messages omitted`,
       newSession: true,
     }
   }
+}
+
+/** Quote for dshc's command tokenizer, not for an operating-system shell. */
+export function quoteHistoryCommandArg(value: string): string {
+  if (value.length > 0 && !/[\s'"]/.test(value)) return value
+  // Single-quoted segments preserve backslashes, including a trailing Windows
+  // separator. A literal apostrophe gets its own double-quoted segment.
+  return value.split("'").map(part => `'${part}'`).join('"\'"')
 }
 
 function assertHistoryScope(detail: HistorySessionDetail, workspace: string, crossWorkspace: boolean): void {

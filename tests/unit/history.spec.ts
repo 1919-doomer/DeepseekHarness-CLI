@@ -8,7 +8,8 @@ import {
   selectHistoryEvidence,
 } from '../../src/history/ask.js'
 import { projectHistorySession } from '../../src/history/projection.js'
-import { HistoryWorkbench } from '../../src/plugins/history.js'
+import { HistoryWorkbench, quoteHistoryCommandArg } from '../../src/plugins/history.js'
+import { parseTerminalCommand } from '../../src/terminal/product.js'
 import type { HistoryListQuery, HistoryReader } from '../../src/history/types.js'
 
 const header = {
@@ -23,6 +24,11 @@ function event(seq: number, type: string, data: unknown): SessionEvent {
 }
 
 describe('read-only history projection', () => {
+  it('round-trips confirmation instructions through the actual terminal tokenizer', () => {
+    for (const question of ['检查 "E:\\Project Files\\"', "Keep user's files", 'mix \'single\' and "double"', 'line one\nline two', '']) {
+      expect(parseTerminalCommand(`/history continue id --yes -- ${quoteHistoryCommandArg(question)}`)?.args.at(-1)).toBe(question)
+    }
+  })
   it('projects messages, route facts, tools, compaction and durable approval audit', () => {
     const detail = projectHistorySession(header, [
       event(0, 'session/title', { title: 'Historical task' }),
@@ -190,7 +196,7 @@ describe('read-only history projection', () => {
 
     expect(await workbench.openSelected()).toBe(true)
     expect(workbench.render()).toContain('session: history-session')
-    expect(workbench.continuationCommand()).toBe('/history continue history-session all -- Continue from this conversation.')
+    expect(workbench.continuationCommand()).toBe('/history reuse history-session all -- Continue from this conversation.')
     expect(workbench.back()).toBe(true)
     expect(workbench.render()).toContain('search: 2026-08 model')
     expect(workbench.render()).toContain('focus=list')
@@ -268,6 +274,17 @@ describe('read-only history projection', () => {
     expect(continuedPrompt).toContain('This is not resumed runtime or session state')
     expect(continuedPrompt).toContain('Re-inspect the current workspace')
     expect(continuedPrompt).toContain('changed after review')
+    const reuseArgs = ['reuse', 'history-session', '4', '--cross-workspace', '--', 'Reuse this work.']
+    const reuseReview = await command.execute(context, reuseArgs)
+    expect(reuseReview.kind === 'message' ? reuseReview.text : '').toContain('Exact excerpts to be sent:')
+    await expect(command.execute(context, ['continue', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Reuse this work.']))
+      .rejects.toThrow(/differs/)
+    await command.execute(context, reuseArgs)
+    const reused = await command.execute(context, ['reuse', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Reuse this work.'])
+    expect(reused).toMatchObject({ kind: 'submit-prompt', newSession: true })
+    expect(reused.kind === 'submit-prompt' ? reused.prompt : '').toContain('"compact":true')
+    await expect(command.execute(context, ['reuse', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Reuse this work.']))
+      .rejects.toThrow(/requires a review/)
   })
 
   it('builds continuation prompts without treating old runtime state as current', () => {

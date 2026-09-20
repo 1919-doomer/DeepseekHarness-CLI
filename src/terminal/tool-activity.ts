@@ -39,6 +39,35 @@ export interface ToolActivityProjection {
   counts: ToolActivityCounts
 }
 
+const EMPTY_RISK: RiskContext = {}
+
+/** Cache only the current retained tool events, never an unbounded call history. */
+export class ToolActivityCache {
+  private events: readonly NormalizedEvent[] = []
+  private root: string | undefined
+  private risk: RiskContext | undefined
+  private projection: ToolActivityProjection | undefined
+
+  prepare(events: readonly NormalizedEvent[], root: string, risk: RiskContext = EMPTY_RISK): ToolActivityProjection {
+    let index = 0
+    let unchanged = this.root === root && this.risk === risk && this.projection !== undefined
+    for (const event of events) {
+      if (!activityEvent(event)) continue
+      if (this.events[index++] !== event) unchanged = false
+    }
+    if (unchanged && index === this.events.length) return this.projection!
+    this.events = events.filter(activityEvent)
+    this.root = root
+    this.risk = risk
+    this.projection = projectToolActivity(this.events, root, risk)
+    return this.projection
+  }
+}
+
+function activityEvent(event: NormalizedEvent): boolean {
+  return event.kind === 'tool-call' || event.kind === 'tool-result' || event.kind === 'subagent-started'
+}
+
 /**
  * Project the retained event tail into one row per tool call.
  *

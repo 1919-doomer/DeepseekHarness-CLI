@@ -140,7 +140,7 @@ describe('the review prompt', () => {
     expect(prompt).toContain('Reply in Simplified Chinese')
     expect(prompt).toContain('VERDICT: clean | concerns')
     expect(prompt).toContain('#1 ')
-    expect(prompt).toContain('⚠history·outward·network')
+    expect(prompt).toContain('[history·outward·network]')
     expect(prompt).toContain('Declared plan: none')
     // Recorded text cannot close the evidence block early.
     expect(prompt.match(/<\/evidence>/g)).toHaveLength(2)

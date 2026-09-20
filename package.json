@@ -1,6 +1,6 @@
 {
   "name": "@liaosiyuan123/dshc",
-  "version": "0.1.0-alpha.13",
+  "version": "0.1.0-alpha.14",
   "description": "Unofficial terminal-native console for DeepSeek Harness",
   "license": "MIT",
   "author": "1919-doomer",
@@ -64,6 +64,8 @@
     "test": "vitest run --exclude \"tests/integration/official-*.spec.ts\"",
     "test:official-runtime": "pnpm build && vitest run tests/integration/official-runtime.spec.ts tests/integration/official-interactive.spec.ts tests/integration/official-repository-workflow.spec.ts tests/integration/official-sandbox-policy.spec.ts tests/integration/official-doctor.spec.ts tests/integration/official-event-contract.spec.ts tests/integration/official-cordis-workbench.spec.ts tests/integration/official-m7-upstream-gate.spec.ts tests/integration/official-plugin-install.spec.ts tests/integration/official-modes.spec.ts tests/integration/official-profile.spec.ts tests/integration/official-profile-bundles.spec.ts tests/integration/official-interaction.spec.ts tests/integration/official-review.spec.ts",
     "bench:replay": "tsx scripts/replay-benchmark.ts",
+    "bench:sidebar": "tsx scripts/tool-sidebar-benchmark.ts",
+    "test:live-history": "vitest run tests/integration/live-history.spec.ts",
     "test:pty": "tsx scripts/terminal-pty-smoke.ts",
     "test:live-v41": "vitest run tests/integration/live-v41.spec.ts tests/integration/live-preferences.spec.ts",
     "test:live-interaction": "vitest run tests/integration/live-interaction.spec.ts",

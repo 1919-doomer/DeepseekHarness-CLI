@@ -4,9 +4,20 @@ All notable changes to DeepSeek Harness CLI are recorded here. The project uses
 semantic prerelease versions; public alpha builds are published under the npm
 `alpha` dist-tag rather than `latest`.
 
+## 0.1.0-alpha.14 — 2026-09-20
+
+Source prerelease candidate. npm dist-tags are unchanged.
+
+- Fix ambiguous-width risk/tool glyphs, capability-aware steering hints and empty tool-only assistant headings while preserving running/error tool cards.
+- Add reviewed compact history reuse (`/history reuse`, or `c` in history): bounded original excerpts retain the first request and recent work, disclose omissions and enter a fresh session without moving the old queue.
+- Quote history confirmation commands without losing apostrophes, double quotes or Windows path separators.
+- Cache tool-sidebar projections across text/reasoning updates, invalidating when tool events, topology, retention, session or workspace changes; add `bench:sidebar`.
+
 ## 0.1.0-alpha.13 — 2026-09-14
 
-Local build; not yet published to GitHub or npm.
+Source changes were merged to GitHub; no alpha.13 package release was published.
+
+- Add crash diagnostics, batched reasoning events, single-step question submission, authenticated next-step steering, runtime-enforced plan declaration, in-session mode changes and read-only operation review (PRs #151–#157).
 
 - Refine the centered startup wordmark with a single warm-orange highlight sweep, responsive sizing and preserved input when skipped.
 - Restore tool calls to the default right sidebar, omit duplicate cards in wide chat, and retain inline cards when the sidebar is hidden or the terminal is narrow.

@@ -202,7 +202,7 @@ function kindMarker(kind: TranscriptBlock['kind']): string {
   switch (kind) {
     case 'user': return '›'
     case 'assistant': return '◆'
-    case 'tool': return '⚙'
+    case 'tool': return '▸'
     case 'agent': return '◇'
     case 'error': return '!'
     default: return '·'
