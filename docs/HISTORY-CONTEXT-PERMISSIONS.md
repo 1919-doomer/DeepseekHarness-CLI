@@ -39,7 +39,7 @@ is an equivalent discoverability alias.
 The SDK protocol does not expose `AgentRegistry.resume`, so this view offers no
 Resume action. That limitation is shown in the view rather than approximated
 with a private request. Pressing `c` on a list row or detail prepares, but does
-not submit, a review-first `/history continue` command.
+not submit, a review-first `/history reuse` command.
 
 ## Ask History
 
@@ -70,6 +70,28 @@ binding as Ask History, then creates a new ordinary session. Its prompt says
 that runtime state was not resumed and requires current workspace, process,
 dependency and repository facts to be re-inspected before use. It is a safe
 continuation handoff, not a substitute for an upstream resume contract.
+
+## Compact history reuse
+
+`/history reuse <session-id> [all|seqs] [--cross-workspace] -- <next instruction>`
+prepares local compact excerpts. Press `c` in the history browser to prepare this
+command, edit the next instruction, and submit it to review. The review displays
+the exact excerpts and a confirmation command with `--yes`; no model request is
+made before confirmation. `ask` and `continue` also accept `--compact`.
+
+Compaction retains at most 12 messages and 12,000 text characters: the first
+retained user request, recent user/assistant messages and recent tool results
+take priority. Long messages keep their beginning and end. This is deterministic
+excerpt selection, not a generated summary; omission counts, truncated character
+counts and source labels travel with the prompt. It does not compact the live
+Harness session or modify source artifacts. `/history continue` without
+`--compact` retains its larger 64 KiB evidence budget.
+
+Confirmation is bound to the instruction, action and exact selected excerpts,
+including the compaction choice. Changing them requires another review. Successful
+confirmation sends the evidence to a fresh session and pauses the prior session's
+queue; queued messages are not transferred. The new agent must re-check current
+workspace state, and quoted historical commands do not authorize new actions.
 
 ## Context and prompt views
 

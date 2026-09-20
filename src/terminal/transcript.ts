@@ -20,6 +20,18 @@ export interface TerminalTranscriptState {
   droppedBlockCount: number
 }
 
+export function visibleTranscriptBlocks(blocks: readonly TranscriptBlock[], sidebarVisible: boolean): readonly TranscriptBlock[] {
+  if (!sidebarVisible) return blocks
+  return blocks.filter(block => {
+    if (block.kind === 'tool') return block.state !== 'success'
+    // Hide tool-only assistant messages, but never hide failure or retention notices.
+    if (block.kind === 'assistant' && block.state !== 'error' && !block.textDroppedChars && !block.detailDroppedChars) {
+      return block.text.trim().length > 0 || (block.detail?.trim().length ?? 0) > 0
+    }
+    return true
+  })
+}
+
 export function initialTerminalTranscript(): TerminalTranscriptState {
   return { blocks: [], unknownEventCount: 0, totalBlockCount: 0, droppedBlockCount: 0 }
 }

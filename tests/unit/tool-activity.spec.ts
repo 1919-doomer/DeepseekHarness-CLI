@@ -4,6 +4,7 @@ import {
   formatActivityCounts,
   formatActivityRow,
   projectToolActivity,
+  ToolActivityCache,
   MAX_ACTIVITY_DEPTH,
 } from '../../src/terminal/tool-activity.js'
 import { terminalCellWidth } from '../../src/terminal/text-metrics.js'
@@ -37,6 +38,25 @@ function spawned(parentSessionId: string, childSessionId: string): NormalizedEve
 }
 
 describe('projectToolActivity', () => {
+  it('reuses the projection for text-only updates but invalidates on retention, tools, topology and workspace changes', () => {
+    const cache = new ToolActivityCache()
+    const risk = { workspace: 'E:\\work' }
+    const started = call('root', 'one', 'pwsh', '{"command":"git status"}', 10)
+    const finished = result('root', 'one', false, 30)
+    const initial = cache.prepare([started], 'root', risk)
+    const text = event('assistant/message', { message: { role: 'assistant', content: [{ type: 'text', text: 'text' }] } }, 'root')
+    expect(cache.prepare([started, text], 'root', risk)).toBe(initial)
+    const complete = cache.prepare([started, text, finished], 'root', risk)
+    expect(complete).toEqual(projectToolActivity([started, text, finished], 'root', risk))
+    expect(complete).not.toBe(initial)
+    const evicted = cache.prepare([text, finished], 'root', risk)
+    expect(evicted).toEqual(projectToolActivity([text, finished], 'root', risk))
+    const topology = [spawned('other', 'root'), finished]
+    expect(cache.prepare(topology, 'other', risk)).toEqual(projectToolActivity(topology, 'other', risk))
+    const changedRisk = { workspace: 'D:\\other' }
+    expect(cache.prepare([started], 'root', changedRisk)).toEqual(projectToolActivity([started], 'root', changedRisk))
+    expect(cache.prepare([], 'new', risk).rows).toHaveLength(0)
+  })
   it('reuses the description the transcript shows, and falls back to the tool name', () => {
     const { rows } = projectToolActivity([
       call('root', 'c1', 'read', '{"file_path":"src/stats.js"}'),

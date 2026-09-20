@@ -1,8 +1,14 @@
 # DeepSeek Harness CLI
 
+历史复用：输入 `/history`，选中会话后按 `c`，修改接下来要做的任务并回车。
+先审阅精简摘录，再执行界面显示的确认命令。也可直接使用
+`/history reuse <会话ID> -- 接下来要做的事`。精简保留起始需求与最近消息，
+长内容保留首尾并标明省略；确认后带入新会话，要求重新检查当前工作区。
+这不是恢复旧 runtime，也不是模型生成的总结。需要更完整的原文时使用 `/history continue`。
+
 > 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方、终端原生控制台。
 
-**当前状态：`0.1.0-alpha.13` 本地构建，尚未发布；最近的 GitHub 预发布版本为 alpha.12。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。自带运行时的完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
+**当前状态：`0.1.0-alpha.14` 源码预发布候选；最近的 GitHub 预发布版本为 alpha.12。** 默认 coding runtime 已包含 composition patch、vision、Web research、MCP bridge、受限的 Harness 插件自助安装，以及显式高权限的 Cordis 开发模式。自带运行时的完整 Harness 依赖闭包与兼容门禁均固定在 `0.1.1-rc.2`；运行时权威检查与交互授权仍等待上游正式扩展契约。
 
 [English](README.md) · [安装与卸载](docs/INSTALLATION.md) · [兼容性](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 历史/上下文/权限](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [演示](docs/DEMO.md) · [变更记录](CHANGELOG.md) · [扩展与配置](docs/EXTENSIONS.md) · [设计](docs/DESIGN.md) · [协议](docs/PROTOCOL.md) · [开发](docs/DEVELOPMENT.md) · [路线图](docs/ROADMAP.md)
 

@@ -1,5 +1,13 @@
 # DeepSeek Harness CLI
 
+To reuse past work, open `/history`, select a session and press `c`. Edit the next
+instruction, review the compact excerpts, then run the displayed confirmation
+command. `/history reuse <session-id> -- <next instruction>` is the direct entry.
+It keeps the first retained request and recent messages, discloses omitted text,
+and hands off to a fresh session that must re-check the workspace. It is excerpt
+selection, not runtime resume or a model-written summary; `/history continue`
+remains available with the larger evidence budget.
+
 GitHub prerelease `0.1.0-alpha.12` adds V4.1 `deepseek-flash`, Chinese/English preferences, work
 modes, queued input, read-only `/diff`, and an optional official Profile/Bundle
 backend. See [next-stage usage and validation](docs/NEXT-STAGE.md); the published
@@ -7,7 +15,7 @@ alpha.10 package does not contain these changes.
 
 > An unofficial terminal-native console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-**Status: `0.1.0-alpha.13` local build; the last GitHub prerelease is alpha.12.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full bundled Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
+**Status: `0.1.0-alpha.14` source prerelease candidate; the last GitHub prerelease is alpha.12.** The coding baseline includes composition patches, vision, web research, MCP bridging, restricted self-service Harness plugin installation and a trusted Cordis development mode. The full bundled Harness dependency closure and compatibility gate are pinned to `0.1.1-rc.2`; authoritative runtime inspection and interactive approval answering remain gated on an upstream extension contract.
 
 [简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Compatibility](docs/COMPATIBILITY.md) · [Plugin Workbench](docs/PLUGIN-WORKBENCH.md) · [M7 history/context/permissions](docs/HISTORY-CONTEXT-PERMISSIONS.md) · [Demo](docs/DEMO.md) · [Changelog](CHANGELOG.md) · [Extensions](docs/EXTENSIONS.md) · [Design](docs/DESIGN.md) · [Protocol](docs/PROTOCOL.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
