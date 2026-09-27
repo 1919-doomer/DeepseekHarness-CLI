@@ -55,4 +55,27 @@ describe('compact historical evidence', () => {
     expect(selection.omittedMessageCount).toBe(4)
     expect(selection.messages[0]!.truncatedChars).toBe(70000 - 64 * 1024)
   })
+
+  it('gives unused compact budget to long messages instead of an even per-message split', () => {
+    const answer = 'A'.repeat(6000)
+    const source = detail([...Array.from({ length: 11 }, (_, i) => message(i, i % 2 === 0 ? 'user' : 'assistant', 'short')),
+      message(11, 'assistant', answer)])
+    const selection = selectHistoryEvidence(source, undefined, 'Continue', 'continue', true)
+    expect(selection.messages).toHaveLength(12)
+    expect(selection.messages.at(-1)!.text).toBe(answer)
+    expect(selection.messages.every(m => m.truncatedChars === 0)).toBe(true)
+
+    const crowded = detail([message(0, 'user', 'task'), message(1, 'assistant', 'B'.repeat(20000)), message(2, 'assistant', 'C'.repeat(20000))])
+    const cut = selectHistoryEvidence(crowded, undefined, 'Continue', 'continue', true)
+    expect(cut.messages[0]!.text).toBe('task')
+    expect(cut.messages.reduce((n, m) => n + m.text.length, 0)).toBeLessThanOrEqual(MAX_COMPACT_HISTORY_CHARS)
+    expect(cut.messages[1]!.text.length).toBeGreaterThan(MAX_COMPACT_HISTORY_CHARS / 3)
+  })
+
+  it('does not split a surrogate pair at the full-mode evidence budget', () => {
+    const source = detail([message(1, 'user', 'x' + '😀'.repeat(40000))])
+    const text = selectHistoryEvidence(source, [1], 'Continue', 'continue').messages[0]!.text
+    expect(text).not.toMatch(/[\uD800-\uDBFF]$/)
+    expect(text.length).toBe(64 * 1024 - 1)
+  })
 })

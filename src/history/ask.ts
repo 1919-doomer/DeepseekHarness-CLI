@@ -48,13 +48,14 @@ export function selectHistoryEvidence(
     for (const message of recent.filter(message => message.role === 'assistant').slice(0, 4)) keep.add(message)
     for (const message of recent.filter(message => message.role === 'tool').slice(0, 3)) keep.add(message)
     for (const message of recent) { if (keep.size >= 12) break; keep.add(message) }
-    const limit = Math.floor(MAX_COMPACT_HISTORY_CHARS / keep.size)
-    const messages = selected.filter(message => keep.has(message)).map(message => {
+    const kept = selected.filter(message => keep.has(message))
+    const limit = compactLimit(kept.map(message => message.text.length))
+    const messages = kept.map(message => {
       if (message.text.length <= limit) return { ...message }
       const marker = '\n[... middle omitted from local history excerpt ...]\n'
       const half = Math.floor((limit - marker.length) / 2)
-      const head = message.text.slice(0, half).replace(/[\uD800-\uDBFF]$/, '')
-      const tail = message.text.slice(-half).replace(/^[\uDC00-\uDFFF]/, '')
+      const head = headSlice(message.text, half)
+      const tail = tailSlice(message.text, half)
       return { ...message, text: head + marker + tail,
         truncatedChars: message.truncatedChars + message.text.length - head.length - tail.length }
     })
@@ -75,7 +76,7 @@ export function selectHistoryEvidence(
       truncated = true
       break
     }
-    const text = message.text.length <= budget ? message.text : message.text.slice(0, budget)
+    const text = message.text.length <= budget ? message.text : headSlice(message.text, budget)
     if (text.length < message.text.length || message.truncatedChars > 0) truncated = true
     bounded.push({ ...message, text, truncatedChars: message.truncatedChars + message.text.length - text.length })
     budget -= text.length
@@ -216,6 +217,32 @@ export function parseHistorySeqs(raw: string | undefined): number[] | undefined 
     values.add(value)
   }
   return [...values].sort((left, right) => left - right)
+}
+
+/**
+ * Per-message cap that spends the compact budget where it is needed: messages
+ * shorter than an even share stay whole and their unused share goes to the
+ * longer ones, so one long final answer is not cut to 1/12 of the budget.
+ */
+function compactLimit(lengths: readonly number[]): number {
+  const sorted = [...lengths].sort((left, right) => left - right)
+  let remaining = MAX_COMPACT_HISTORY_CHARS
+  for (let index = 0; index < sorted.length; index++) {
+    const share = Math.floor(remaining / (sorted.length - index))
+    if (sorted[index]! > share) return share
+    remaining -= sorted[index]!
+  }
+  return MAX_COMPACT_HISTORY_CHARS
+}
+
+/** Leading slice that never ends on half of a UTF-16 surrogate pair. */
+function headSlice(text: string, length: number): string {
+  return text.slice(0, length).replace(/[\uD800-\uDBFF]$/, '')
+}
+
+/** Trailing slice that never starts on half of a UTF-16 surrogate pair. */
+function tailSlice(text: string, length: number): string {
+  return length <= 0 ? '' : text.slice(-length).replace(/^[\uDC00-\uDFFF]/, '')
 }
 
 function historyCitation(message: HistoryMessage): string {

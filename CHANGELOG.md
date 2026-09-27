@@ -12,6 +12,7 @@ Source prerelease candidate. npm dist-tags are unchanged.
 - Add reviewed compact history reuse (`/history reuse`, or `c` in history): bounded original excerpts retain the first request and recent work, disclose omissions and enter a fresh session without moving the old queue.
 - Quote history confirmation commands without losing apostrophes, double quotes or Windows path separators.
 - Cache tool-sidebar projections across text/reasoning updates, invalidating when tool events, topology, retention, session or workspace changes; add `bench:sidebar`.
+- Spend the compact history budget on long messages instead of splitting it evenly, keep `/history reuse` naming in its review and confirmation command, and stop full-mode history truncation from splitting surrogate pairs.
 
 ## 0.1.0-alpha.13 — 2026-09-14
 

@@ -414,7 +414,7 @@ function TerminalProductApp(props: AppProps): React.ReactElement {
   const presentationRef = useRef<{ workspace: string; locale?: Locale }>({ workspace: props.metadata.workspace })
   presentationRef.current = { workspace: metadata.workspace, locale }
   const riskContext = useMemo(() => localRiskContext(metadata.workspace), [metadata.workspace])
-  const toolActivityCache = useMemo(() => new ToolActivityCache(), [])
+  const [toolActivityCache] = useState(() => new ToolActivityCache())
   const [composition, setComposition] = useState(props.composition)
   const [showTools, setShowTools] = useState(true)
   // An anchored row keeps the reading position when a reply grows below it.
