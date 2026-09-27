@@ -45,7 +45,7 @@ jobs:
       - run: pnpm audit:prod
       - run: pnpm check
       - run: |
-          npm install --prefix node_modules/.dshc-profile-validation --ignore-scripts --no-audit --no-fund --save-exact @deepseek-ai/dsh@0.1.5-rc.2
+          npm install --prefix node_modules/.dshc-profile-validation --ignore-scripts --no-audit --no-fund --save-exact --before=2026-09-23T00:00:00Z @deepseek-ai/dsh@0.1.5-rc.3
           pnpm test:official-runtime
         env:
           DSHC_LIVE_PLUGIN_INSTALL: '1'
