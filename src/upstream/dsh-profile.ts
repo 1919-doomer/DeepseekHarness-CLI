@@ -9,7 +9,7 @@ import { captureProcess } from './process.js'
 import { DshcRuntimeError } from './errors.js'
 import type { Preferences } from '../preferences.js'
 
-export const TESTED_PROFILE_VERSION = '0.1.5-rc.2'
+export const TESTED_PROFILE_VERSION = '0.1.5-rc.3'
 export interface DshInstallation { command: string; args: string[]; version: string; packagePath?: string }
 export interface ProfileFacts {
   backend: 'dsh-profile'; name: string; path: string; home: string; cliVersion: string

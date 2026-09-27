@@ -8,6 +8,7 @@ semantic prerelease versions; public alpha builds are published under the npm
 
 Source prerelease candidate. npm dist-tags are unchanged.
 
+- Verify the optional `dsh-profile` backend against official CLI/SDK server `0.1.5-rc.3` (the npm `latest` tag) instead of `0.1.5-rc.2`; the bundled backend stays on `0.1.1-rc.2`.
 - Fix ambiguous-width risk/tool glyphs, capability-aware steering hints and empty tool-only assistant headings while preserving running/error tool cards.
 - Add reviewed compact history reuse (`/history reuse`, or `c` in history): bounded original excerpts retain the first request and recent work, disclose omissions and enter a fresh session without moving the old queue.
 - Quote history confirmation commands without losing apostrophes, double quotes or Windows path separators.

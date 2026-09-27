@@ -10,7 +10,7 @@ by normal dshc startup.
 | Backend | Version verified independently | Configuration |
 | --- | --- | --- |
 | `bundled` (default) | all direct Harness packages `0.1.1-rc.2` | shipped composition plus workspace patch, or explicit `--runtime-config` |
-| `dsh-profile` | official CLI and SDK server `0.1.5-rc.2` | official Bundle layers, Profile patch and DSH home patch |
+| `dsh-profile` | official CLI and SDK server `0.1.5-rc.3` | official Bundle layers, Profile patch and DSH home patch |
 
 Both advertise wire version `0.0.1`. This does **not** make other upstream versions
 compatible. Profile startup checks actual package identity, SDK server presence,
@@ -209,9 +209,9 @@ pnpm test:pty
 
 The official Profile suites need the exact CLI installed at `DSHC_TEST_DSH`, or
 the isolated `node_modules/.dshc-profile-validation` prefix used by CI. They skip
-when no CLI is provided. CI installs `@deepseek-ai/dsh@0.1.5-rc.2` with
-`--before=2026-09-11T00:00:00Z` because its caret-ranged SDK packages otherwise
-resolve to `0.1.5-rc.3`, which the exact `0.1.5-rc.2` gate rejects. Live model tests additionally require `DSHC_LIVE_V41=1`
+when no CLI is provided. CI installs `@deepseek-ai/dsh@0.1.5-rc.3` with
+`--before=2026-09-23T00:00:00Z` so its caret-ranged SDK packages resolve to the
+closure published with it. Live model tests additionally require `DSHC_LIVE_V41=1`
 and provider credentials. `DSHC_LIVE_METRICS_PATH` writes aggregate metrics only.
 `pnpm test:live-v41` without the opt-in spends no provider tokens.
 Set `DSHC_BENCH_SECONDS=30` (up to 600 seconds per load) for longer memory/retention
