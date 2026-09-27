@@ -14,7 +14,12 @@ export interface HistoryAskSelection {
   omittedMessageCount: number
   secretWarning: boolean
   compact?: boolean
+  /** Source characters, including any already dropped by local retention. */
   originalChars?: number
+  /** Source characters kept in compact excerpts, excluding omission markers. */
+  retainedChars?: number
+  /** True when the user selected `all` rather than explicit sequences. */
+  allSelected?: boolean
 }
 
 export type HistoryHandoffPurpose = 'ask' | 'continue'
@@ -50,18 +55,23 @@ export function selectHistoryEvidence(
     for (const message of recent) { if (keep.size >= 12) break; keep.add(message) }
     const kept = selected.filter(message => keep.has(message))
     const limit = compactLimit(kept.map(message => message.text.length))
+    let retainedChars = 0
     const messages = kept.map(message => {
-      if (message.text.length <= limit) return { ...message }
+      if (message.text.length <= limit) {
+        retainedChars += message.text.length
+        return { ...message }
+      }
       const marker = '\n[... middle omitted from local history excerpt ...]\n'
       const half = Math.floor((limit - marker.length) / 2)
       const head = headSlice(message.text, half)
       const tail = tailSlice(message.text, half)
+      retainedChars += head.length + tail.length
       return { ...message, text: head + marker + tail,
         truncatedChars: message.truncatedChars + message.text.length - head.length - tail.length }
     })
     const omittedMessageCount = (seqs === undefined ? detail.droppedMessageCount : 0) + selected.length - messages.length
-    return { detail, question, messages, compact: true,
-      originalChars: selected.reduce((sum, message) => sum + message.text.length, 0),
+    return { detail, question, messages, compact: true, allSelected: seqs === undefined, retainedChars,
+      originalChars: selected.reduce((sum, message) => sum + message.text.length + message.truncatedChars, 0),
       estimatedTokens: Math.ceil((messages.reduce((sum, message) => sum + message.text.length, 0) + question.length) / 4),
       omittedMessageCount, truncated: omittedMessageCount > 0 || messages.some(message => message.truncatedChars > 0),
       secretWarning: messages.some(message => mayContainSecret(message.text)) }
@@ -90,6 +100,7 @@ export function selectHistoryEvidence(
     estimatedTokens: Math.ceil(characterCount / 4),
     truncated,
     omittedMessageCount,
+    allSelected: seqs === undefined,
     secretWarning: bounded.some(message => mayContainSecret(message.text)),
   }
 }
@@ -170,12 +181,13 @@ export function renderHistoryAskReview(
     `selected messages: ${selection.messages.length}`,
     ...(selection.compact ? [
       'Local compact excerpts (not a model-written summary). First retained request and recent messages take priority.',
-      `retained text: ${selection.messages.reduce((sum, message) => sum + message.text.length, 0)} / ${selection.originalChars} characters`,
+      `retained text: ${selection.retainedChars ?? selection.messages.reduce((sum, message) => sum + message.text.length, 0)} / ${selection.originalChars} characters`,
     ] : []),
     `estimated prompt tokens: ~${selection.estimatedTokens.toLocaleString('en-US')} (character estimate, not provider metering)`,
     ...(selection.omittedMessageCount === 0
       ? []
-      : [`warning: ${selection.omittedMessageCount} messages were omitted by local history limits; "all" is not the complete source session`]),
+      : [`warning: ${selection.omittedMessageCount} messages were omitted by local history limits${
+          selection.allSelected === true && selection.detail.droppedMessageCount > 0 ? '; "all" is not the complete source session' : ''}`]),
     ...(selection.truncated && selection.omittedMessageCount === 0 ? ['warning: local evidence limits truncated this selection'] : []),
     ...(selection.secretWarning ? ['warning: selected evidence resembles credentials or private keys; review before sending'] : []),
     '',
