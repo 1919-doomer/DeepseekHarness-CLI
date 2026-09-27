@@ -67,8 +67,10 @@ jobs:
       - name: Official DSH runtime + built CLI smoke
         # Install only inside the disposable checkout; no global dsh is changed.
         # The optional backend has its own independently pinned compatibility gate.
+        # dsh depends on its SDK packages by caret range; --before keeps the closure
+        # to the one published with the pinned CLI so a later rc cannot fail the gate.
         run: |
-          npm install --prefix node_modules/.dshc-profile-validation --ignore-scripts --no-audit --no-fund --save-exact @deepseek-ai/dsh@0.1.5-rc.2
+          npm install --prefix node_modules/.dshc-profile-validation --ignore-scripts --no-audit --no-fund --save-exact --before=2026-09-23T00:00:00Z @deepseek-ai/dsh@0.1.5-rc.3
           pnpm test:official-runtime
         env:
           DSHC_LIVE_PLUGIN_INSTALL: '1'
