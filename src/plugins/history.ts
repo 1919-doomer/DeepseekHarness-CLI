@@ -196,13 +196,7 @@ export class HistoryWorkbench {
       return { kind: 'view', viewId: 'history' }
     }
     if (mode === 'ask' || mode === 'continue') return this.handoff(workspace, args.slice(1), mode, signal)
-    if (mode === 'reuse') {
-      const forwarded = args.slice(1)
-      const separator = forwarded.indexOf('--')
-      if (separator < 0) throw new Error('/history reuse requires -- before the next instruction')
-      forwarded.splice(separator, 0, '--compact')
-      return this.handoff(workspace, forwarded, 'continue', signal)
-    }
+    if (mode === 'reuse') return this.handoff(workspace, args.slice(1), 'continue', signal, 'reuse')
 
     const allWorkspaces = mode === 'all'
     const text = mode === 'find' ? args.slice(1).join(' ').trim() : undefined
@@ -218,9 +212,12 @@ export class HistoryWorkbench {
     args: readonly string[],
     purpose: 'ask' | 'continue',
     signal?: AbortSignal,
+    // `reuse` is `continue --compact` under its own name, so reviews, errors
+    // and the confirmation command repeat what the user actually typed.
+    invoked: 'ask' | 'continue' | 'reuse' = purpose,
   ): Promise<TerminalCommandOutcome> {
-    const command = `/history ${purpose}`
-    const title = purpose === 'ask' ? 'Ask History' : 'Continue History'
+    const command = `/history ${invoked}`
+    const title = invoked === 'ask' ? 'Ask History' : invoked === 'reuse' ? 'Reuse History' : 'Continue History'
     const separator = args.indexOf('--')
     if (separator < 0) throw new Error(`${command} requires -- before the ${purpose === 'ask' ? 'question' : 'next instruction'}`)
     const selector = args.slice(0, separator)
@@ -229,7 +226,7 @@ export class HistoryWorkbench {
     if (sessionId === undefined) throw new Error(`${command} requires a session id`)
     const confirmed = selector.includes('--yes')
     const crossWorkspace = selector.includes('--cross-workspace')
-    const compact = selector.includes('--compact')
+    const compact = invoked === 'reuse' || selector.includes('--compact')
     const selectionArgs = selector.slice(1).filter(value => !['--yes', '--cross-workspace', '--compact'].includes(value))
     if (selectionArgs.length > 1) throw new Error(`${command} accepts at most one sequence list`)
     const detail = await this.reader.inspect(sessionId, signal)
@@ -246,7 +243,7 @@ export class HistoryWorkbench {
           review,
           `review fingerprint: ${fingerprint.slice(0, 16)}`,
           '',
-          `Nothing was sent. After review, confirm with:\n${command} ${selector.filter(value => value !== '--yes').map(quoteHistoryCommandArg).join(' ')} --yes -- ${quoteHistoryCommandArg(question)}`,
+          `Nothing was sent. After review, confirm with:\n${command} ${selector.filter(value => value !== '--yes' && (invoked !== 'reuse' || value !== '--compact')).map(quoteHistoryCommandArg).join(' ')} --yes -- ${quoteHistoryCommandArg(question)}`,
         ].join('\n'),
       }
     }

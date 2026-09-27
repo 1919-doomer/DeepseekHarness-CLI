@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { selectHistoryEvidence, buildHistoryContinuePrompt, MAX_COMPACT_HISTORY_CHARS, fingerprintHistoryAskSelection } from '../../src/history/ask.js'
+import { selectHistoryEvidence, buildHistoryContinuePrompt, MAX_COMPACT_HISTORY_CHARS, fingerprintHistoryAskSelection, renderHistoryAskReview } from '../../src/history/ask.js'
 import type { HistorySessionDetail, HistoryMessage } from '../../src/history/types.js'
 
 function detail(messages: HistoryMessage[]): HistorySessionDetail {
@@ -54,5 +54,47 @@ describe('compact historical evidence', () => {
     const selection = selectHistoryEvidence(huge, undefined, 'Continue', 'continue')
     expect(selection.omittedMessageCount).toBe(4)
     expect(selection.messages[0]!.truncatedChars).toBe(70000 - 64 * 1024)
+  })
+
+  it('gives unused compact budget to long messages instead of an even per-message split', () => {
+    const answer = 'A'.repeat(6000)
+    const source = detail([...Array.from({ length: 11 }, (_, i) => message(i, i % 2 === 0 ? 'user' : 'assistant', 'short')),
+      message(11, 'assistant', answer)])
+    const selection = selectHistoryEvidence(source, undefined, 'Continue', 'continue', true)
+    expect(selection.messages).toHaveLength(12)
+    expect(selection.messages.at(-1)!.text).toBe(answer)
+    expect(selection.messages.every(m => m.truncatedChars === 0)).toBe(true)
+
+    const crowded = detail([message(0, 'user', 'task'), message(1, 'assistant', 'B'.repeat(20000)), message(2, 'assistant', 'C'.repeat(20000))])
+    const cut = selectHistoryEvidence(crowded, undefined, 'Continue', 'continue', true)
+    expect(cut.messages[0]!.text).toBe('task')
+    expect(cut.messages.reduce((n, m) => n + m.text.length, 0)).toBeLessThanOrEqual(MAX_COMPACT_HISTORY_CHARS)
+    expect(cut.messages[1]!.text.length).toBeGreaterThan(MAX_COMPACT_HISTORY_CHARS / 3)
+  })
+
+  it('does not split a surrogate pair at the full-mode evidence budget', () => {
+    const source = detail([message(1, 'user', 'x' + '😀'.repeat(40000))])
+    const text = selectHistoryEvidence(source, [1], 'Continue', 'continue').messages[0]!.text
+    expect(text).not.toMatch(/[\uD800-\uDBFF]$/)
+    expect(text.length).toBe(64 * 1024 - 1)
+  })
+
+  it('reports retained source text without omission markers against the pre-retention original', () => {
+    const source = detail([message(0, 'user', 'task'), { ...message(1, 'assistant', 'D'.repeat(30000)), truncatedChars: 50000 }])
+    const selection = selectHistoryEvidence(source, undefined, 'Continue', 'continue', true)
+    const kept = selection.messages[1]!
+    expect(selection.originalChars).toBe(4 + 30000 + 50000)
+    expect(selection.retainedChars).toBe(4 + kept.text.replace(/\n\[\.\.\. middle omitted[^\n]*\n/, '').length)
+    expect(renderHistoryAskReview(selection)).toContain(`retained text: ${selection.retainedChars} / 80004 characters`)
+  })
+
+  it('only calls "all" incomplete when the user selected all and retention dropped messages', () => {
+    const huge = detail([message(1, 'user', 'x'.repeat(70000)), message(2, 'assistant', 'tail')])
+    const explicit = selectHistoryEvidence(huge, [1, 2], 'Continue', 'continue')
+    expect(explicit.omittedMessageCount).toBe(1)
+    expect(renderHistoryAskReview(explicit, 'continue')).toContain('warning: 1 messages were omitted by local history limits')
+    expect(renderHistoryAskReview(explicit, 'continue')).not.toContain('"all"')
+    expect(renderHistoryAskReview(selectHistoryEvidence(huge, undefined, 'Continue', 'continue'), 'continue'))
+      .toContain('"all" is not the complete source session')
   })
 })

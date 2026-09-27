@@ -276,7 +276,10 @@ describe('read-only history projection', () => {
     expect(continuedPrompt).toContain('changed after review')
     const reuseArgs = ['reuse', 'history-session', '4', '--cross-workspace', '--', 'Reuse this work.']
     const reuseReview = await command.execute(context, reuseArgs)
+    expect(reuseReview).toMatchObject({ kind: 'message', title: 'Reuse History review' })
     expect(reuseReview.kind === 'message' ? reuseReview.text : '').toContain('Exact excerpts to be sent:')
+    expect(reuseReview.kind === 'message' ? reuseReview.text : '')
+      .toContain("/history reuse history-session 4 --cross-workspace --yes -- 'Reuse this work.'")
     await expect(command.execute(context, ['continue', 'history-session', '4', '--cross-workspace', '--yes', '--', 'Reuse this work.']))
       .rejects.toThrow(/differs/)
     await command.execute(context, reuseArgs)

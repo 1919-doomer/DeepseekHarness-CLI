@@ -14,7 +14,12 @@ export interface HistoryAskSelection {
   omittedMessageCount: number
   secretWarning: boolean
   compact?: boolean
+  /** Source characters, including any already dropped by local retention. */
   originalChars?: number
+  /** Source characters kept in compact excerpts, excluding omission markers. */
+  retainedChars?: number
+  /** True when the user selected `all` rather than explicit sequences. */
+  allSelected?: boolean
 }
 
 export type HistoryHandoffPurpose = 'ask' | 'continue'
@@ -48,19 +53,25 @@ export function selectHistoryEvidence(
     for (const message of recent.filter(message => message.role === 'assistant').slice(0, 4)) keep.add(message)
     for (const message of recent.filter(message => message.role === 'tool').slice(0, 3)) keep.add(message)
     for (const message of recent) { if (keep.size >= 12) break; keep.add(message) }
-    const limit = Math.floor(MAX_COMPACT_HISTORY_CHARS / keep.size)
-    const messages = selected.filter(message => keep.has(message)).map(message => {
-      if (message.text.length <= limit) return { ...message }
+    const kept = selected.filter(message => keep.has(message))
+    const limit = compactLimit(kept.map(message => message.text.length))
+    let retainedChars = 0
+    const messages = kept.map(message => {
+      if (message.text.length <= limit) {
+        retainedChars += message.text.length
+        return { ...message }
+      }
       const marker = '\n[... middle omitted from local history excerpt ...]\n'
       const half = Math.floor((limit - marker.length) / 2)
-      const head = message.text.slice(0, half).replace(/[\uD800-\uDBFF]$/, '')
-      const tail = message.text.slice(-half).replace(/^[\uDC00-\uDFFF]/, '')
+      const head = headSlice(message.text, half)
+      const tail = tailSlice(message.text, half)
+      retainedChars += head.length + tail.length
       return { ...message, text: head + marker + tail,
         truncatedChars: message.truncatedChars + message.text.length - head.length - tail.length }
     })
     const omittedMessageCount = (seqs === undefined ? detail.droppedMessageCount : 0) + selected.length - messages.length
-    return { detail, question, messages, compact: true,
-      originalChars: selected.reduce((sum, message) => sum + message.text.length, 0),
+    return { detail, question, messages, compact: true, allSelected: seqs === undefined, retainedChars,
+      originalChars: selected.reduce((sum, message) => sum + message.text.length + message.truncatedChars, 0),
       estimatedTokens: Math.ceil((messages.reduce((sum, message) => sum + message.text.length, 0) + question.length) / 4),
       omittedMessageCount, truncated: omittedMessageCount > 0 || messages.some(message => message.truncatedChars > 0),
       secretWarning: messages.some(message => mayContainSecret(message.text)) }
@@ -75,7 +86,7 @@ export function selectHistoryEvidence(
       truncated = true
       break
     }
-    const text = message.text.length <= budget ? message.text : message.text.slice(0, budget)
+    const text = message.text.length <= budget ? message.text : headSlice(message.text, budget)
     if (text.length < message.text.length || message.truncatedChars > 0) truncated = true
     bounded.push({ ...message, text, truncatedChars: message.truncatedChars + message.text.length - text.length })
     budget -= text.length
@@ -89,6 +100,7 @@ export function selectHistoryEvidence(
     estimatedTokens: Math.ceil(characterCount / 4),
     truncated,
     omittedMessageCount,
+    allSelected: seqs === undefined,
     secretWarning: bounded.some(message => mayContainSecret(message.text)),
   }
 }
@@ -169,12 +181,13 @@ export function renderHistoryAskReview(
     `selected messages: ${selection.messages.length}`,
     ...(selection.compact ? [
       'Local compact excerpts (not a model-written summary). First retained request and recent messages take priority.',
-      `retained text: ${selection.messages.reduce((sum, message) => sum + message.text.length, 0)} / ${selection.originalChars} characters`,
+      `retained text: ${selection.retainedChars ?? selection.messages.reduce((sum, message) => sum + message.text.length, 0)} / ${selection.originalChars} characters`,
     ] : []),
     `estimated prompt tokens: ~${selection.estimatedTokens.toLocaleString('en-US')} (character estimate, not provider metering)`,
     ...(selection.omittedMessageCount === 0
       ? []
-      : [`warning: ${selection.omittedMessageCount} messages were omitted by local history limits; "all" is not the complete source session`]),
+      : [`warning: ${selection.omittedMessageCount} messages were omitted by local history limits${
+          selection.allSelected === true && selection.detail.droppedMessageCount > 0 ? '; "all" is not the complete source session' : ''}`]),
     ...(selection.truncated && selection.omittedMessageCount === 0 ? ['warning: local evidence limits truncated this selection'] : []),
     ...(selection.secretWarning ? ['warning: selected evidence resembles credentials or private keys; review before sending'] : []),
     '',
@@ -216,6 +229,32 @@ export function parseHistorySeqs(raw: string | undefined): number[] | undefined 
     values.add(value)
   }
   return [...values].sort((left, right) => left - right)
+}
+
+/**
+ * Per-message cap that spends the compact budget where it is needed: messages
+ * shorter than an even share stay whole and their unused share goes to the
+ * longer ones, so one long final answer is not cut to 1/12 of the budget.
+ */
+function compactLimit(lengths: readonly number[]): number {
+  const sorted = [...lengths].sort((left, right) => left - right)
+  let remaining = MAX_COMPACT_HISTORY_CHARS
+  for (let index = 0; index < sorted.length; index++) {
+    const share = Math.floor(remaining / (sorted.length - index))
+    if (sorted[index]! > share) return share
+    remaining -= sorted[index]!
+  }
+  return MAX_COMPACT_HISTORY_CHARS
+}
+
+/** Leading slice that never ends on half of a UTF-16 surrogate pair. */
+function headSlice(text: string, length: number): string {
+  return text.slice(0, length).replace(/[\uD800-\uDBFF]$/, '')
+}
+
+/** Trailing slice that never starts on half of a UTF-16 surrogate pair. */
+function tailSlice(text: string, length: number): string {
+  return length <= 0 ? '' : text.slice(-length).replace(/^[\uDC00-\uDFFF]/, '')
 }
 
 function historyCitation(message: HistoryMessage): string {
